@@ -1,66 +1,58 @@
 const express = require('express');
 const cors = require('cors');
-const { Pool } = require('pg');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Conexión a Supabase mediante Variable de Entorno
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
-});
+// Conexión en SOLO LECTURA a tu proyecto de Supabase (AgenciaRR-V2)
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Endpoint 1: Login de Operador y Retorno de Perfiles Asignados
-app.post('/api/login', async (req, res) => {
-  const { username, password } = req.body;
+// Endpoint para obtener Operadores reales
+app.get('/api/operadores', async (req, res) => {
   try {
-    const userRes = await pool.query(
-      'SELECT id, username, shift FROM operators WHERE username = $1 AND password = $2',
-      [username, password]
-    );
+    const { data, error } = await supabase
+      .from('operadores')
+      .select('*');
 
-    if (userRes.rows.length === 0) {
-      return res.status(401).json({ error: 'Credenciales inválidas' });
-    }
-
-    const operator = userRes.rows[0];
-
-    // Consulta de Perfiles Oficiales asignados
-    const profilesRes = await pool.query(
-      `SELECT p.profile_name 
-       FROM profiles p 
-       JOIN operator_profiles op ON p.id = op.profile_id 
-       WHERE op.operator_id = $1`,
-      [operator.id]
-    );
-
-    res.json({
-      success: true,
-      operator: operator.username,
-      shift: operator.shift,
-      profiles: profilesRes.rows.map(r => r.profile_name)
-    });
+    if (error) throw error;
+    res.json({ success: true, operadores: data });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Error leyendo tabla operadores:', err.message);
+    res.status(500).json({ error: 'Error al consultar operadores' });
   }
 });
 
-// Endpoint 2: Recepción de Alertas/Telemetría en Tiempo Real
-app.post('/api/telemetry', async (req, res) => {
-  const { operator, shift, profile, eventType, details } = req.body;
+// Endpoint para obtener Perfiles reales desde datame_perfiles
+app.get('/api/perfiles', async (req, res) => {
   try {
-    await pool.query(
-      `INSERT INTO telemetry_logs (operator_name, shift, profile_name, event_type, details) 
-       VALUES ($1, $2, $3, $4, $5)`,
-      [operator, shift, profile, eventType, JSON.stringify(details)]
-    );
-    res.json({ status: 'ok' });
+    const { data, error } = await supabase
+      .from('datame_perfiles')
+      .select('id_datame, modelo')
+      .order('modelo', { ascending: true });
+
+    if (error) throw error;
+    
+    const perfilesFormat = data.map(p => ({
+      id: p.id_datame,
+      name: p.modelo
+    }));
+
+    res.json({ success: true, perfiles: perfilesFormat });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Error leyendo tabla datame_perfiles:', err.message);
+    res.status(500).json({ error: 'Error al consultar perfiles' });
   }
 });
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Servidor RYR corriendo en puerto ${PORT}`));
+// Endpoint de Telemetría
+app.post('/api/telemetry', (req, res) => {
+  console.log('[TELEMETRY RECEIVED]', req.body);
+  res.json({ status: 'OK' });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Servidor activo en el puerto ${PORT}`));
