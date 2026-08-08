@@ -1,24 +1,34 @@
 const express = require('express');
 const cors = require('cors');
-const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Conexión en SOLO LECTURA a tu proyecto de Supabase (AgenciaRR-V2)
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
-// Endpoint para obtener Operadores reales
+// Helper para consultas REST directas a Supabase
+async function querySupabase(endpoint) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${endpoint}`, {
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Supabase API error: ${response.statusText}`);
+  }
+
+  return await response.json();
+}
+
+// Endpoint para Operadores
 app.get('/api/operadores', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('operadores')
-      .select('*');
-
-    if (error) throw error;
+    const data = await querySupabase('operadores?select=*');
     res.json({ success: true, operadores: data });
   } catch (err) {
     console.error('Error leyendo tabla operadores:', err.message);
@@ -26,15 +36,10 @@ app.get('/api/operadores', async (req, res) => {
   }
 });
 
-// Endpoint para obtener Perfiles reales desde datame_perfiles
+// Endpoint para Perfiles desde datame_perfiles
 app.get('/api/perfiles', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('datame_perfiles')
-      .select('id_datame, modelo')
-      .order('modelo', { ascending: true });
-
-    if (error) throw error;
+    const data = await querySupabase('datame_perfiles?select=id_datame,modelo&order=modelo.asc');
     
     const perfilesFormat = data.map(p => ({
       id: p.id_datame,
