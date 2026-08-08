@@ -25,11 +25,17 @@ async function querySupabase(endpoint) {
   return await response.json();
 }
 
-// Endpoint para Operadores
+// Endpoint para Operadores (Mapeo flexible de nombres)
 app.get('/api/operadores', async (req, res) => {
   try {
     const data = await querySupabase('operadores?select=*');
-    res.json({ success: true, operadores: data });
+    
+    const operadoresFormat = data.map(op => ({
+      id: op.id,
+      name: op.nombre_operador || op.nombre || op.operador || op.username || op.email || op.usuario || op.id
+    }));
+
+    res.json({ success: true, operadores: operadoresFormat });
   } catch (err) {
     console.error('Error leyendo tabla operadores:', err.message);
     res.status(500).json({ error: 'Error al consultar operadores' });
