@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>RYR Titan Apex Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Bebas+Neue&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-main: #06060a;
+      --bg-card: #0d0d15;
+      --bg-nested: #12121e;
+      --neon-cyan: #00ffcc;
+      --neon-magenta: #ff00ff;
+      --neon-red: #ff003c;
+      --neon-green: #33ff33;
+      --neon-orange: #ffaa00;
+      --text-main: #ffffff;
+      --text-muted: #64748b;
+      --border-color: rgba(0, 255, 204, 0.15);
+      --font-outfit: 'Outfit', sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      font-family: 'Inter', sans-serif;
+      padding: 24px;
+      overflow-x: hidden;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--bg-main);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #1e1e2f;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--neon-cyan);
+    }
+
+    /* Core Panel */
+    .monitor-wrapper {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 8px 32px rgba(0, 255, 204, 0.05);
+    }
+
+    /* Header */
+    .monitor-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      padding-bottom: 20px;
+      margin-bottom: 24px;
+    }
+
+    .monitor-title-area h1 {
+      font-family: var(--font-outfit);
+      font-size: 1.6rem;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      background: linear-gradient(135deg, #fff 0%, var(--neon-cyan) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .monitor-title-area p {
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      margin-top: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(51, 255, 51, 0.1);
+      border: 1px solid var(--neon-green);
+      color: var(--neon-green);
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      animation: pulse-border 2s infinite alternate;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      background-color: var(--neon-green);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--neon-green);
+      animation: blink 1s infinite alternate;
+    }
+
+    /* KPIs */
+    .kpis-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .kpi-card {
+      background: var(--bg-nested);
+      border: 1px solid rgba(255, 255, 255, 0.03);
+      border-left: 4px solid var(--neon-cyan);
+      padding: 16px 20px;
+      border-radius: 10px;
+      position: relative;
+      transition: all 0.3s ease;
+    }
+
+    .kpi-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 15px rgba(0, 255, 204, 0.05);
+    }
+
+    .kpi-card.magenta { border-left-color: var(--neon-magenta); }
+    .kpi-card.orange { border-left-color: var(--neon-orange); }
+    .kpi-card.red { border-left-color: var(--neon-red); }
+
+    .kpi-label {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      margin-bottom: 6px;
+    }
+
+    .kpi-value {
+      font-family: var(--font-outfit);
+      font-size: 1.8rem;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    /* Columns Layout */
+    .monitor-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    @media (max-width: 768px) {
+      .monitor-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .panel-box {
+      background: var(--bg-nested);
+      border: 1px solid rgba(255, 255, 255, 0.03);
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .panel-box h2 {
+      font-family: var(--font-outfit);
+      font-size: 0.95rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      color: #fff;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .panel-count-badge {
+      font-size: 0.68rem;
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-muted);
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+
+    /* Tables */
+    .table-container {
+      max-height: 380px;
+      overflow-y: auto;
+    }
+
+    .monitor-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+    }
+
+    .monitor-table th {
+      text-align: left;
+      padding: 8px 12px;
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      letter-spacing: 0.5px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .monitor-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+      color: #cbd5e1;
+    }
+
+    .monitor-table tr:hover td {
+      background: rgba(0, 255, 204, 0.03);
+      color: #fff;
+    }
+
+    /* Utility badges */
+    .id-badge {
+      font-family: monospace;
+      background: rgba(0, 255, 204, 0.08);
+      color: var(--neon-cyan);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+    }
+
+    .model-badge {
+      background: rgba(255, 0, 255, 0.08);
+      color: var(--neon-magenta);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+    }
+
+    .btn-sync {
+      background: linear-gradient(135deg, var(--neon-cyan) 0%, #00b38c 100%);
+      color: #000;
+      border: none;
+      font-family: var(--font-outfit);
+      font-weight: 700;
+      font-size: 0.78rem;
+      padding: 8px 16px;
+      border-radius: 20px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 10px rgba(0, 255, 204, 0.2);
+    }
+
+    .btn-sync:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 15px rgba(0, 255, 204, 0.35);
+    }
+
+    /* Animations */
+    @keyframes blink {
+      0% { opacity: 0.3; }
+      100% { opacity: 1; }
+    }
+
+    @keyframes pulse-border {
+      0% { box-shadow: 0 0 2px rgba(51, 255, 51, 0.2); }
+      100% { box-shadow: 0 0 10px rgba(51, 255, 51, 0.4); }
+    }
+
+    .loading-state {
+      padding: 40px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="monitor-wrapper">
+    <!-- Header -->
+    <header class="monitor-header">
+      <div class="monitor-title-area">
+        <h1>⚡ RYR TITAN APEX MONITOR</h1>
+        <p>Sistema de Telemetría y Mapeo de Identidades de Operación</p>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <button class="btn-sync" onclick="fetchData()">
+          ↻ Recargar Datos
+        </button>
+        <div class="status-badge">
+          <span class="status-dot"></span>
+          SYS-CONNECTED
+        </div>
+      </div>
+    </header>
+
+    <!-- KPIs -->
+    <section class="kpis-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">👥 Operadores en Base</div>
+        <div class="kpi-value" id="kpi-ops-count">—</div>
+      </div>
+      <div class="kpi-card magenta">
+        <div class="kpi-label">🎭 Perfiles Asignados</div>
+        <div class="kpi-value" id="kpi-perfs-count">—</div>
+      </div>
+      <div class="kpi-card orange">
+        <div class="kpi-label">⏱️ Latencia de Conexión</div>
+        <div class="kpi-value" id="kpi-ping">0 ms</div>
+      </div>
+      <div class="kpi-card red">
+        <div class="kpi-label">📡 Nodos del Clúster</div>
+        <div class="kpi-value">1 Activo</div>
+      </div>
+    </section>
+
+    <!-- Content Layout -->
+    <main class="monitor-layout">
+      <!-- Left Column: Operadores -->
+      <div class="panel-box">
+        <h2>
+          Operadores Activos
+          <span class="panel-count-badge" id="ops-badge">0</span>
+        </h2>
+        <div class="table-container">
+          <table class="monitor-table">
+            <thead>
+              <tr>
+                <th style="width: 25%">ID</th>
+                <th>Nombre del Operador</th>
+              </tr>
+            </thead>
+            <tbody id="ops-table-body">
+              <tr>
+                <td colspan="2" class="loading-state">Cargando operadores...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Right Column: Perfiles -->
+      <div class="panel-box">
+        <h2>
+          Perfiles del Sistema
+          <span class="panel-count-badge" id="perfs-badge">0</span>
+        </h2>
+        <div class="table-container">
+          <table class="monitor-table">
+            <thead>
+              <tr>
+                <th style="width: 35%">ID Datame</th>
+                <th>Modelo</th>
+              </tr>
+            </thead>
+            <tbody id="perfs-table-body">
+              <tr>
+                <td colspan="2" class="loading-state">Cargando perfiles...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    async function fetchData() {
+      const t0 = performance.now();
+      try {
+        // Fetch Operadores
+        const resOps = await fetch('/api/operadores');
+        const dataOps = await resOps.json();
+        
+        // Fetch Perfiles
+        const resPerfs = await fetch('/api/perfiles');
+        const dataPerfs = await resPerfs.json();
+
+        // Update KPIs
+        document.getElementById('kpi-ops-count').textContent = dataOps.operadores ? dataOps.operadores.length : 0;
+        document.getElementById('kpi-perfs-count').textContent = dataPerfs.perfiles ? dataPerfs.perfiles.length : 0;
+        
+        document.getElementById('ops-badge').textContent = dataOps.operadores ? dataOps.operadores.length : 0;
+        document.getElementById('perfs-badge').textContent = dataPerfs.perfiles ? dataPerfs.perfiles.length : 0;
+
+        // Render Operadores Table
+        const opsBody = document.getElementById('ops-table-body');
+        if (dataOps.operadores && dataOps.operadores.length > 0) {
+          opsBody.innerHTML = dataOps.operadores.map(op => `
+            <tr>
+              <td><span class="id-badge">${op.id}</span></td>
+              <td style="font-weight: 600;">${op.name}</td>
+            </tr>
+          `).join('');
+        } else {
+          opsBody.innerHTML = `<tr><td colspan="2" class="loading-state">Sin operadores registrados</td></tr>`;
+        }
+
+        // Render Perfiles Table
+        const perfsBody = document.getElementById('perfs-table-body');
+        if (dataPerfs.perfiles && dataPerfs.perfiles.length > 0) {
+          perfsBody.innerHTML = dataPerfs.perfiles.map(p => `
+            <tr>
+              <td><span class="id-badge">${p.id}</span></td>
+              <td><span class="model-badge">${p.name}</span></td>
+            </tr>
+          `).join('');
+        } else {
+          perfsBody.innerHTML = `<tr><td colspan="2" class="loading-state">Sin perfiles registrados</td></tr>`;
+        }
+
+        // Calculate Ping Latency
+        const t1 = performance.now();
+        document.getElementById('kpi-ping').textContent = Math.round(t1 - t0) + ' ms';
+      } catch (err) {
+        console.error('Error fetching telemetry data:', err);
+        const errHtml = `<tr><td colspan="2" class="loading-state" style="color:var(--neon-red);">⚠️ Error de comunicación con la API</td></tr>`;
+        document.getElementById('ops-table-body').innerHTML = errHtml;
+        document.getElementById('perfs-table-body').innerHTML = errHtml;
+        document.getElementById('kpi-ping').textContent = 'Error';
+      }
+    }
+
+    // Auto-fetch data initially and every 30 seconds
+    fetchData();
+    setInterval(fetchData, 30000);
+  </script>
+</body>
+</html>
