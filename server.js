@@ -1,70 +1,44 @@
 const express = require('express');
 const cors = require('cors');
-
 const app = express();
+
 app.use(cors());
 app.use(express.json());
-app.use(express.static(__dirname));
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_KEY;
+let bannedWords = ['whatsapp', 'skype', 'email', 'correo', 'teléfono', 'prometo', 'promesa', 'número', 'banco', 'tarjeta'];
+let activeOperators = {}; 
 
-// Helper para consultas REST directas a Supabase
-async function querySupabase(endpoint) {
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/${endpoint}`, {
-    headers: {
-      'apikey': SUPABASE_KEY,
-      'Authorization': `Bearer ${SUPABASE_KEY}`,
-      'Content-Type': 'application/json'
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(`Supabase API error: ${response.statusText}`);
-  }
-
-  return await response.json();
-}
-
-// Endpoint para Operadores (Mapeo flexible de nombres)
-app.get('/api/operadores', async (req, res) => {
-  try {
-    const data = await querySupabase('operadores?select=*');
-    
-    const operadoresFormat = data.map(op => ({
-      id: op.id,
-      name: op.nombre_operador || op.nombre || op.operador || op.username || op.email || op.usuario || op.id
-    }));
-
-    res.json({ success: true, operadores: operadoresFormat });
-  } catch (err) {
-    console.error('Error leyendo tabla operadores:', err.message);
-    res.status(500).json({ error: 'Error al consultar operadores' });
-  }
+// Ruta para obtener palabras prohibidas
+app.get('/api/banned-words', (req, res) => {
+    res.json({ words: bannedWords });
 });
 
-// Endpoint para Perfiles desde datame_perfiles
-app.get('/api/perfiles', async (req, res) => {
-  try {
-    const data = await querySupabase('datame_perfiles?select=id_datame,modelo&order=modelo.asc');
-    
-    const perfilesFormat = data.map(p => ({
-      id: p.id_datame,
-      name: p.modelo
-    }));
-
-    res.json({ success: true, perfiles: perfilesFormat });
-  } catch (err) {
-    console.error('Error leyendo tabla datame_perfiles:', err.message);
-    res.status(500).json({ error: 'Error al consultar perfiles' });
-  }
-});
-
-// Endpoint de Telemetría
+// Ruta de telemetría (la extensión llama a esto)
 app.post('/api/telemetry', (req, res) => {
-  console.log('[TELEMETRY RECEIVED]', req.body);
-  res.json({ status: 'OK' });
+    const data = req.body;
+    if (data && data.operator) {
+        const key = `${data.operator}-${data.profile}`;
+        activeOperators[key] = {
+            ...data,
+            lastSeen: Date.now()
+        };
+    }
+    res.status(200).send('OK');
+});
+
+// Ruta para el Panel de Monitoreo (el iframe llama a esto)
+app.get('/api/operators', (req, res) => {
+    const now = Date.now();
+    const activeList = [];
+    for (const key in activeOperators) {
+        if (now - activeOperators[key].lastSeen < 20000) {
+            activeList.push(activeOperators[key]);
+        } else {
+            delete activeOperators[key];
+        }
+    }
+    res.json({ operators: activeList });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Servidor activo en el puerto ${PORT}`));
+app.listen(PORT, () => console.log(`Servidor RYR TITAN operativo en ${PORT}`));
