@@ -4,12 +4,16 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Credenciales automáticas desde las Variables de Entorno de Render
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
+
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
 
-// Memoria centralizada
+// Memoria RAM rápida para respuesta instantánea (<5ms)
 const liveTelemetryMap = new Map();
-const deepChatAudits = new Map(); // Key: `${profile}_${clientId}`
+const recentChatAuditsRAM = new Map();
 
 // Diccionario dinámico de palabras prohibidas
 let dynamicBannedWords = new Set([
@@ -18,7 +22,6 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// Palabras clave para detectar maltrato o respuestas cortantes
 const hostilePhrases = [
   'callate', 'cállate', 'no me importa', 'que pereza', 'qué pereza', 'apurate', 'apúrate',
   'no tengo tiempo', 'dejame', 'déjame', 'no fastidies', 'fastidio', 'idiota', 'pesado'
@@ -59,19 +62,19 @@ app.post('/api/telemetry', (req, res) => {
   res.json({ success: true });
 });
 
-// 2. ENDPOINT: MOTOR DE AUDITORÍA HEURÍSTICA Y EXTRACCIÓN DE CHATS (MARKDOWN)
-app.post('/api/chats/audit-deep', (req, res) => {
+// 2. ENDPOINT: AUDITORÍA HEURÍSTICA Y GUARDADO EN SUPABASE (UPSERT SIN DUPLICADOS)
+app.post('/api/chats/audit-deep', async (req, res) => {
   const { operator, profile, clientName, clientId, markdown, messages } = req.body;
 
   if (!profile || !clientId || !markdown) {
-    return res.status(400).json({ error: 'Datos de chat incompletos' });
+    return res.status(400).json({ error: 'Datos incompletos' });
   }
 
   const auditKey = `${profile}_${clientId}`;
   const flags = [];
   const textLower = markdown.toLowerCase();
 
-  // A. Analizar Maltrato o Tono Hostil
+  // A. Maltrato o Tono Hostil
   for (let phrase of hostilePhrases) {
     if (textLower.includes(phrase)) {
       flags.push(`🚨 Posible Maltrato/Tono Hostil ("${phrase}")`);
@@ -79,53 +82,106 @@ app.post('/api/chats/audit-deep', (req, res) => {
     }
   }
 
-  // B. Analizar Palabras Prohibidas
+  // B. Palabras Prohibidas
   for (let word of dynamicBannedWords) {
     if (textLower.includes(word)) {
-      flags.push(`🛑 Palabra Prohibida Detectada ("${word}")`);
+      flags.push(`🛑 Palabra Prohibida ("${word}")`);
       break;
     }
   }
 
-  // C. Analizar Oportunidad de Cartas Desperdiciada
+  // C. Oportunidad de Cartas Desperdiciada
   const clientWantsLetters = /(carta|letter|escríbeme|escribeme|foto|story|historia|correo)/i.test(textLower);
   const operatorOfferedLetter = /(te envié una carta|te mandé una carta|check your mail|sent you a letter|revisa tu correo)/i.test(textLower);
   if (clientWantsLetters && !operatorOfferedLetter) {
     flags.push(`💡 Oportunidad de Carta Desperdiciada`);
   }
 
-  // D. Analizar Respuestas Perezosas (Monosílabos constantes)
+  // D. Respuestas Monosilábicas
   if (Array.isArray(messages) && messages.length >= 4) {
     const operatorMsgs = messages.filter(m => m.isOperator);
     if (operatorMsgs.length > 0) {
       const avgWords = operatorMsgs.reduce((acc, m) => acc + m.text.split(' ').length, 0) / operatorMsgs.length;
       if (avgWords < 3.5) {
-        flags.push(`⚠️ Respuestas Muy Cortas/Monosílabos`);
+        flags.push(`⚠️ Respuestas Muy Cortas`);
       }
     }
   }
 
-  const auditEntry = {
+  const hasBreach = flags.some(f => f.startsWith('🚨') || f.startsWith('🛑'));
+
+  const auditPayload = {
     id: auditKey,
-    operator: operator || 'Desconocido',
-    profile: profile,
-    clientName: clientName || 'Cliente',
-    clientId: clientId,
-    totalMessages: Array.isArray(messages) ? messages.length : 0,
+    operator_name: operator || 'Desconocido',
+    profile_name: profile,
+    client_name: clientName || 'Cliente',
+    client_id: clientId,
+    total_messages: Array.isArray(messages) ? messages.length : 0,
     flags: flags.length > 0 ? flags : ['✅ Conversación Correcta'],
-    hasBreach: flags.some(f => f.startsWith('🚨') || f.startsWith('🛑')),
+    has_breach: hasBreach,
     markdown: markdown,
-    timestamp: Date.now()
+    updated_at: new Date().toISOString()
   };
 
-  deepChatAudits.set(auditKey, auditEntry);
-  res.json({ success: true, audit: auditEntry });
+  // Guardar en Memoria RAM para visualización rápida
+  recentChatAuditsRAM.set(auditKey, {
+    ...auditPayload,
+    operator: auditPayload.operator_name,
+    profile: auditPayload.profile_name,
+    clientName: auditPayload.client_name,
+    clientId: auditPayload.client_id,
+    timestamp: Date.now()
+  });
+
+  // Persistir en Supabase de forma asíncrona sin bloquear la petición
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    fetch(`${SUPABASE_URL}/rest/v1/chat_audits`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates' // Evita duplicados (UPSERT)
+      },
+      body: JSON.stringify(auditPayload)
+    }).catch(err => console.error("Error guardando en Supabase:", err));
+  }
+
+  res.json({ success: true, audit: auditPayload });
 });
 
-// 3. ENDPOINT: LISTAR TODAS LAS AUDITORÍAS DE CHATS PARA EL MONITOR
-app.get('/api/chats/audits', (req, res) => {
-  const audits = Array.from(deepChatAudits.values()).sort((a, b) => b.timestamp - a.timestamp);
-  res.json({ success: true, audits: audits.slice(0, 100) });
+// 3. ENDPOINT: LISTAR AUDITORÍAS DE CHATS (Lee de Supabase o RAM)
+app.get('/api/chats/audits', async (req, res) => {
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    try {
+      const response = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?select=*&order=updated_at.desc&limit=60`, {
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`
+        }
+      });
+      const data = await response.json();
+      if (Array.isArray(data)) {
+        const formatted = data.map(d => ({
+          id: d.id,
+          operator: d.operator_name,
+          profile: d.profile_name,
+          clientName: d.client_name,
+          clientId: d.client_id,
+          flags: Array.isArray(d.flags) ? d.flags : [],
+          hasBreach: d.has_breach,
+          markdown: d.markdown,
+          timestamp: new Date(d.updated_at).getTime()
+        }));
+        return res.json({ success: true, audits: formatted });
+      }
+    } catch (e) {
+      console.error("Error leyendo de Supabase, usando RAM:", e);
+    }
+  }
+
+  const fallback = Array.from(recentChatAuditsRAM.values()).sort((a, b) => b.timestamp - a.timestamp);
+  res.json({ success: true, audits: fallback });
 });
 
 // 4. PALABRAS PROHIBIDAS
@@ -195,13 +251,13 @@ app.get('/api/telemetry/live', (req, res) => {
   });
 });
 
-// 6. DASHBOARD CON CENTRO DE AUDITORÍA Y DESCARGAS MARKDOWN
+// 6. DASHBOARD HTML EMBEBIDO
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RYR TITAN APEX - LIVE MONITOR & CHAT AUDIT</title>
+  <title>RYR TITAN APEX - LIVE MONITOR & AUDIT</title>
   <style>
     :root {
       --bg-main: #060913;
@@ -218,51 +274,39 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background-color: var(--bg-main); color: var(--text-main); font-family: system-ui, -apple-system, sans-serif; padding: 12px; }
-    
     header { display: flex; justify-content: space-between; align-items: center; background: #0b132b; border: 1px solid var(--border-color); border-left: 4px solid var(--accent-cyan); border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; }
     .brand-title { font-size: 14px; font-weight: 900; letter-spacing: 1.5px; color: var(--accent-cyan); }
     .metrics-bar { display: flex; gap: 8px; align-items: center; }
-    
     .metric-pill { background: #1c2541; padding: 5px 12px; border-radius: 6px; font-size: 11px; font-weight: bold; border: 1px solid #3a506b; display: flex; align-items: center; gap: 6px; }
     .metric-pill.danger { border-color: var(--accent-red); color: var(--accent-red); background: rgba(239, 68, 68, 0.15); animation: pulse 1.5s infinite; }
     .metric-pill.afk-pill { border-color: var(--accent-purple); color: var(--accent-purple); background: rgba(168, 85, 247, 0.15); }
-    
     .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 11px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; transition: 0.2s; }
     .btn-action:hover { border-color: var(--accent-green); color: var(--accent-green); }
     .btn-action.active { border-color: var(--accent-green); color: var(--accent-green); background: rgba(16,185,129,0.1); }
-
     .filters-bar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
     .filter-btn { background: #1c2541; color: var(--text-muted); border: 1px solid var(--border-color); padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: bold; cursor: pointer; }
     .filter-btn.active, .filter-btn:hover { background: var(--accent-green); color: #000; border-color: var(--accent-green); }
-    
     .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
     .operator-card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; position: relative; transition: 0.2s; }
     .operator-card.in-breach { border-color: var(--accent-red) !important; box-shadow: 0 0 16px rgba(239, 68, 68, 0.4); animation: pulse 1s infinite; }
     .operator-card.is-afk { border-color: var(--accent-purple) !important; box-shadow: 0 0 16px rgba(168, 85, 247, 0.3); }
-    
     .operator-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; margin-bottom: 10px; }
     .operator-name { font-size: 13px; font-weight: 800; color: #fff; }
     .shift-tag { font-size: 10px; background: #1e293b; color: #38bdf8; padding: 2px 6px; border-radius: 4px; font-weight: bold; }
-    
     .profiles-list { display: flex; flex-direction: column; gap: 8px; }
     .profile-item { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; }
     .profile-item.alert-profile { border-color: var(--accent-red); background: rgba(239, 68, 68, 0.08); }
-    
     .profile-name { font-size: 12px; font-weight: 700; color: var(--accent-cyan); }
     .profile-stats { display: flex; gap: 8px; font-size: 11px; margin-top: 2px; }
     .stat-letters { color: #38bdf8; font-weight: bold; }
-    
     .stat-sla { font-weight: bold; padding: 2px 6px; border-radius: 4px; font-size: 10px; }
     .stat-sla.ok { background: #064e3b; color: #34d399; }
     .stat-sla.breach { background: #7f1d1d; color: #fca5a5; animation: pulse 1s infinite; }
     .stat-sla.afk { background: #581c87; color: #d8b4fe; }
-
-    /* MODAL DE AUDITORÍA Y CHATS */
     .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); z-index: 99999; justify-content: center; align-items: center; }
     .modal-content { background: #0e1526; border: 1px solid var(--accent-cyan); border-radius: 10px; width: 850px; max-width: 95%; max-height: 88vh; padding: 20px; display: flex; flex-direction: column; gap: 12px; color: #fff; }
     .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 10px; font-weight: 800; color: var(--accent-cyan); }
     .modal-body { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 10px; }
-    
     .audit-card { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
     .audit-card.flagged { border-color: var(--accent-red); background: rgba(239, 68, 68, 0.05); }
     .audit-header { display: flex; justify-content: space-between; align-items: center; }
@@ -271,18 +315,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     .flag-badge { font-size: 10px; font-weight: bold; padding: 2px 7px; border-radius: 4px; background: #1c2541; border: 1px solid #3a506b; color: #38bdf8; }
     .flag-badge.danger { border-color: #ef4444; color: #f87171; background: rgba(239, 68, 68, 0.2); }
     .flag-badge.warn { border-color: #f59e0b; color: #fbbf24; background: rgba(245, 158, 11, 0.2); }
-
     .chat-transcript { background: #0b132b; border: 1px solid #1e293b; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 11px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; line-height: 1.5; color: #cbd5e1; }
-
     .banned-tags-container { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
     .banned-tag { background: #1c2541; border: 1px solid #ef4444; color: #fca5a5; padding: 4px 8px; border-radius: 4px; font-size: 11px; display: flex; align-items: center; gap: 6px; }
     .banned-tag span { cursor: pointer; font-weight: bold; color: #fff; }
-
     @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
   </style>
 </head>
 <body>
-
   <header>
     <div class="brand-title">⚡ RYR TITAN APEX - AUDITORÍA & SUPERVISIÓN LIVE</div>
     <div class="metrics-bar">
@@ -307,23 +347,21 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   <div id="operators-grid" class="grid-operators"></div>
 
-  <!-- MODAL: AUDITORÍA DE CHATS EN MARKDOWN -->
   <div id="modal-chats" class="modal-overlay">
     <div class="modal-content">
       <div class="modal-header">
-        <span>📄 CENTRO DE AUDITORÍA DE CONVERSACIONES (MARKDOWN)</span>
+        <span>📄 CENTRO DE AUDITORÍA DE CONVERSACIONES (SUPABASE PERSISTED)</span>
         <button class="btn-action" onclick="closeModals()">✕</button>
       </div>
       <div style="display:flex; gap:8px;">
         <input type="text" id="input-search-audit" oninput="filterAudits()" placeholder="Buscar por operador, perfil o cliente..." style="flex:1; padding:8px; background:#060913; border:1px solid #3a506b; color:#fff; border-radius:6px; outline:none; font-size:12px;">
       </div>
       <div class="modal-body" id="chat-audits-list">
-        <p style="color:var(--text-muted);">Cargando historial de conversaciones...</p>
+        <p style="color:var(--text-muted);">Cargando conversaciones desde Supabase...</p>
       </div>
     </div>
   </div>
 
-  <!-- MODAL: GESTOR DE PALABRAS PROHIBIDAS -->
   <div id="modal-banned" class="modal-overlay">
     <div class="modal-content" style="width:600px;">
       <div class="modal-header">
@@ -460,7 +498,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       }
     }
 
-    // MODAL AUDITORÍAS DE CHATS
     async function openChatAuditsModal() {
       document.getElementById('modal-chats').style.display = 'flex';
       const res = await fetch(\`\${API_URL}/api/chats/audits\`);
@@ -472,7 +509,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     function renderAuditsList(audits) {
       const container = document.getElementById('chat-audits-list');
       if (audits.length === 0) {
-        container.innerHTML = '<p style="color:var(--text-muted);">No hay conversaciones sincronizadas aún. Haz clic en "⚡ Extraer Chat" en Talkytimes.</p>';
+        container.innerHTML = '<p style="color:var(--text-muted);">No hay conversaciones en Supabase aún. Haz clic en "⚡ Extraer Chat" en Talkytimes.</p>';
         return;
       }
 
@@ -512,7 +549,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       renderAuditsList(filtered);
     }
 
-    // MODAL PALABRAS PROHIBIDAS
     async function openBannedWordsModal() {
       document.getElementById('modal-banned').style.display = 'flex';
       const res = await fetch(\`\${API_URL}/api/banned-words\`);
@@ -569,5 +605,5 @@ app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
 app.listen(PORT, () => {
-  console.log(`🚀 RYR TITAN BACKEND V4.0 activo en puerto ${PORT}`);
+  console.log(`🚀 RYR TITAN BACKEND conectado a Supabase en puerto ${PORT}`);
 });
