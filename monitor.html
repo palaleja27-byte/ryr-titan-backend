@@ -2,450 +2,423 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>RYR Titan Apex Monitor</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Bebas+Neue&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RYR TITAN APEX - LIVE MONITOR</title>
   <style>
     :root {
-      --bg-main: #06060a;
-      --bg-card: #0d0d15;
-      --bg-nested: #12121e;
-      --neon-cyan: #00ffcc;
-      --neon-magenta: #ff00ff;
-      --neon-red: #ff003c;
-      --neon-green: #33ff33;
-      --neon-orange: #ffaa00;
-      --text-main: #ffffff;
-      --text-muted: #64748b;
-      --border-color: rgba(0, 255, 204, 0.15);
-      --font-outfit: 'Outfit', sans-serif;
+      --bg-main: #060913;
+      --bg-card: #0e1526;
+      --bg-card-hover: #151f38;
+      --accent-green: #10b981;
+      --accent-cyan: #00ffcc;
+      --accent-orange: #f59e0b;
+      --accent-red: #ef4444;
+      --accent-purple: #a855f7;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --border-color: #1e293b;
     }
 
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
       background-color: var(--bg-main);
       color: var(--text-main);
-      font-family: 'Inter', sans-serif;
-      padding: 24px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+      padding: 12px;
       overflow-x: hidden;
     }
 
-    /* Scrollbar */
-    ::-webkit-scrollbar {
-      width: 6px;
-      height: 6px;
-    }
-    ::-webkit-scrollbar-track {
-      background: var(--bg-main);
-    }
-    ::-webkit-scrollbar-thumb {
-      background: #1e1e2f;
-      border-radius: 3px;
-    }
-    ::-webkit-scrollbar-thumb:hover {
-      background: var(--neon-cyan);
-    }
-
-    /* Core Panel */
-    .monitor-wrapper {
-      max-width: 1200px;
-      margin: 0 auto;
-      background: var(--bg-card);
-      border: 1px solid var(--border-color);
-      border-radius: 16px;
-      padding: 24px;
-      box-shadow: 0 8px 32px rgba(0, 255, 204, 0.05);
-    }
-
-    /* Header */
-    .monitor-header {
+    header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-      padding-bottom: 20px;
-      margin-bottom: 24px;
+      background: #0b132b;
+      border: 1px solid var(--border-color);
+      border-left: 4px solid var(--accent-cyan);
+      border-radius: 8px;
+      padding: 10px 16px;
+      margin-bottom: 12px;
     }
 
-    .monitor-title-area h1 {
-      font-family: var(--font-outfit);
-      font-size: 1.6rem;
-      font-weight: 800;
+    .brand-title {
+      font-size: 14px;
+      font-weight: 900;
       letter-spacing: 1.5px;
-      background: linear-gradient(135deg, #fff 0%, var(--neon-cyan) 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      color: var(--accent-cyan);
       display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .monitor-title-area p {
-      color: var(--text-muted);
-      font-size: 0.78rem;
-      margin-top: 4px;
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-    }
-
-    .status-badge {
-      display: inline-flex;
       align-items: center;
       gap: 8px;
-      background: rgba(51, 255, 51, 0.1);
-      border: 1px solid var(--neon-green);
-      color: var(--neon-green);
-      padding: 6px 12px;
-      border-radius: 20px;
-      font-size: 0.72rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      animation: pulse-border 2s infinite alternate;
     }
 
-    .status-dot {
-      width: 8px;
-      height: 8px;
-      background-color: var(--neon-green);
-      border-radius: 50%;
-      box-shadow: 0 0 8px var(--neon-green);
-      animation: blink 1s infinite alternate;
+    .metrics-bar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
     }
 
-    /* KPIs */
-    .kpis-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 16px;
-      margin-bottom: 24px;
+    .metric-pill {
+      background: #1c2541;
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: bold;
+      border: 1px solid #3a506b;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
 
-    .kpi-card {
-      background: var(--bg-nested);
-      border: 1px solid rgba(255, 255, 255, 0.03);
-      border-left: 4px solid var(--neon-cyan);
-      padding: 16px 20px;
-      border-radius: 10px;
-      position: relative;
-      transition: all 0.3s ease;
+    .metric-pill.danger {
+      border-color: var(--accent-red);
+      color: var(--accent-red);
+      background: rgba(239, 68, 68, 0.15);
+      animation: alertPulse 1.5s infinite;
     }
 
-    .kpi-card:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 4px 15px rgba(0, 255, 204, 0.05);
+    .metric-pill.afk-pill {
+      border-color: var(--accent-purple);
+      color: var(--accent-purple);
+      background: rgba(168, 85, 247, 0.15);
     }
 
-    .kpi-card.magenta { border-left-color: var(--neon-magenta); }
-    .kpi-card.orange { border-left-color: var(--neon-orange); }
-    .kpi-card.red { border-left-color: var(--neon-red); }
+    .audio-btn {
+      background: #1e293b;
+      color: #fff;
+      border: 1px solid #3a506b;
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: bold;
+      cursor: pointer;
+    }
 
-    .kpi-label {
-      font-size: 0.65rem;
+    .audio-btn.active {
+      border-color: var(--accent-green);
+      color: var(--accent-green);
+    }
+
+    .filters-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      align-items: center;
+    }
+
+    .filter-btn {
+      background: #1c2541;
       color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 1.2px;
-      margin-bottom: 6px;
+      border: 1px solid var(--border-color);
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: bold;
+      cursor: pointer;
     }
 
-    .kpi-value {
-      font-family: var(--font-outfit);
-      font-size: 1.8rem;
+    .filter-btn.active, .filter-btn:hover {
+      background: var(--accent-green);
+      color: #000;
+      border-color: var(--accent-green);
+    }
+
+    .grid-operators {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+    }
+
+    .operator-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 12px;
+      transition: transform 0.2s;
+      position: relative;
+    }
+
+    .operator-card:hover {
+      background: var(--bg-card-hover);
+      transform: translateY(-2px);
+    }
+
+    .operator-card.in-breach {
+      border-color: var(--accent-red) !important;
+      box-shadow: 0 0 16px rgba(239, 68, 68, 0.4);
+      animation: alertPulse 1s infinite;
+    }
+
+    .operator-card.is-afk {
+      border-color: var(--accent-purple) !important;
+      box-shadow: 0 0 16px rgba(168, 85, 247, 0.3);
+    }
+
+    .operator-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 8px;
+      margin-bottom: 10px;
+    }
+
+    .operator-name {
+      font-size: 13px;
       font-weight: 800;
       color: #fff;
     }
 
-    /* Columns Layout */
-    .monitor-layout {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 20px;
+    .shift-tag {
+      font-size: 10px;
+      background: #1e293b;
+      color: #38bdf8;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: bold;
     }
 
-    @media (max-width: 768px) {
-      .monitor-layout {
-        grid-template-columns: 1fr;
-      }
+    .profiles-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
 
-    .panel-box {
-      background: var(--bg-nested);
-      border: 1px solid rgba(255, 255, 255, 0.03);
-      border-radius: 12px;
-      padding: 20px;
-    }
-
-    .panel-box h2 {
-      font-family: var(--font-outfit);
-      font-size: 0.95rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-bottom: 16px;
-      padding-bottom: 8px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-      color: #fff;
+    .profile-item {
+      background: #060913;
+      border: 1px solid #1e293b;
+      border-radius: 6px;
+      padding: 8px 10px;
       display: flex;
       justify-content: space-between;
       align-items: center;
     }
 
-    .panel-count-badge {
-      font-size: 0.68rem;
-      background: rgba(255, 255, 255, 0.08);
-      color: var(--text-muted);
-      padding: 2px 8px;
-      border-radius: 10px;
+    .profile-item.alert-profile {
+      border-color: var(--accent-red);
+      background: rgba(239, 68, 68, 0.08);
     }
 
-    /* Tables */
-    .table-container {
-      max-height: 380px;
-      overflow-y: auto;
-    }
-
-    .monitor-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.78rem;
-    }
-
-    .monitor-table th {
-      text-align: left;
-      padding: 8px 12px;
-      font-size: 0.68rem;
-      text-transform: uppercase;
-      color: var(--text-muted);
-      letter-spacing: 0.5px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-    }
-
-    .monitor-table td {
-      padding: 10px 12px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.02);
-      color: #cbd5e1;
-    }
-
-    .monitor-table tr:hover td {
-      background: rgba(0, 255, 204, 0.03);
-      color: #fff;
-    }
-
-    /* Utility badges */
-    .id-badge {
-      font-family: monospace;
-      background: rgba(0, 255, 204, 0.08);
-      color: var(--neon-cyan);
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 0.7rem;
-    }
-
-    .model-badge {
-      background: rgba(255, 0, 255, 0.08);
-      color: var(--neon-magenta);
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 0.7rem;
-    }
-
-    .btn-sync {
-      background: linear-gradient(135deg, var(--neon-cyan) 0%, #00b38c 100%);
-      color: #000;
-      border: none;
-      font-family: var(--font-outfit);
+    .profile-name {
+      font-size: 12px;
       font-weight: 700;
-      font-size: 0.78rem;
-      padding: 8px 16px;
-      border-radius: 20px;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      transition: all 0.3s ease;
-      box-shadow: 0 4px 10px rgba(0, 255, 204, 0.2);
+      color: var(--accent-cyan);
     }
 
-    .btn-sync:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 6px 15px rgba(0, 255, 204, 0.35);
+    .profile-stats {
+      display: flex;
+      gap: 8px;
+      font-size: 11px;
     }
 
-    /* Animations */
-    @keyframes blink {
-      0% { opacity: 0.3; }
-      100% { opacity: 1; }
+    .stat-letters {
+      color: #38bdf8;
+      font-weight: bold;
     }
 
-    @keyframes pulse-border {
-      0% { box-shadow: 0 0 2px rgba(51, 255, 51, 0.2); }
-      100% { box-shadow: 0 0 10px rgba(51, 255, 51, 0.4); }
+    .stat-sla {
+      font-weight: bold;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
     }
 
-    .loading-state {
-      padding: 40px;
-      text-align: center;
+    .stat-sla.ok { background: #064e3b; color: #34d399; }
+    .stat-sla.breach { background: #7f1d1d; color: #fca5a5; animation: alertPulse 1s infinite; }
+    .stat-sla.afk { background: #581c87; color: #d8b4fe; }
+
+    .last-seen {
+      font-size: 9px;
       color: var(--text-muted);
-      font-size: 0.85rem;
+      margin-top: 6px;
+      text-align: right;
+    }
+
+    @keyframes alertPulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.5; }
+      100% { opacity: 1; }
     }
   </style>
 </head>
 <body>
 
-  <div class="monitor-wrapper">
-    <!-- Header -->
-    <header class="monitor-header">
-      <div class="monitor-title-area">
-        <h1>⚡ RYR TITAN APEX MONITOR</h1>
-        <p>Sistema de Telemetría y Mapeo de Identidades de Operación</p>
-      </div>
-      <div style="display: flex; align-items: center; gap: 12px;">
-        <button class="btn-sync" onclick="fetchData()">
-          ↻ Recargar Datos
-        </button>
-        <div class="status-badge">
-          <span class="status-dot"></span>
-          SYS-CONNECTED
-        </div>
-      </div>
-    </header>
+  <header>
+    <div class="brand-title">
+      ⚡ RYR TITAN APEX - SUPERVISIÓN LIVE
+    </div>
+    <div class="metrics-bar">
+      <div class="metric-pill">👥 Operadores: <span id="total-operators">0</span></div>
+      <div class="metric-pill">✉️ Cartas Totales: <span id="total-letters">0</span></div>
+      <div id="afk-pill" class="metric-pill afk-pill" style="display:none;">💤 Inactivos (+5m): <span id="total-afk">0</span></div>
+      <div id="alert-pill" class="metric-pill danger" style="display:none;">🚨 Alertas SLA (+2m): <span id="total-alerts">0</span></div>
+      <button id="btn-sound" class="audio-btn" onclick="toggleAudio()">🔇 Sonido: OFF</button>
+    </div>
+  </header>
 
-    <!-- KPIs -->
-    <section class="kpis-grid">
-      <div class="kpi-card">
-        <div class="kpi-label">👥 Operadores en Base</div>
-        <div class="kpi-value" id="kpi-ops-count">—</div>
-      </div>
-      <div class="kpi-card magenta">
-        <div class="kpi-label">🎭 Perfiles Asignados</div>
-        <div class="kpi-value" id="kpi-perfs-count">—</div>
-      </div>
-      <div class="kpi-card orange">
-        <div class="kpi-label">⏱️ Latencia de Conexión</div>
-        <div class="kpi-value" id="kpi-ping">0 ms</div>
-      </div>
-      <div class="kpi-card red">
-        <div class="kpi-label">📡 Nodos del Clúster</div>
-        <div class="kpi-value">1 Activo</div>
-      </div>
-    </section>
-
-    <!-- Content Layout -->
-    <main class="monitor-layout">
-      <!-- Left Column: Operadores -->
-      <div class="panel-box">
-        <h2>
-          Operadores Activos
-          <span class="panel-count-badge" id="ops-badge">0</span>
-        </h2>
-        <div class="table-container">
-          <table class="monitor-table">
-            <thead>
-              <tr>
-                <th style="width: 25%">ID</th>
-                <th>Nombre del Operador</th>
-              </tr>
-            </thead>
-            <tbody id="ops-table-body">
-              <tr>
-                <td colspan="2" class="loading-state">Cargando operadores...</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Right Column: Perfiles -->
-      <div class="panel-box">
-        <h2>
-          Perfiles del Sistema
-          <span class="panel-count-badge" id="perfs-badge">0</span>
-        </h2>
-        <div class="table-container">
-          <table class="monitor-table">
-            <thead>
-              <tr>
-                <th style="width: 35%">ID Datame</th>
-                <th>Modelo</th>
-              </tr>
-            </thead>
-            <tbody id="perfs-table-body">
-              <tr>
-                <td colspan="2" class="loading-state">Cargando perfiles...</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </main>
+  <div class="filters-bar">
+    <span style="font-size: 11px; color: var(--text-muted); font-weight: bold;">TURNO:</span>
+    <button class="filter-btn active" onclick="setShiftFilter('ALL')">TODOS</button>
+    <button class="filter-btn" onclick="setShiftFilter('Mañana')">Mañana</button>
+    <button class="filter-btn" onclick="setShiftFilter('Tarde')">Tarde</button>
+    <button class="filter-btn" onclick="setShiftFilter('Noche')">Noche</button>
+    <button class="filter-btn" onclick="setShiftFilter('Trasnocho')">Trasnocho</button>
   </div>
 
+  <div id="operators-grid" class="grid-operators"></div>
+
   <script>
-    async function fetchData() {
-      const t0 = performance.now();
-      try {
-        // Fetch Operadores
-        const resOps = await fetch('/api/operadores');
-        const dataOps = await resOps.json();
-        
-        // Fetch Perfiles
-        const resPerfs = await fetch('/api/perfiles');
-        const dataPerfs = await resPerfs.json();
+    let activeFilter = 'ALL';
+    let soundEnabled = false;
+    let audioCtx = null;
+    let lastAlertState = false;
+    const API_URL = window.location.origin;
 
-        // Update KPIs
-        document.getElementById('kpi-ops-count').textContent = dataOps.operadores ? dataOps.operadores.length : 0;
-        document.getElementById('kpi-perfs-count').textContent = dataPerfs.perfiles ? dataPerfs.perfiles.length : 0;
-        
-        document.getElementById('ops-badge').textContent = dataOps.operadores ? dataOps.operadores.length : 0;
-        document.getElementById('perfs-badge').textContent = dataPerfs.perfiles ? dataPerfs.perfiles.length : 0;
-
-        // Render Operadores Table
-        const opsBody = document.getElementById('ops-table-body');
-        if (dataOps.operadores && dataOps.operadores.length > 0) {
-          opsBody.innerHTML = dataOps.operadores.map(op => `
-            <tr>
-              <td><span class="id-badge">${op.id}</span></td>
-              <td style="font-weight: 600;">${op.name}</td>
-            </tr>
-          `).join('');
-        } else {
-          opsBody.innerHTML = `<tr><td colspan="2" class="loading-state">Sin operadores registrados</td></tr>`;
-        }
-
-        // Render Perfiles Table
-        const perfsBody = document.getElementById('perfs-table-body');
-        if (dataPerfs.perfiles && dataPerfs.perfiles.length > 0) {
-          perfsBody.innerHTML = dataPerfs.perfiles.map(p => `
-            <tr>
-              <td><span class="id-badge">${p.id}</span></td>
-              <td><span class="model-badge">${p.name}</span></td>
-            </tr>
-          `).join('');
-        } else {
-          perfsBody.innerHTML = `<tr><td colspan="2" class="loading-state">Sin perfiles registrados</td></tr>`;
-        }
-
-        // Calculate Ping Latency
-        const t1 = performance.now();
-        document.getElementById('kpi-ping').textContent = Math.round(t1 - t0) + ' ms';
-      } catch (err) {
-        console.error('Error fetching telemetry data:', err);
-        const errHtml = `<tr><td colspan="2" class="loading-state" style="color:var(--neon-red);">⚠️ Error de comunicación con la API</td></tr>`;
-        document.getElementById('ops-table-body').innerHTML = errHtml;
-        document.getElementById('perfs-table-body').innerHTML = errHtml;
-        document.getElementById('kpi-ping').textContent = 'Error';
+    function toggleAudio() {
+      soundEnabled = !soundEnabled;
+      const btn = document.getElementById('btn-sound');
+      if (soundEnabled) {
+        btn.innerText = '🔊 Sonido: ON';
+        btn.classList.add('active');
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        playBeep(600, 0.1);
+      } else {
+        btn.innerText = '🔇 Sonido: OFF';
+        btn.classList.remove('active');
       }
     }
 
-    // Auto-fetch data initially and every 30 seconds
-    fetchData();
-    setInterval(fetchData, 30000);
+    function playBeep(freq = 880, duration = 0.2) {
+      if (!soundEnabled) return;
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+      } catch (e) {}
+    }
+
+    function setShiftFilter(shift) {
+      activeFilter = shift;
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.innerText.includes(shift) || (shift === 'ALL' && btn.innerText === 'TODOS'));
+      });
+      fetchLiveTelemetry();
+    }
+
+    async function fetchLiveTelemetry() {
+      try {
+        const res = await fetch(`${API_URL}/api/telemetry/live`);
+        const data = await res.json();
+        renderDashboard(data.operators || []);
+      } catch (err) {
+        console.error("Error conectando con backend:", err);
+      }
+    }
+
+    function renderDashboard(operatorsList) {
+      const grid = document.getElementById('operators-grid');
+      grid.innerHTML = '';
+
+      let globalLettersCount = 0;
+      let globalAlertsCount = 0;
+      let globalAfkCount = 0;
+
+      const filtered = operatorsList.filter(op => {
+        if (activeFilter === 'ALL') return true;
+        return op.shift === activeFilter;
+      });
+
+      filtered.forEach(op => {
+        let opHasBreach = false;
+        let opIsAfk = op.isAfkGlobal;
+        let profilesHtml = '';
+
+        globalLettersCount += op.totalLetters;
+        if (op.hasExpiredSlaGlobal) opHasBreach = true;
+        if (opIsAfk) globalAfkCount++;
+
+        op.profiles.forEach(p => {
+          if (p.hasExpiredSla) {
+            globalAlertsCount++;
+          }
+
+          let slaBadgeClass = 'ok';
+          let slaBadgeText = '⏱️ AL DÍA';
+
+          if (p.hasExpiredSla) {
+            slaBadgeClass = 'breach';
+            slaBadgeText = '🚨 +2 MIN';
+          } else if (p.isAfk) {
+            slaBadgeClass = 'afk';
+            slaBadgeText = `💤 ${Math.floor(p.idleSeconds / 60)}m AFK`;
+          }
+
+          profilesHtml += `
+            <div class="profile-item ${p.hasExpiredSla ? 'alert-profile' : ''}">
+              <div class="profile-info">
+                <span class="profile-name">🎯 ${p.profileName}</span>
+                <span class="profile-stats">
+                  <span class="stat-letters">✉️ ${p.pendingReadLetters || 0} cartas</span>
+                  ${p.unansweredChatsCount > 0 ? `<span style="color:#f59e0b;">💬 ${p.unansweredChatsCount}</span>` : ''}
+                </span>
+              </div>
+              <div>
+                <span class="stat-sla ${slaBadgeClass}">${slaBadgeText}</span>
+              </div>
+            </div>
+          `;
+        });
+
+        const card = document.createElement('div');
+        card.className = `operator-card ${opHasBreach ? 'in-breach' : ''} ${opIsAfk ? 'is-afk' : ''}`;
+        card.innerHTML = `
+          <div class="operator-header">
+            <span class="operator-name">👤 ${op.operatorName}</span>
+            <span class="shift-tag">${op.shift}</span>
+          </div>
+          <div class="profiles-list">
+            ${profilesHtml}
+          </div>
+          <div class="last-seen">Activo hace ${Math.floor((Date.now() - op.lastSeen) / 1000)}s</div>
+        `;
+        grid.appendChild(card);
+      });
+
+      document.getElementById('total-operators').innerText = filtered.length;
+      document.getElementById('total-letters').innerText = globalLettersCount;
+
+      const alertPill = document.getElementById('alert-pill');
+      if (globalAlertsCount > 0) {
+        alertPill.style.display = 'flex';
+        document.getElementById('total-alerts').innerText = globalAlertsCount;
+        if (!lastAlertState) {
+          playBeep(880, 0.4);
+        }
+        lastAlertState = true;
+      } else {
+        alertPill.style.display = 'none';
+        lastAlertState = false;
+      }
+
+      const afkPill = document.getElementById('afk-pill');
+      if (globalAfkCount > 0) {
+        afkPill.style.display = 'flex';
+        document.getElementById('total-afk').innerText = globalAfkCount;
+      } else {
+        afkPill.style.display = 'none';
+      }
+    }
+
+    setInterval(fetchLiveTelemetry, 2000);
+    fetchLiveTelemetry();
   </script>
 </body>
 </html>
