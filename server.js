@@ -5,32 +5,31 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '15mb' }));
 
-// Memoria centralizada de telemetría, chats en vivo y palabras prohibidas
+// Memoria centralizada
 const liveTelemetryMap = new Map();
-const recentChatAudits = new Map(); // Key: `${profileId}_${clientId}` -> Markdown Transcript
+const deepChatAudits = new Map(); // Key: `${profile}_${clientId}`
 
-// Palabras prohibidas dinámicas gestionables por los monitores
+// Diccionario dinámico de palabras prohibidas
 let dynamicBannedWords = new Set([
   'whatsapp', 'skype', 'email', 'correo', 'teléfono', 'telefono', 
   'prometo', 'promesa', 'número', 'numero', 'banco', 'tarjeta', 
-  'instagram', 'telegram', 'dinero', 'transferencia', 'pay'
+  'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. ENDPOINT: RECIBIR TELEMETRÍA DE LA EXTENSIÓN
+// Palabras clave para detectar maltrato o respuestas cortantes
+const hostilePhrases = [
+  'callate', 'cállate', 'no me importa', 'que pereza', 'qué pereza', 'apurate', 'apúrate',
+  'no tengo tiempo', 'dejame', 'déjame', 'no fastidies', 'fastidio', 'idiota', 'pesado'
+];
+
+// 1. ENDPOINT: TELEMETRÍA DE OPERADORES
 app.post('/api/telemetry', (req, res) => {
   const {
-    operator,
-    shift,
-    profile,
-    profileId,
-    pendingReadLetters,
-    unansweredChatsCount,
-    hasExpiredSla,
-    isAfk,
-    idleSeconds,
-    status
+    operator, shift, profile, profileId,
+    pendingReadLetters, unansweredChatsCount,
+    hasExpiredSla, isAfk, idleSeconds, status
   } = req.body;
 
   if (!operator || !profile) {
@@ -60,30 +59,76 @@ app.post('/api/telemetry', (req, res) => {
   res.json({ success: true });
 });
 
-// 2. ENDPOINT: RECIBIR HISTORIAL DE CONVERSACIONES EN MARKDOWN
-app.post('/api/chats/sync', (req, res) => {
-  const { operator, profile, clientName, clientId, markdown } = req.body;
-  if (profile && clientId && markdown) {
-    const key = `${profile}_${clientId}`;
-    recentChatAudits.set(key, {
-      operator: operator || 'N/A',
-      profile: profile,
-      clientName: clientName || 'Cliente',
-      clientId: clientId,
-      markdown: markdown,
-      updatedAt: Date.now()
-    });
+// 2. ENDPOINT: MOTOR DE AUDITORÍA HEURÍSTICA Y EXTRACCIÓN DE CHATS (MARKDOWN)
+app.post('/api/chats/audit-deep', (req, res) => {
+  const { operator, profile, clientName, clientId, markdown, messages } = req.body;
+
+  if (!profile || !clientId || !markdown) {
+    return res.status(400).json({ error: 'Datos de chat incompletos' });
   }
-  res.json({ success: true });
+
+  const auditKey = `${profile}_${clientId}`;
+  const flags = [];
+  const textLower = markdown.toLowerCase();
+
+  // A. Analizar Maltrato o Tono Hostil
+  for (let phrase of hostilePhrases) {
+    if (textLower.includes(phrase)) {
+      flags.push(`🚨 Posible Maltrato/Tono Hostil ("${phrase}")`);
+      break;
+    }
+  }
+
+  // B. Analizar Palabras Prohibidas
+  for (let word of dynamicBannedWords) {
+    if (textLower.includes(word)) {
+      flags.push(`🛑 Palabra Prohibida Detectada ("${word}")`);
+      break;
+    }
+  }
+
+  // C. Analizar Oportunidad de Cartas Desperdiciada
+  const clientWantsLetters = /(carta|letter|escríbeme|escribeme|foto|story|historia|correo)/i.test(textLower);
+  const operatorOfferedLetter = /(te envié una carta|te mandé una carta|check your mail|sent you a letter|revisa tu correo)/i.test(textLower);
+  if (clientWantsLetters && !operatorOfferedLetter) {
+    flags.push(`💡 Oportunidad de Carta Desperdiciada`);
+  }
+
+  // D. Analizar Respuestas Perezosas (Monosílabos constantes)
+  if (Array.isArray(messages) && messages.length >= 4) {
+    const operatorMsgs = messages.filter(m => m.isOperator);
+    if (operatorMsgs.length > 0) {
+      const avgWords = operatorMsgs.reduce((acc, m) => acc + m.text.split(' ').length, 0) / operatorMsgs.length;
+      if (avgWords < 3.5) {
+        flags.push(`⚠️ Respuestas Muy Cortas/Monosílabos`);
+      }
+    }
+  }
+
+  const auditEntry = {
+    id: auditKey,
+    operator: operator || 'Desconocido',
+    profile: profile,
+    clientName: clientName || 'Cliente',
+    clientId: clientId,
+    totalMessages: Array.isArray(messages) ? messages.length : 0,
+    flags: flags.length > 0 ? flags : ['✅ Conversación Correcta'],
+    hasBreach: flags.some(f => f.startsWith('🚨') || f.startsWith('🛑')),
+    markdown: markdown,
+    timestamp: Date.now()
+  };
+
+  deepChatAudits.set(auditKey, auditEntry);
+  res.json({ success: true, audit: auditEntry });
 });
 
-// 3. ENDPOINT: OBTENER AUDITORÍAS DE CHATS PARA EL MONITOR
+// 3. ENDPOINT: LISTAR TODAS LAS AUDITORÍAS DE CHATS PARA EL MONITOR
 app.get('/api/chats/audits', (req, res) => {
-  const audits = Array.from(recentChatAudits.values()).sort((a, b) => b.updatedAt - a.updatedAt);
-  res.json({ success: true, audits: audits.slice(0, 50) });
+  const audits = Array.from(deepChatAudits.values()).sort((a, b) => b.timestamp - a.timestamp);
+  res.json({ success: true, audits: audits.slice(0, 100) });
 });
 
-// 4. ENDPOINTS DE GESTIÓN DE PALABRAS PROHIBIDAS
+// 4. PALABRAS PROHIBIDAS
 app.get('/api/banned-words', (req, res) => {
   res.json({ words: Array.from(dynamicBannedWords) });
 });
@@ -104,7 +149,7 @@ app.post('/api/banned-words/delete', (req, res) => {
   res.json({ success: true, words: Array.from(dynamicBannedWords) });
 });
 
-// 5. ENDPOINT: CONSOLIDADO EN VIVO PARA EL MONITOR
+// 5. CONSOLIDADO EN VIVO PARA EL MONITOR
 app.get('/api/telemetry/live', (req, res) => {
   const now = Date.now();
   const operatorsMap = new Map();
@@ -150,13 +195,13 @@ app.get('/api/telemetry/live', (req, res) => {
   });
 });
 
-// 6. DASHBOARD EMBEBIDO EN VIVO (CON MODALES DE AUDITORÍA Y FIREWALL)
+// 6. DASHBOARD CON CENTRO DE AUDITORÍA Y DESCARGAS MARKDOWN
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RYR TITAN APEX - LIVE MONITOR & AUDIT</title>
+  <title>RYR TITAN APEX - LIVE MONITOR & CHAT AUDIT</title>
   <style>
     :root {
       --bg-main: #060913;
@@ -182,7 +227,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     .metric-pill.danger { border-color: var(--accent-red); color: var(--accent-red); background: rgba(239, 68, 68, 0.15); animation: pulse 1.5s infinite; }
     .metric-pill.afk-pill { border-color: var(--accent-purple); color: var(--accent-purple); background: rgba(168, 85, 247, 0.15); }
     
-    .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 10px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+    .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 11px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; transition: 0.2s; }
     .btn-action:hover { border-color: var(--accent-green); color: var(--accent-green); }
     .btn-action.active { border-color: var(--accent-green); color: var(--accent-green); background: rgba(16,185,129,0.1); }
 
@@ -212,19 +257,26 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     .stat-sla.breach { background: #7f1d1d; color: #fca5a5; animation: pulse 1s infinite; }
     .stat-sla.afk { background: #581c87; color: #d8b4fe; }
 
-    /* MODALES DE AUDITORÍA Y PALABRAS PROHIBIDAS */
-    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); z-index: 99999; justify-content: center; align-items: center; }
-    .modal-content { background: #0e1526; border: 1px solid var(--accent-cyan); border-radius: 10px; width: 680px; max-width: 90%; max-height: 85vh; padding: 20px; display: flex; flex-direction: column; gap: 14px; color: #fff; }
+    /* MODAL DE AUDITORÍA Y CHATS */
+    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); z-index: 99999; justify-content: center; align-items: center; }
+    .modal-content { background: #0e1526; border: 1px solid var(--accent-cyan); border-radius: 10px; width: 850px; max-width: 95%; max-height: 88vh; padding: 20px; display: flex; flex-direction: column; gap: 12px; color: #fff; }
     .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 10px; font-weight: 800; color: var(--accent-cyan); }
-    .modal-body { overflow-y: auto; flex: 1; font-family: monospace; font-size: 12px; }
+    .modal-body { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 10px; }
     
+    .audit-card { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .audit-card.flagged { border-color: var(--accent-red); background: rgba(239, 68, 68, 0.05); }
+    .audit-header { display: flex; justify-content: space-between; align-items: center; }
+    .audit-title { font-size: 12px; font-weight: 800; color: var(--accent-cyan); }
+    .audit-flags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .flag-badge { font-size: 10px; font-weight: bold; padding: 2px 7px; border-radius: 4px; background: #1c2541; border: 1px solid #3a506b; color: #38bdf8; }
+    .flag-badge.danger { border-color: #ef4444; color: #f87171; background: rgba(239, 68, 68, 0.2); }
+    .flag-badge.warn { border-color: #f59e0b; color: #fbbf24; background: rgba(245, 158, 11, 0.2); }
+
+    .chat-transcript { background: #0b132b; border: 1px solid #1e293b; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 11px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; line-height: 1.5; color: #cbd5e1; }
+
     .banned-tags-container { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
     .banned-tag { background: #1c2541; border: 1px solid #ef4444; color: #fca5a5; padding: 4px 8px; border-radius: 4px; font-size: 11px; display: flex; align-items: center; gap: 6px; }
     .banned-tag span { cursor: pointer; font-weight: bold; color: #fff; }
-    .banned-tag span:hover { color: #ef4444; }
-
-    .chat-card { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 10px; margin-bottom: 10px; white-space: pre-wrap; font-size: 11px; line-height: 1.5; }
-    .chat-card h4 { color: var(--accent-cyan); margin-bottom: 6px; }
 
     @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
   </style>
@@ -232,14 +284,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <body>
 
   <header>
-    <div class="brand-title">⚡ RYR TITAN APEX - SUPERVISIÓN & AUDITORÍA LIVE</div>
+    <div class="brand-title">⚡ RYR TITAN APEX - AUDITORÍA & SUPERVISIÓN LIVE</div>
     <div class="metrics-bar">
       <div class="metric-pill">👥 Ops: <span id="total-operators">0</span></div>
       <div class="metric-pill">✉️ Cartas: <span id="total-letters">0</span></div>
       <div id="afk-pill" class="metric-pill afk-pill" style="display:none;">💤 Inactivos: <span id="total-afk">0</span></div>
-      <div id="alert-pill" class="metric-pill danger" style="display:none;">🚨 SLA +2m: <span id="total-alerts">0</span></div>
+      <div id="alert-pill" class="metric-pill danger" style="display:none;">🚨 Alertas SLA: <span id="total-alerts">0</span></div>
+      <button class="btn-action" onclick="openChatAuditsModal()">📄 Auditoría de Chats (MD)</button>
       <button class="btn-action" onclick="openBannedWordsModal()">🛡️ Palabras Prohibidas</button>
-      <button class="btn-action" onclick="openChatAuditsModal()">📄 Auditar Chats (MD)</button>
       <button id="btn-sound" class="btn-action" onclick="toggleAudio()">🔇 Sonido: OFF</button>
     </div>
   </header>
@@ -255,15 +307,31 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   <div id="operators-grid" class="grid-operators"></div>
 
-  <!-- MODAL: GESTOR DE PALABRAS PROHIBIDAS -->
-  <div id="modal-banned" class="modal-overlay">
+  <!-- MODAL: AUDITORÍA DE CHATS EN MARKDOWN -->
+  <div id="modal-chats" class="modal-overlay">
     <div class="modal-content">
       <div class="modal-header">
-        <span>🛡️ FIREWALL: PALABRAS PROHIBIDAS EN TIEMPO REAL</span>
+        <span>📄 CENTRO DE AUDITORÍA DE CONVERSACIONES (MARKDOWN)</span>
         <button class="btn-action" onclick="closeModals()">✕</button>
       </div>
       <div style="display:flex; gap:8px;">
-        <input type="text" id="input-new-word" placeholder="Nueva palabra prohibida (ej: telegram, transferencia)..." style="flex:1; padding:8px; background:#060913; border:1px solid #3a506b; color:#fff; border-radius:6px; outline:none;">
+        <input type="text" id="input-search-audit" oninput="filterAudits()" placeholder="Buscar por operador, perfil o cliente..." style="flex:1; padding:8px; background:#060913; border:1px solid #3a506b; color:#fff; border-radius:6px; outline:none; font-size:12px;">
+      </div>
+      <div class="modal-body" id="chat-audits-list">
+        <p style="color:var(--text-muted);">Cargando historial de conversaciones...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: GESTOR DE PALABRAS PROHIBIDAS -->
+  <div id="modal-banned" class="modal-overlay">
+    <div class="modal-content" style="width:600px;">
+      <div class="modal-header">
+        <span>🛡️ FIREWALL EN TIEMPO REAL: PALABRAS PROHIBIDAS</span>
+        <button class="btn-action" onclick="closeModals()">✕</button>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <input type="text" id="input-new-word" placeholder="Nueva palabra prohibida..." style="flex:1; padding:8px; background:#060913; border:1px solid #3a506b; color:#fff; border-radius:6px; outline:none; font-size:12px;">
         <button class="btn-action" style="background:#10b981; color:#000;" onclick="addBannedWord()">+ Agregar</button>
       </div>
       <div class="modal-body">
@@ -272,23 +340,11 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- MODAL: AUDITORÍA DE CHATS EN MARKDOWN -->
-  <div id="modal-chats" class="modal-overlay">
-    <div class="modal-content" style="width:780px;">
-      <div class="modal-header">
-        <span>📄 HISTORIAL DE CONVERSACIONES EXTRAÍDAS (MARKDOWN)</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
-      </div>
-      <div class="modal-body" id="chat-audits-list">
-        <p style="color:var(--text-muted);">Cargando historial de conversaciones...</p>
-      </div>
-    </div>
-  </div>
-
   <script>
     let activeFilter = 'ALL';
     let soundEnabled = false;
     let audioCtx = null;
+    let globalAuditsCache = [];
     const API_URL = window.location.origin;
 
     function toggleAudio() {
@@ -404,6 +460,58 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       }
     }
 
+    // MODAL AUDITORÍAS DE CHATS
+    async function openChatAuditsModal() {
+      document.getElementById('modal-chats').style.display = 'flex';
+      const res = await fetch(\`\${API_URL}/api/chats/audits\`);
+      const data = await res.json();
+      globalAuditsCache = data.audits || [];
+      renderAuditsList(globalAuditsCache);
+    }
+
+    function renderAuditsList(audits) {
+      const container = document.getElementById('chat-audits-list');
+      if (audits.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-muted);">No hay conversaciones sincronizadas aún. Haz clic en "⚡ Extraer Chat" en Talkytimes.</p>';
+        return;
+      }
+
+      container.innerHTML = audits.map(a => {
+        const flagHtml = a.flags.map(f => {
+          let c = 'flag-badge';
+          if (f.startsWith('🚨') || f.startsWith('🛑')) c += ' danger';
+          else if (f.startsWith('💡') || f.startsWith('⚠️')) c += ' warn';
+          return \`<span class="\${c}">\${f}</span>\`;
+        }).join('');
+
+        const blob = new Blob([a.markdown], { type: 'text/markdown' });
+        const downloadUrl = URL.createObjectURL(blob);
+
+        return \`
+          <div class="audit-card \${a.hasBreach ? 'flagged' : ''}">
+            <div class="audit-header">
+              <span class="audit-title">👤 Op: \${a.operator} | 🎯 Perfil: \${a.profile} | 💬 Cliente: \${a.clientName} (\${a.clientId})</span>
+              <a href="\${downloadUrl}" download="chat_\${a.profile}_\${a.clientId}.md" class="btn-action" style="text-decoration:none;">📥 Descargar .MD</a>
+            </div>
+            <div class="audit-flags">\${flagHtml}</div>
+            <div class="chat-transcript">\${a.markdown}</div>
+          </div>
+        \`;
+      }).join('');
+    }
+
+    function filterAudits() {
+      const query = document.getElementById('input-search-audit').value.toLowerCase();
+      const filtered = globalAuditsCache.filter(a => 
+        a.operator.toLowerCase().includes(query) ||
+        a.profile.toLowerCase().includes(query) ||
+        a.clientName.toLowerCase().includes(query) ||
+        a.clientId.toLowerCase().includes(query) ||
+        a.flags.some(f => f.toLowerCase().includes(query))
+      );
+      renderAuditsList(filtered);
+    }
+
     // MODAL PALABRAS PROHIBIDAS
     async function openBannedWordsModal() {
       document.getElementById('modal-banned').style.display = 'flex';
@@ -446,25 +554,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       renderBannedTags(data.words || []);
     }
 
-    // MODAL AUDITORÍA DE CHATS
-    async function openChatAuditsModal() {
-      document.getElementById('modal-chats').style.display = 'flex';
-      const container = document.getElementById('chat-audits-list');
-      container.innerHTML = '<p>Cargando transcripciones de chats...</p>';
-      const res = await fetch(\`\${API_URL}/api/chats/audits\`);
-      const data = await res.json();
-      if (data.audits && data.audits.length > 0) {
-        container.innerHTML = data.audits.map(c => \`
-          <div class="chat-card">
-            <h4>🎯 Perfil: \${c.profile} | 👤 Operador: \${c.operator} | 💬 Cliente: \${c.clientName} (\${c.clientId})</h4>
-            <div>\${c.markdown}</div>
-          </div>
-        \`).join('');
-      } else {
-        container.innerHTML = '<p>No hay conversaciones recientes sincronizadas aún.</p>';
-      }
-    }
-
     function closeModals() {
       document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none');
     }
@@ -480,5 +569,5 @@ app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
 app.listen(PORT, () => {
-  console.log(`🚀 RYR TITAN BACKEND V3.5 activo en puerto ${PORT}`);
+  console.log(`🚀 RYR TITAN BACKEND V4.0 activo en puerto ${PORT}`);
 });
