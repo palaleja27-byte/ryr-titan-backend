@@ -21,96 +21,55 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR DE IA HEURÍSTICO PARA ANÁLISIS PSICOLÓGICO Y PATRONES
+// 1. MOTOR DE IA HEURÍSTICO
 function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown) {
-  const textLower = markdown.toLowerCase();
+  const textLower = (markdown || '').toLowerCase();
   const findings = [];
   let qualityScore = 100;
   let riskLevel = 'BAJO';
 
-  // A. Coacción y Mendicidad de Regalos (-35 pts)
-  const giftRegex = /(?:si me quisieras|si me amaras|envíame un regalo|mandame un regalo|dame un regalo|cómprame un regalo|regálame algo|pídeme un regalo|send me a gift|give me a gift|if you loved me|buy me a present|send a present|need coins|give me coins)/i;
-  if (giftRegex.test(textLower)) {
-    findings.push({
-      type: 'CRITICAL',
-      title: '🛑 Coacción / Mendicidad de Regalos',
-      description: 'El operador está condicionando el afecto o exigiendo regalos/créditos de forma agresiva.',
-      quote: 'Petición directa de regalos detectada en el diálogo.'
-    });
+  // Coacción de regalos
+  if (/(?:si me quisieras|si me amaras|envíame un regalo|mandame un regalo|dame un regalo|cómprame un regalo|send me a gift|buy me a present)/i.test(textLower)) {
+    findings.push({ title: '🛑 Coacción por Regalos', description: 'Petición directa de regalos detectada en el diálogo.' });
     qualityScore -= 35;
     riskLevel = 'CRÍTICO';
   }
 
-  // B. Incomodidad / Reclamos del Cliente (-25 pts)
-  const complaintRegex = /(?:por qué me hablas así|por que me tratas así|no te acuerdas de mí|olvidaste mi nombre|solo quieres mi dinero|solo te importan los regalos|me estás presionando|me siento incómodo|me siento incomodo|por qué tan cortante|you forgot my name|you are rude|why are you talking to me like that|all you want is money|you don't care about me|stop pressuring me)/i;
-  if (complaintRegex.test(textLower)) {
-    findings.push({
-      type: 'WARNING',
-      title: '💔 Incomodidad Manifiesta del Cliente',
-      description: 'El usuario manifestó queja, descontento o sentirse presionado/ignorado.',
-      quote: 'Reclamo explícito del usuario en el historial.'
-    });
+  // Incomodidad
+  if (/(?:por qué me hablas así|por que me tratas así|no te acuerdas de mí|olvidaste mi nombre|solo quieres mi dinero|you forgot my name|you are rude)/i.test(textLower)) {
+    findings.push({ title: '💔 Incomodidad Manifiesta del Cliente', description: 'Reclamo explícito del usuario en el historial.' });
     qualityScore -= 25;
     if (riskLevel !== 'CRÍTICO') riskLevel = 'ALTO';
   }
 
-  // C. Tono Hostil o Groserías (-30 pts)
-  const hostilityRegex = /(?:cállate|callate|no me importa|qué pereza|que pereza|apúrate|apurate|no tengo tiempo|fastidio|pesado|idiota|imbécil|déjame en paz|dejame en paz|shut up|i don't care|stop bothering|waste of time)/i;
-  if (hostilityRegex.test(textLower)) {
-    findings.push({
-      type: 'CRITICAL',
-      title: '🚨 Maltrato / Tono Hostil o Cortante',
-      description: 'Uso de expresiones agresivas, desprecio o desinterés deliberado hacia el usuario.',
-      quote: 'Lenguaje inapropiado o pasivo-agresivo detectado.'
-    });
+  // Hostilidad
+  if (/(?:cállate|callate|no me importa|qué pereza|que pereza|apúrate|apurate|no tengo tiempo|fastidio|idiota|shut up|waste of time)/i.test(textLower)) {
+    findings.push({ title: '🚨 Maltrato / Tono Hostil', description: 'Lenguaje inapropiado o agresivo detectado.' });
     qualityScore -= 30;
     riskLevel = 'CRÍTICO';
   }
 
-  // D. Palabras Prohibidas (-25 pts)
+  // Palabras prohibidas
   for (let word of dynamicBannedWords) {
     if (textLower.includes(word.toLowerCase())) {
-      findings.push({
-        type: 'CRITICAL',
-        title: '🛑 Palabra Prohibida Detectada',
-        description: `Se detectó la palabra prohibida o intento de contacto externo: "${word}".`,
-        quote: `Palabra "${word}" encontrada en el texto.`
-      });
+      findings.push({ title: '🛑 Palabra Prohibida', description: `Se detectó la palabra: "${word}".` });
       qualityScore -= 25;
       if (riskLevel !== 'CRÍTICO') riskLevel = 'ALTO';
       break;
     }
   }
 
-  // E. Pérdida de Oportunidad de Cartas (-15 pts)
-  const clientWantsLetters = /(carta|letter|escríbeme|escribeme|foto|story|historia|correo)/i.test(textLower);
-  const operatorOfferedLetter = /(te envié una carta|te mandé una carta|check your mail|sent you a letter|revisa tu correo)/i.test(textLower);
-  if (clientWantsLetters && !operatorOfferedLetter) {
-    findings.push({
-      type: 'OPPORTUNITY',
-      title: '💡 Oportunidad de Cartas Desperdiciada',
-      description: 'El cliente mostró apertura emocional o pidió fotos/historias y el operador no ofreció enviar carta.',
-      quote: 'Falta de iniciativa para monetizar mediante cartas.'
-    });
-    qualityScore -= 15;
-    if (riskLevel === 'BAJO') riskLevel = 'MEDIO';
-  }
-
   qualityScore = Math.max(0, qualityScore);
 
-  // Diagnóstico final y recomendación para el monitor
-  let diagnosis = 'Conversación fluida, respetuosa y con buen enganche emocional.';
-  let recommendation = 'Mantener la misma dinámica y ritmo de conversación.';
+  let diagnosis = 'Conversación fluida y respetuosa.';
+  let recommendation = 'Mantener la dinámica actual.';
 
   if (riskLevel === 'CRÍTICO') {
-    diagnosis = 'Conversación de ALTO RIESGO: Se detectaron infracciones graves de conducta o coerción.';
-    recommendation = 'Intervenir al operador de inmediato y advertir sobre el protocolo de respeto y normas de la agencia.';
+    diagnosis = 'Conversación de ALTO RIESGO: Infracciones graves detectadas.';
+    recommendation = 'Intervenir al operador de inmediato y corregir conducta.';
   } else if (riskLevel === 'ALTO') {
-    diagnosis = 'Conversación con fricción: El cliente mostró inconformidad o el operador fue cortante.';
-    recommendation = 'Pedir al operador que sea más empático y haga preguntas abiertas para recuperar el interés del usuario.';
-  } else if (riskLevel === 'MEDIO') {
-    diagnosis = 'Conversación pasable pero con oportunidades de monetización perdidas.';
-    recommendation = 'Instruir al operador para que aproveche los ganchos emocionales y envíe cartas pagas.';
+    diagnosis = 'Conversación con fricción o desinterés.';
+    recommendation = 'Pedir al operador mayor empatía y preguntas abiertas.';
   }
 
   return {
@@ -122,7 +81,7 @@ function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markd
   };
 }
 
-// 2. ENDPOINT: VERIFICAR CHATS YA SUBIDOS
+// 2. ENDPOINT: VERIFICAR CHATS EN SUPABASE
 app.get('/api/chats/synced-ids', async (req, res) => {
   const profile = req.query.profile;
   const syncedSet = new Set(syncedClientsRegistry);
@@ -142,7 +101,7 @@ app.get('/api/chats/synced-ids', async (req, res) => {
   res.json({ success: true, syncedIds: Array.from(syncedSet) });
 });
 
-// 3. ENDPOINT: AUDITORÍA HEURÍSTICA Y GUARDADO
+// 3. ENDPOINT: AUDITORÍA Y GUARDADO CON CLAVE ÚNICA NUMÉRICA
 app.post('/api/chats/audit-deep', async (req, res) => {
   const { operator, profile, clientName, clientId, markdown, messages } = req.body;
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
@@ -152,37 +111,6 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   syncedClientsRegistry.add(cleanClientId);
 
   const aiReport = runDeepAiPatternAnalysis(operator, profile, clientName, cleanClientId, markdown);
-
-  // Registrar alertas activas si hay riesgo alto o crítico
-  aiReport.findings.forEach((finding, index) => {
-    if (finding.type === 'CRITICAL' || finding.type === 'WARNING') {
-      const alertId = `${auditKey}_${index}_${Date.now()}`;
-      const alertEntry = {
-        id: alertId,
-        auditId: auditKey,
-        operatorName: operator || 'Desconocido',
-        profileName: profile,
-        clientName: clientName || 'Cliente',
-        clientId: cleanClientId,
-        category: finding.title,
-        severity: finding.type === 'CRITICAL' ? 'CRÍTICA' : 'ALTA',
-        snippet: finding.description,
-        markdown: markdown,
-        status: 'PENDING',
-        timestamp: Date.now()
-      };
-
-      activeAlertsMap.set(alertId, alertEntry);
-
-      if (SUPABASE_URL && SUPABASE_KEY) {
-        fetch(`${SUPABASE_URL}/rest/v1/chat_alerts`, {
-          method: 'POST',
-          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-          body: JSON.stringify(alertEntry)
-        }).catch(() => {});
-      }
-    }
-  });
 
   const auditPayload = {
     id: auditKey,
@@ -210,69 +138,38 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   res.json({ success: true, clientId: cleanClientId, aiReport });
 });
 
-// 4. ENDPOINT: EJECUTAR ANÁLISIS DE IA EN UN CHAT DESDE EL MONITOR
+// 4. ENDPOINT: ANÁLISIS DE IA
 app.post('/api/chats/analyze-single', (req, res) => {
   const { operator, profile, clientName, clientId, markdown } = req.body;
   const aiReport = runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown);
   res.json({ success: true, aiReport });
 });
 
-// 5. INTELIGENCIA Y MEMORIA DE USUARIOS
-app.post('/api/intelligence/query', async (req, res) => {
-  const { query, clientId } = req.body;
-  let chatMd = '';
-
-  if (SUPABASE_URL && SUPABASE_KEY && clientId) {
-    try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?client_id=eq.${clientId}&limit=1`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-      });
-      const data = await resp.json();
-      if (Array.isArray(data) && data[0]) chatMd = data[0].markdown;
-    } catch (e) {}
-  }
-
-  if (!chatMd) {
-    for (let audit of recentChatAuditsRAM.values()) {
-      if (audit.clientId === clientId || audit.client_id === clientId) {
-        chatMd = audit.markdown;
-        break;
-      }
-    }
-  }
-
-  if (!chatMd) {
-    return res.json({ answer: `No hay conversaciones guardadas para el cliente ID ${clientId}. Presiona ⚡ para extraer su historial.` });
-  }
-
-  const textLower = chatMd.toLowerCase();
-  let answer = `📋 **Datos encontrados para el Cliente ID ${clientId}:**\n`;
-  if (/(perro|dog|gato|cat|mascota)/i.test(textLower)) answer += `- 🐾 **Mascotas:** Mencionó tener mascotas en el historial.\n`;
-  if (/(hijos|kids|son|daughter|nietos)/i.test(textLower)) answer += `- 👶 **Familia:** Mencionó tener familia/hijos.\n`;
-  if (/(retirado|retired|trabajo|work|job|business)/i.test(textLower)) answer += `- 💼 **Ocupación:** Tiene menciones sobre su trabajo/ocupación.\n`;
-  if (/(divorced|divorciado|viudo|widowed|single)/i.test(textLower)) answer += `- 💍 **Estado Civil:** Registrado en la conversación.\n`;
-
-  res.json({ answer: answer || 'Se analizó el historial. Mantener la conversación fluida.' });
-});
-
+// 5. BÚSQUEDA INTELIGENTE HÍBRIDA (POR ID Y POR NOMBRE)
 app.get('/api/intelligence/user/:clientId', async (req, res) => {
-  const clientId = req.params.clientId;
+  const clientId = String(req.params.clientId).trim();
   let chatMd = '';
+  let clientFoundName = 'Cliente';
 
   if (SUPABASE_URL && SUPABASE_KEY) {
     try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?client_id=eq.${clientId}&limit=1`, {
+      // Buscar primero por client_id exacto, si no encuentra, buscar por coincidencia
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?or=(client_id.eq.${clientId},id.ilike.%${clientId}%)&limit=1`, {
         headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
       });
       const data = await resp.json();
-      if (Array.isArray(data) && data[0]) chatMd = data[0].markdown;
+      if (Array.isArray(data) && data[0]) {
+        chatMd = data[0].markdown;
+        clientFoundName = data[0].client_name;
+      }
     } catch (e) {}
   }
 
   if (!chatMd) {
     for (let audit of recentChatAuditsRAM.values()) {
-      if (audit.clientId === clientId || audit.client_id === clientId) {
+      if (String(audit.clientId) === clientId || String(audit.client_id) === clientId || String(audit.clientName).toLowerCase().includes(clientId.toLowerCase())) {
         chatMd = audit.markdown;
+        clientFoundName = audit.clientName;
         break;
       }
     }
@@ -281,12 +178,12 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   if (chatMd) {
     const textLower = chatMd.toLowerCase();
     const dossier = {
-      clientName: 'Cliente',
-      maritalStatus: /(divorced|divorciado)/i.test(textLower) ? '💔 Divorciado' : (/(widowed|viudo)/i.test(textLower) ? '🕊️ Viudo' : '👤 Soltero/No especificado'),
-      pets: /(perro|dog)/i.test(textLower) ? '🐶 Tiene perro' : (/(gato|cat)/i.test(textLower) ? '🐱 Tiene gato' : '🐾 No detectado'),
+      clientName: clientFoundName,
+      maritalStatus: /(divorced|divorciado)/i.test(textLower) ? '💔 Divorciado' : (/(widowed|viudo)/i.test(textLower) ? '🕊️ Viudo' : '👤 Soltero / No especificado'),
+      pets: /(perro|dog)/i.test(textLower) ? '🐶 Tiene perro' : (/(gato|cat)/i.test(textLower) ? '🐱 Tiene gato' : '🐾 No detectado aún'),
       family: /(hijos|kids|son|daughter)/i.test(textLower) ? '👶 Tiene hijos' : 'No especificado',
       work: /(retirado|retired)/i.test(textLower) ? '🏖️ Retirado' : (/(business|negocio)/i.test(textLower) ? '💼 Negocio propio' : 'Trabajando'),
-      summary: 'Historial activo guardado en Supabase.'
+      summary: 'Conversación sincronizada y disponible en Supabase.'
     };
     return res.json({ success: true, dossier });
   }
@@ -294,38 +191,45 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null });
 });
 
-// 6. GESTIÓN DE ALERTAS (RESOLVER Y BORRAR)
-app.get('/api/alerts/live', (req, res) => {
-  const alertsList = Array.from(activeAlertsMap.values()).filter(a => a.status === 'PENDING').sort((a, b) => b.timestamp - a.timestamp);
-  res.json({ success: true, alerts: alertsList });
-});
+app.post('/api/intelligence/query', async (req, res) => {
+  const { query, clientId } = req.body;
+  const targetId = String(clientId || '').trim();
+  let chatMd = '';
 
-app.post('/api/alerts/:id/resolve', (req, res) => {
-  const alertId = req.params.id;
-  if (activeAlertsMap.has(alertId)) activeAlertsMap.get(alertId).status = 'RESOLVED';
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(`${SUPABASE_URL}/rest/v1/chat_alerts?id=eq.${alertId}`, {
-      method: 'PATCH',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'RESOLVED' })
-    }).catch(() => {});
+  if (SUPABASE_URL && SUPABASE_KEY && targetId && targetId !== 'N/A') {
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?or=(client_id.eq.${targetId},id.ilike.%${targetId}%)&limit=1`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      });
+      const data = await resp.json();
+      if (Array.isArray(data) && data[0]) chatMd = data[0].markdown;
+    } catch (e) {}
   }
-  res.json({ success: true });
-});
 
-app.post('/api/alerts/:id/dismiss', (req, res) => {
-  const alertId = req.params.id;
-  activeAlertsMap.delete(alertId);
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(`${SUPABASE_URL}/rest/v1/chat_alerts?id=eq.${alertId}`, {
-      method: 'DELETE',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-    }).catch(() => {});
+  if (!chatMd) {
+    for (let audit of recentChatAuditsRAM.values()) {
+      if (String(audit.clientId) === targetId || String(audit.client_id) === targetId) {
+        chatMd = audit.markdown;
+        break;
+      }
+    }
   }
-  res.json({ success: true });
+
+  if (!chatMd) {
+    return res.json({ answer: `No hay conversaciones guardadas para el cliente ID ${targetId}. Haz clic en ⚡ para extraer su historial.` });
+  }
+
+  const textLower = chatMd.toLowerCase();
+  let answer = `📋 **Datos encontrados para el Cliente:**\n`;
+  if (/(perro|dog|gato|cat|mascota)/i.test(textLower)) answer += `- 🐾 **Mascotas:** Mencionó tener mascotas.\n`;
+  if (/(hijos|kids|son|daughter|nietos)/i.test(textLower)) answer += `- 👶 **Familia:** Mencionó tener hijos/familia.\n`;
+  if (/(retirado|retired|trabajo|work|job|business)/i.test(textLower)) answer += `- 💼 **Ocupación:** Mencionó su trabajo/ocupación.\n`;
+  if (/(divorced|divorciado|viudo|widowed|single)/i.test(textLower)) answer += `- 💍 **Estado Civil:** Registrado en el chat.\n`;
+
+  res.json({ answer: answer || 'Se analizó el historial. Mantener la conversación fluida.' });
 });
 
-// 7. HISTORIAL DE CHATS
+// 6. HISTORIAL DE AUDITORÍAS
 app.get('/api/chats/audits', async (req, res) => {
   if (SUPABASE_URL && SUPABASE_KEY) {
     try {
@@ -341,7 +245,7 @@ app.get('/api/chats/audits', async (req, res) => {
   res.json({ success: true, audits: Array.from(recentChatAuditsRAM.values()) });
 });
 
-// 8. TELEMETRÍA
+// 7. TELEMETRÍA
 app.post('/api/telemetry', (req, res) => {
   const { operator, shift, profile, profileId, pendingReadLetters, unansweredChatsCount, hasExpiredSla, isAfk, idleSeconds, status } = req.body;
   if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
@@ -394,7 +298,7 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 9. DASHBOARD EMBEBIDO CON VISOR DE IA INTERACTIVO
+// 8. DASHBOARD EMBEBIDO CON ANALIZADOR IA REPARADO
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -412,9 +316,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.88); backdrop-filter: blur(5px); z-index: 99999; justify-content: center; align-items: center; }
     .modal-content { background: #0e1526; border: 1px solid var(--accent-cyan); border-radius: 10px; width: 940px; max-width: 95%; max-height: 88vh; padding: 20px; display: flex; flex-direction: column; gap: 12px; color: #fff; }
     .chat-transcript { background: #0b132b; border: 1px solid #1e293b; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 250px; overflow-y: auto; line-height: 1.6; color: #cbd5e1; }
-    .alert-card { background: #060913; border: 1px solid var(--accent-red); border-radius: 8px; padding: 12px; margin-bottom: 8px; }
-    
-    /* REPORTE IA */
     .ai-report-box { background: #0b132b; border: 1px solid var(--accent-purple); border-radius: 8px; padding: 14px; margin-top: 10px; }
     .score-badge { font-size: 16px; font-weight: 900; padding: 4px 10px; border-radius: 6px; display: inline-block; margin-bottom: 8px; }
     .score-good { background: #064e3b; color: #34d399; border: 1px solid #10b981; }
@@ -425,24 +326,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <header>
     <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - COMMAND & AI AUDIT CENTER</div>
     <div style="display:flex; gap:8px;">
-      <button class="btn-action" style="border-color:#ef4444; color:#f87171;" onclick="openAlertsCenterModal()">🚨 Alertas de Conducta (<span id="count-behavior-alerts">0</span>)</button>
       <button class="btn-action" onclick="openChatAuditsModal()">📄 Historial de Chats (MD)</button>
       <button class="btn-action" onclick="openBannedWordsModal()">🛡️ Palabras Prohibidas</button>
     </div>
   </header>
 
   <div id="operators-grid" class="grid-operators"></div>
-
-  <!-- MODAL ALERTAS -->
-  <div id="modal-alerts-hub" class="modal-overlay">
-    <div class="modal-content">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:var(--accent-cyan);">🚨 CENTRO DE ALERTAS CONDUCTUALES (SUPABASE)</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
-      </div>
-      <div id="alerts-hub-list" style="overflow-y:auto; flex:1;"></div>
-    </div>
-  </div>
 
   <!-- MODAL HISTORIAL DE CHATS CON ANALIZADOR IA -->
   <div id="modal-chats" class="modal-overlay">
@@ -472,6 +361,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   <script>
     const API_URL = window.location.origin;
+    let globalAuditsList = [];
 
     async function fetchLive() {
       try {
@@ -490,97 +380,76 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
               </div>\`).join('')}
           </div>
         \`).join('');
-        fetchAlertsCount();
       } catch (e) {}
     }
-
-    async function fetchAlertsCount() {
-      try {
-        const res = await fetch(\`\${API_URL}/api/alerts/live\`);
-        const data = await res.json();
-        document.getElementById('count-behavior-alerts').innerText = data.alerts ? data.alerts.length : 0;
-      } catch (e) {}
-    }
-
-    async function openAlertsCenterModal() {
-      document.getElementById('modal-alerts-hub').style.display = 'flex';
-      const res = await fetch(\`\${API_URL}/api/alerts/live\`);
-      const data = await res.json();
-      const container = document.getElementById('alerts-hub-list');
-      if (!data.alerts || data.alerts.length === 0) {
-        container.innerHTML = '<p style="color:#10b981;">✅ No hay alertas de conducta pendientes.</p>';
-        return;
-      }
-      container.innerHTML = data.alerts.map(a => \`
-        <div class="alert-card" id="alert-item-\${a.id}">
-          <div style="display:flex; justify-content:space-between; font-weight:bold; color:#f87171;">
-            <span>\${a.category}</span>
-            <span style="font-size:11px; color:#94a3b8;">👤 \${a.operatorName} | 🎯 \${a.profileName} | 💬 \${a.clientName} (ID: \${a.clientId})</span>
-          </div>
-          <div style="margin:6px 0; color:#fca5a5; font-size:12px;">⚠️ \${a.snippet}</div>
-          <div class="chat-transcript">\${a.markdown}</div>
-          <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
-            <button class="btn-action" style="background:#064e3b; color:#34d399;" onclick="resolveAlert('\${a.id}')">✅ Revisar / Atender</button>
-            <button class="btn-action" style="background:#450a0a; color:#f87171;" onclick="dismissAlert('\${a.id}')">🗑️ Borrar</button>
-          </div>
-        </div>
-      \`).join('');
-    }
-
-    async function resolveAlert(id) { await fetch(\`\${API_URL}/api/alerts/\${id}/resolve\`, { method: 'POST' }); document.getElementById('alert-item-' + id)?.remove(); fetchAlertsCount(); }
-    async function dismissAlert(id) { await fetch(\`\${API_URL}/api/alerts/\${id}/dismiss\`, { method: 'POST' }); document.getElementById('alert-item-' + id)?.remove(); fetchAlertsCount(); }
 
     async function openChatAuditsModal() {
       document.getElementById('modal-chats').style.display = 'flex';
       const res = await fetch(\`\${API_URL}/api/chats/audits\`);
       const data = await res.json();
+      globalAuditsList = data.audits || [];
       const container = document.getElementById('chat-audits-list');
-      if (!data.audits || data.audits.length === 0) {
+      
+      if (globalAuditsList.length === 0) {
         container.innerHTML = '<p style="color:#94a3b8;">No hay conversaciones en Supabase aún. Presiona ⚡ en Talkytimes.</p>';
         return;
       }
-      container.innerHTML = data.audits.map(a => \`
+
+      container.innerHTML = globalAuditsList.map((a, index) => \`
         <div style="background:#060913; border:1px solid #1e293b; border-radius:6px; padding:12px; margin-bottom:10px;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
             <span style="font-weight:bold; color:var(--accent-cyan);">👤 Op: \${a.operator} | 🎯 Perfil: \${a.profile} | 💬 Cliente: \${a.clientName} (ID: \${a.clientId})</span>
             <div style="display:flex; gap:6px;">
-              <button class="btn-action" style="background:#1e1b4b; border-color:#8b5cf6; color:#c4b5fd;" onclick="triggerAiAudit('\${a.operator}', '\${a.profile}', '\${a.clientName}', '\${a.clientId}', decodeURIComponent('\${encodeURIComponent(a.markdown)}'), '\${a.clientId}')">🔍 Analizar con IA</button>
+              <button class="btn-action" style="background:#1e1b4b; border-color:#8b5cf6; color:#c4b5fd;" onclick="runAiAnalysisByIndex(\${index})">🔍 Analizar con IA</button>
               <a href="data:text/markdown;charset=utf-8,\${encodeURIComponent(a.markdown)}" download="chat_\${a.profile}_\${a.clientId}.md" class="btn-action" style="text-decoration:none;">📥 Descargar .MD</a>
             </div>
           </div>
-          <div id="ai-box-\${a.clientId}"></div>
-          <div class="chat-transcript" id="transcript-\${a.clientId}">\${a.markdown}</div>
+          <div id="ai-box-\${index}"></div>
+          <div class="chat-transcript">\${a.markdown}</div>
         </div>
       \`).join('');
     }
 
-    async function triggerAiAudit(operator, profile, clientName, clientId, markdown, targetId) {
-      const box = document.getElementById('ai-box-' + targetId);
-      box.innerHTML = '<p style="color:#c4b5fd; font-size:12px; margin:8px 0;">🤖 Analizando patrones psicológicos y conductuales con IA...</p>';
+    async function runAiAnalysisByIndex(index) {
+      const audit = globalAuditsList[index];
+      if (!audit) return;
 
-      const res = await fetch(\`\${API_URL}/api/chats/analyze-single\`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ operator, profile, clientName, clientId, markdown })
-      });
-      const data = await res.json();
-      const r = data.aiReport;
+      const box = document.getElementById('ai-box-' + index);
+      box.innerHTML = '<p style="color:#c4b5fd; font-size:12px; margin:8px 0;">🤖 Analizando patrones con IA...</p>';
 
-      const isGood = r.score >= 70;
-      box.innerHTML = \`
-        <div class="ai-report-box">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span class="score-badge \${isGood ? 'score-good' : 'score-bad'}">🎯 Puntaje IA: \${r.score}/100 [Riesgo: \${r.riskLevel}]</span>
-          </div>
-          <div style="font-size:12px; margin-bottom:4px;"><b>🧠 Diagnóstico:</b> \${r.diagnosis}</div>
-          <div style="font-size:12px; color:#38bdf8; margin-bottom:8px;"><b>📋 Recomendación:</b> \${r.recommendation}</div>
-          \${r.findings.map(f => \`
-            <div style="background:rgba(239,68,68,0.1); border-left:3px solid #ef4444; padding:6px 10px; border-radius:4px; font-size:11px; margin-bottom:4px;">
-              <b>\${f.title}:</b> \${f.description}
+      try {
+        const res = await fetch(\`\${API_URL}/api/chats/analyze-single\`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            operator: audit.operator,
+            profile: audit.profile,
+            clientName: audit.clientName,
+            clientId: audit.clientId,
+            markdown: audit.markdown
+          })
+        });
+        const data = await res.json();
+        const r = data.aiReport;
+        const isGood = r.score >= 70;
+
+        box.innerHTML = \`
+          <div class="ai-report-box">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span class="score-badge \${isGood ? 'score-good' : 'score-bad'}">🎯 Puntaje IA: \${r.score}/100 [Riesgo: \${r.riskLevel}]</span>
             </div>
-          \`).join('')}
-        </div>
-      \`;
+            <div style="font-size:12px; margin-bottom:4px;"><b>🧠 Diagnóstico:</b> \${r.diagnosis}</div>
+            <div style="font-size:12px; color:#38bdf8; margin-bottom:8px;"><b>📋 Recomendación:</b> \${r.recommendation}</div>
+            \${r.findings.map(f => \`
+              <div style="background:rgba(239,68,68,0.1); border-left:3px solid #ef4444; padding:6px 10px; border-radius:4px; font-size:11px; margin-bottom:4px;">
+                <b>\${f.title}:</b> \${f.description}
+              </div>
+            \`).join('')}
+          </div>
+        \`;
+      } catch (err) {
+        box.innerHTML = '<p style="color:#ef4444;">Error al procesar el análisis de IA.</p>';
+      }
     }
 
     async function openBannedWordsModal() {
@@ -618,4 +487,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V10.0 (AI Pattern Analyzer) activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V11.0 activo en puerto ${PORT}`));
