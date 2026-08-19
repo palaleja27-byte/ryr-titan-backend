@@ -1,16 +1,15 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname)));
 
 // Memoria centralizada de telemetría en tiempo real
-// Key: `${operatorName.toLowerCase()}_${profileName.toLowerCase()}`
 const liveTelemetryMap = new Map();
 
 // 1. ENDPOINT: RECIBIR LATIDOS DE LA EXTENSIÓN
@@ -34,7 +33,6 @@ app.post('/api/telemetry', (req, res) => {
 
   const sessionKey = `${operator.toLowerCase().trim()}_${profile.toLowerCase().trim()}`;
 
-  // Si el operador hizo clic en "Desconectar"
   if (status === 'OFFLINE') {
     liveTelemetryMap.delete(sessionKey);
     return res.json({ success: true, message: 'Sesión finalizada' });
@@ -56,13 +54,13 @@ app.post('/api/telemetry', (req, res) => {
   res.json({ success: true });
 });
 
-// 2. ENDPOINT: CONSOLIDADO EN TIEMPO REAL PARA EL MONITOR IFRAME
+// 2. ENDPOINT: CONSOLIDADO EN VIVO PARA EL MONITOR
 app.get('/api/telemetry/live', (req, res) => {
   const now = Date.now();
   const operatorsMap = new Map();
 
-  // Limpiar sesiones inactivas (más de 35s sin reporte)
   for (const [key, data] of liveTelemetryMap.entries()) {
+    // Si pasan más de 35s sin reporte, se considera desconectado
     if (now - data.lastSeen > 35000) {
       liveTelemetryMap.delete(key);
     } else {
@@ -105,11 +103,11 @@ app.get('/api/telemetry/live', (req, res) => {
 // 3. PALABRAS PROHIBIDAS
 app.get('/api/banned-words', (req, res) => {
   res.json({
-    words: ['whatsapp', 'skype', 'email', 'correo', 'teléfono', 'prometo', 'promesa', 'número', 'banco', 'tarjeta', 'instagram', 'telegram', 'números']
+    words: ['whatsapp', 'skype', 'email', 'correo', 'teléfono', 'prometo', 'promesa', 'número', 'banco', 'tarjeta', 'instagram', 'telegram']
   });
 });
 
-// 4. PERFILES PARA EL POPUP
+// 4. PERFILES
 app.get('/api/perfiles', (req, res) => {
   res.json({
     success: true,
@@ -124,10 +122,39 @@ app.get('/api/perfiles', (req, res) => {
   });
 });
 
-app.get('/monitor', (req, res) => {
-  res.sendFile(path.join(__dirname, 'monitor.html'));
-});
+// 5. MANEJADOR BLINDADO PARA SERVIR EL DASHBOARD
+const serveDashboard = (req, res) => {
+  const filePath = path.join(__dirname, 'monitor.html');
+  if (fs.existsSync(filePath)) {
+    return res.sendFile(filePath);
+  }
+  // Plantilla HTML de respaldo embebida
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+      <meta charset="UTF-8">
+      <title>RYR TITAN APEX - MONITOR</title>
+      <style>
+        body { background: #060913; color: #fff; font-family: monospace; padding: 20px; }
+        .box { border: 1px solid #10b981; padding: 15px; border-radius: 8px; }
+      </style>
+    </head>
+    <body>
+      <div class="box">
+        <h2>⚡ RYR TITAN APEX - SERVICIO ACTIVO</h2>
+        <p>El backend está en línea. Sube monitor.html a GitHub para la interfaz completa.</p>
+      </div>
+    </body>
+    </html>
+  `);
+};
+
+// Rutas explícitas para que todas funcionen sin error
+app.get('/', serveDashboard);
+app.get('/monitor', serveDashboard);
+app.get('/monitor.html', serveDashboard);
 
 app.listen(PORT, () => {
-  console.log(`🚀 RYR TITAN BACKEND V3.0 escuchando en puerto ${PORT}`);
+  console.log(`🚀 RYR TITAN BACKEND activo en puerto ${PORT}`);
 });
