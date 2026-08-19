@@ -7,20 +7,60 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Memoria centralizada de telemetría y catálogo de perfiles de la agencia
+// Memoria centralizada de telemetría
 const liveTelemetryMap = new Map();
 
-// Catálogo maestro de perfiles de la agencia (se expande dinámicamente)
-const agencyProfilesMap = new Map([
-  ['118179794', { id: '118179794', name: 'HORACIO' }],
-  ['118179795', { id: '118179795', name: 'BLONDEBABY' }],
-  ['118179796', { id: '118179796', name: 'MARIPOSA' }],
-  ['118179797', { id: '118179797', name: 'ELENA' }],
-  ['118179798', { id: '118179798', name: 'HELENA' }],
-  ['118179799', { id: '118179799', name: 'DUDA' }]
-]);
+// CATÁLOGO MAESTRO REAL DE LA AGENCIA (46 PERFILES)
+const agencyProfiles = [
+  { id: '88243516', name: 'RICARDO' },
+  { id: '95956014', name: 'PABLO' },
+  { id: '91360720', name: 'SANDRA MARIA' },
+  { id: '91733663', name: 'DANIEL 68' },
+  { id: '79679899', name: 'NORBERTO' },
+  { id: '99766806', name: 'EDUARDO' },
+  { id: '168486464', name: 'GUSTAVO' },
+  { id: '108018336', name: 'LUCAS' },
+  { id: '103289167', name: 'LUIS DAROSA' },
+  { id: '118179794', name: 'HORACIO' },
+  { id: '157112125', name: 'LUIZ' },
+  { id: '103291980', name: 'ARMANDO' },
+  { id: '120720195', name: 'MARCOS' },
+  { id: '139247498', name: 'DAMIAN' },
+  { id: '120275229', name: 'GERMAN' },
+  { id: '130338853', name: 'IVALDO' },
+  { id: '130431310', name: 'RAFAEL' },
+  { id: '98389135', name: 'RAUL' },
+  { id: '139245989', name: 'ALFREDO' },
+  { id: '156881990', name: 'RALPH' },
+  { id: '137163229', name: 'SEBASTIAN' },
+  { id: '143017065', name: 'MARIO' },
+  { id: '138130329', name: 'AGUSTIN' },
+  { id: '143014129', name: 'RENEE' },
+  { id: '95955130', name: 'HECTOR' },
+  { id: '145211163', name: 'FERMIN' },
+  { id: '145844971', name: 'RODRIGO' },
+  { id: '170740935', name: 'ROBERTO' },
+  { id: '130422416', name: 'RAONI' },
+  { id: '160352260', name: 'JUVENAL' },
+  { id: '157067734', name: 'VALDEMIR' },
+  { id: '153039388', name: 'AGUSTIN FERNANDO' },
+  { id: '109551682', name: 'RENATO' },
+  { id: '98540781', name: 'LEANDRO' },
+  { id: '167493871', name: 'HUMBERTO' },
+  { id: '158644203', name: 'SERGIO' },
+  { id: '174069335', name: 'FEDERICO' },
+  { id: '93461947', name: 'MARIANO' },
+  { id: '166575347', name: 'MAX' },
+  { id: '101245945', name: 'PABLO' },
+  { id: '167273716', name: 'ARIEL HERNAN' },
+  { id: '113579174', name: 'RONALDO' },
+  { id: '145839775', name: 'BRUNO' },
+  { id: '113752797', name: 'ROMARIO' },
+  { id: '167279664', name: 'JOSE ROBERTO' },
+  { id: '171638277', name: 'RONALT' }
+];
 
-// 1. ENDPOINT: RECIBIR TELEMETRÍA DE LA EXTENSIÓN
+// 1. ENDPOINT: RECIBIR LATIDOS DE LA EXTENSIÓN
 app.post('/api/telemetry', (req, res) => {
   const {
     operator,
@@ -37,14 +77,6 @@ app.post('/api/telemetry', (req, res) => {
 
   if (!operator || !profile) {
     return res.status(400).json({ error: 'Operador y perfil requeridos' });
-  }
-
-  // Registrar el perfil en el catálogo si es nuevo
-  if (profileId && profile) {
-    agencyProfilesMap.set(String(profileId).trim(), {
-      id: String(profileId).trim(),
-      name: profile.trim().toUpperCase()
-    });
   }
 
   const sessionKey = `${operator.toLowerCase().trim()}_${profile.toLowerCase().trim()}`;
@@ -70,7 +102,7 @@ app.post('/api/telemetry', (req, res) => {
   res.json({ success: true });
 });
 
-// 2. ENDPOINT: DATOS EN VIVO PARA EL MONITOR IFRAME
+// 2. ENDPOINT: DATOS EN VIVO PARA EL MONITOR
 app.get('/api/telemetry/live', (req, res) => {
   const now = Date.now();
   const operatorsMap = new Map();
@@ -115,34 +147,22 @@ app.get('/api/telemetry/live', (req, res) => {
   });
 });
 
-// 3. ENDPOINT: OBTENER TODOS LOS PERFILES DE LA AGENCIA
+// 3. ENDPOINT: OBTENER PERFILES REALES DE AGENCIA
 app.get('/api/perfiles', (req, res) => {
   res.json({
     success: true,
-    perfiles: Array.from(agencyProfilesMap.values())
+    perfiles: agencyProfiles
   });
 });
 
-// 4. ENDPOINT: REGISTRAR UN PERFIL NUEVO EN CALIENTE
-app.post('/api/perfiles/register', (req, res) => {
-  const { id, name } = req.body;
-  if (id && name) {
-    agencyProfilesMap.set(String(id).trim(), {
-      id: String(id).trim(),
-      name: String(name).trim().toUpperCase()
-    });
-  }
-  res.json({ success: true, count: agencyProfilesMap.size });
-});
-
-// 5. PALABRAS PROHIBIDAS
+// 4. PALABRAS PROHIBIDAS
 app.get('/api/banned-words', (req, res) => {
   res.json({
     words: ['whatsapp', 'skype', 'email', 'correo', 'teléfono', 'prometo', 'promesa', 'número', 'banco', 'tarjeta', 'instagram', 'telegram']
   });
 });
 
-// 6. DASHBOARD HTML EMBEBIDO
+// 5. DASHBOARD COMPLETO EMBEBIDO (IFRAME)
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
