@@ -8,69 +8,79 @@ const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
 
 app.use(cors());
-app.use(express.json({ limit: '15mb' }));
+app.use(express.json({ limit: '20mb' }));
 
-// Memoria centralizada de telemetría y alertas activas
 const liveTelemetryMap = new Map();
 const recentChatAuditsRAM = new Map();
-const activeAlertsMap = new Map(); // Key: alertId -> Alert Object
+const activeAlertsMap = new Map();
 
-// DICCIONARIO DINÁMICO DE PALABRAS PROHIBIDAS
+// DICCIONARIO DE PALABRAS PROHIBIDAS
 let dynamicBannedWords = new Set([
   'whatsapp', 'skype', 'email', 'correo', 'teléfono', 'telefono', 
   'prometo', 'promesa', 'número', 'numero', 'banco', 'tarjeta', 
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR HEURÍSTICO AVANZADO DE DETECCIÓN PSICOLÓGICA Y CONDUCTUAL
-function analyzeConversationBehavior(operator, profile, clientName, clientId, messages, markdown) {
+// 1. MOTOR HEURÍSTICO PSICOLÓGICO Y CONDUCTUAL
+function analyzeConversationBehavior(operator, profile, clientName, clientId, markdown) {
   const alerts = [];
   const textLower = markdown.toLowerCase();
 
-  // A. Coacción y Manipulación por Regalos / Créditos
-  const giftCoercionRegex = /(?:si me quisieras|si me amaras|envíame un regalo|mandame un regalo|dame un regalo|cómprame un regalo|regálame algo|pídeme un regalo|send me a gift|give me a gift|if you loved me|buy me a present|send a present|need coins|give me coins)/i;
-  if (giftCoercionRegex.test(textLower)) {
+  // A. Coacción y Mendicidad de Regalos / Créditos
+  const giftRegex = /(?:si me quisieras|si me amaras|envíame un regalo|mandame un regalo|dame un regalo|cómprame un regalo|regálame algo|pídeme un regalo|send me a gift|give me a gift|if you loved me|buy me a present|send a present|need coins|give me coins)/i;
+  if (giftRegex.test(textLower)) {
     alerts.push({
       category: '🛑 Coacción / Manipulación por Regalos',
       severity: 'CRÍTICA',
-      snippet: 'El operador está presionando o condicionando el cariño a cambio de regalos o créditos.'
+      snippet: 'Presión al cliente condicionando el afecto a cambio de regalos o monedas.'
     });
   }
 
   // B. Incomodidad Manifiesta del Cliente (Quejas / Reclamos)
-  const clientDiscomfortRegex = /(?:por qué me hablas así|por que me tratas así|no te acuerdas de mí|olvidaste mi nombre|solo quieres mi dinero|solo te importan los regalos|me estás presionando|me siento incómodo|me siento incomodo|por qué tan cortante|you forgot my name|you are rude|why are you talking to me like that|all you want is money|you don't care about me|stop pressuring me)/i;
-  if (clientDiscomfortRegex.test(textLower)) {
+  const complaintRegex = /(?:por qué me hablas así|por que me tratas así|no te acuerdas de mí|olvidaste mi nombre|solo quieres mi dinero|solo te importan los regalos|me estás presionando|me siento incómodo|me siento incomodo|por qué tan cortante|you forgot my name|you are rude|why are you talking to me like that|all you want is money|you don't care about me|stop pressuring me)/i;
+  if (complaintRegex.test(textLower)) {
     alerts.push({
-      category: '💔 Cliente Inconforme / Molesto',
+      category: '💔 Incomodidad / Reclamo del Cliente',
       severity: 'CRÍTICA',
-      snippet: 'El usuario manifestó explícitamente molestia, reclamo o sentirse presionado/maltratado.'
+      snippet: 'El usuario manifestó explícitamente molestia, reclamo o sentirse presionado.'
     });
   }
 
-  // C. Hostilidad, Groserías o Desinterés
+  // C. Maltrato / Hostilidad / Groserías
   const hostilityRegex = /(?:cállate|callate|no me importa|qué pereza|que pereza|apúrate|apurate|no tengo tiempo|fastidio|pesado|idiota|imbécil|déjame en paz|dejame en paz|shut up|i don't care|stop bothering|waste of time)/i;
   if (hostilityRegex.test(textLower)) {
     alerts.push({
       category: '🚨 Maltrato / Tono Hostil o Cortante',
       severity: 'ALTA',
-      snippet: 'Uso de expresiones cortantes, de desdén o agresivas hacia el usuario.'
+      snippet: 'Uso de expresiones agresivas, cortantes o de desdén hacia el usuario.'
     });
   }
 
-  // D. Incoherencia de Nombre (Llamar al usuario con un nombre equivocado)
+  // D. Palabras Prohibidas
+  for (let word of dynamicBannedWords) {
+    if (textLower.includes(word.toLowerCase())) {
+      alerts.push({
+        category: '🛑 Palabra Prohibida Detectada',
+        severity: 'ALTA',
+        snippet: `Se detectó la palabra o raíz prohibida: "${word}".`
+      });
+      break;
+    }
+  }
+
+  // E. Incoherencia de Nombre
   if (clientName && clientName.length > 2) {
-    const cleanClientName = clientName.split(',')[0].split(' ')[0].trim().toLowerCase();
+    const cleanClient = clientName.split(',')[0].split(' ')[0].trim().toLowerCase();
     const wrongNameRegex = /(?:hola|hello|dear|querido|querida|hi)\s+([a-záéíóúñ]{3,15})/gi;
     let match;
     while ((match = wrongNameRegex.exec(textLower)) !== null) {
-      const mentionedName = match[1].toLowerCase();
-      // Si saluda con un nombre común que NO coincide con el nombre del cliente ni del perfil
+      const mentioned = match[1].toLowerCase();
       const forbiddenNames = ['juan', 'carlos', 'pedro', 'maria', 'luis', 'ana', 'david', 'john', 'peter', 'michael'];
-      if (mentionedName !== cleanClientName && mentionedName !== profile.toLowerCase() && forbiddenNames.includes(mentionedName)) {
+      if (mentioned !== cleanClient && mentioned !== profile.toLowerCase() && forbiddenNames.includes(mentioned)) {
         alerts.push({
-          category: '⚠️ Incoherencia de Nombre / Pérdida de Memoria',
+          category: '⚠️ Incoherencia de Nombre / Amnesia',
           severity: 'MEDIA',
-          snippet: `El operador saludó o llamó al cliente "${mentionedName}" cuando el usuario se llama "${clientName}".`
+          snippet: `El operador saludó o llamó al cliente "${mentioned}" cuando su nombre es "${clientName}".`
         });
         break;
       }
@@ -115,7 +125,7 @@ app.post('/api/telemetry', (req, res) => {
   res.json({ success: true });
 });
 
-// 3. ENDPOINT: AUDITORÍA HEURÍSTICA Y GENERACIÓN DE ALERTAS EN VIVO
+// 3. ENDPOINT: AUDITORÍA HEURÍSTICA Y GUARDADO INCREMENTAL EN SUPABASE
 app.post('/api/chats/audit-deep', async (req, res) => {
   const { operator, profile, clientName, clientId, markdown, messages } = req.body;
 
@@ -124,12 +134,10 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   }
 
   const auditKey = `${profile}_${clientId}`;
-  
-  // Ejecutar el motor de análisis psicológico
-  const detectedBehaviorAlerts = analyzeConversationBehavior(operator, profile, clientName, clientId, messages, markdown);
+  const behaviorAlerts = analyzeConversationBehavior(operator, profile, clientName, clientId, markdown);
 
-  // Crear o actualizar alertas activas en el panel de supervisión
-  detectedBehaviorAlerts.forEach((alert, index) => {
+  // Registrar alertas en cola activa
+  behaviorAlerts.forEach((alert, index) => {
     const alertId = `${auditKey}_${index}_${Date.now()}`;
     const alertEntry = {
       id: alertId,
@@ -148,7 +156,6 @@ app.post('/api/chats/audit-deep', async (req, res) => {
 
     activeAlertsMap.set(alertId, alertEntry);
 
-    // Persistir alerta en Supabase si está disponible
     if (SUPABASE_URL && SUPABASE_KEY) {
       fetch(`${SUPABASE_URL}/rest/v1/chat_alerts`, {
         method: 'POST',
@@ -175,7 +182,6 @@ app.post('/api/chats/audit-deep', async (req, res) => {
     }
   });
 
-  // Guardar conversación en memoria RAM y Supabase
   const auditPayload = {
     id: auditKey,
     operator_name: operator || 'Desconocido',
@@ -183,8 +189,8 @@ app.post('/api/chats/audit-deep', async (req, res) => {
     client_name: clientName || 'Cliente',
     client_id: clientId,
     total_messages: Array.isArray(messages) ? messages.length : 0,
-    flags: detectedBehaviorAlerts.map(a => a.category),
-    has_breach: detectedBehaviorAlerts.length > 0,
+    flags: behaviorAlerts.map(a => a.category),
+    has_breach: behaviorAlerts.length > 0,
     markdown: markdown,
     updated_at: new Date().toISOString()
   };
@@ -211,7 +217,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
     }).catch(() => {});
   }
 
-  res.json({ success: true, alertsCount: detectedBehaviorAlerts.length });
+  res.json({ success: true, alertsCount: behaviorAlerts.length, flags: auditPayload.flags });
 });
 
 // 4. ENDPOINTS DE GESTIÓN DE ALERTAS (ATENDER / DESCARTAR)
@@ -230,11 +236,7 @@ app.post('/api/alerts/:id/resolve', (req, res) => {
   if (SUPABASE_URL && SUPABASE_KEY) {
     fetch(`${SUPABASE_URL}/rest/v1/chat_alerts?id=eq.${alertId}`, {
       method: 'PATCH',
-      headers: {
-        'apikey': SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`,
-        'Content-Type': 'application/json'
-      },
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'RESOLVED' })
     }).catch(() => {});
   }
@@ -247,16 +249,13 @@ app.post('/api/alerts/:id/dismiss', (req, res) => {
   if (SUPABASE_URL && SUPABASE_KEY) {
     fetch(`${SUPABASE_URL}/rest/v1/chat_alerts?id=eq.${alertId}`, {
       method: 'DELETE',
-      headers: {
-        'apikey': SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`
-      }
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
     }).catch(() => {});
   }
   res.json({ success: true });
 });
 
-// 5. OBTENER AUDITORÍAS DE CHATS
+// 5. OBTENER AUDITORÍAS DE CHATS DESDE SUPABASE O RAM
 app.get('/api/chats/audits', async (req, res) => {
   if (SUPABASE_URL && SUPABASE_KEY) {
     try {
@@ -351,7 +350,7 @@ app.get('/api/telemetry/live', (req, res) => {
   });
 });
 
-// 8. DASHBOARD EMBEBIDO CON CENTRO DE ALERTAS PSICOLÓGICAS EN VIVO
+// 8. DASHBOARD EMBEBIDO CON VISOR INTELIGENTE DE AUDITORÍA
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -416,22 +415,23 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     /* MODAL DE ALERTAS Y AUDITORÍA */
     .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.88); backdrop-filter: blur(5px); z-index: 99999; justify-content: center; align-items: center; }
-    .modal-content { background: #0e1526; border: 1px solid var(--accent-cyan); border-radius: 10px; width: 900px; max-width: 95%; max-height: 88vh; padding: 20px; display: flex; flex-direction: column; gap: 12px; color: #fff; }
+    .modal-content { background: #0e1526; border: 1px solid var(--accent-cyan); border-radius: 10px; width: 920px; max-width: 95%; max-height: 88vh; padding: 20px; display: flex; flex-direction: column; gap: 12px; color: #fff; }
     .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 10px; font-weight: 800; color: var(--accent-cyan); }
     .modal-body { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 10px; }
     
-    .alert-card { background: #060913; border: 1px solid var(--accent-red); border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 4px 15px rgba(239, 68, 68, 0.15); }
+    .alert-card { background: #060913; border: 1px solid var(--accent-red); border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
     .alert-card-header { display: flex; justify-content: space-between; align-items: center; }
     .alert-category { font-size: 13px; font-weight: 900; color: #f87171; }
     .alert-meta { font-size: 11px; color: var(--text-muted); }
-    .alert-snippet { background: rgba(239, 68, 68, 0.1); border-left: 3px solid #ef4444; padding: 8px 12px; border-radius: 4px; font-size: 12px; color: #fca5a5; font-weight: 600; }
+    .alert-snippet { background: rgba(239, 68, 68, 0.12); border-left: 3px solid #ef4444; padding: 8px 12px; border-radius: 4px; font-size: 12px; color: #fca5a5; font-weight: bold; }
     .alert-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+    
     .btn-resolve { background: #064e3b; color: #34d399; border: 1px solid #10b981; padding: 6px 14px; border-radius: 5px; font-size: 11px; font-weight: bold; cursor: pointer; transition: 0.2s; }
     .btn-resolve:hover { background: #10b981; color: #060913; }
     .btn-dismiss { background: #450a0a; color: #f87171; border: 1px solid #ef4444; padding: 6px 14px; border-radius: 5px; font-size: 11px; font-weight: bold; cursor: pointer; transition: 0.2s; }
     .btn-dismiss:hover { background: #ef4444; color: #fff; }
 
-    .chat-transcript { background: #0b132b; border: 1px solid #1e293b; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 11px; white-space: pre-wrap; max-height: 180px; overflow-y: auto; line-height: 1.5; color: #cbd5e1; }
+    .chat-transcript { background: #0b132b; border: 1px solid #1e293b; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 250px; overflow-y: auto; line-height: 1.6; color: #cbd5e1; }
 
     .banned-tags-container { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
     .banned-tag { background: #1c2541; border: 1px solid #ef4444; color: #fca5a5; padding: 4px 8px; border-radius: 4px; font-size: 11px; display: flex; align-items: center; gap: 6px; }
@@ -450,7 +450,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <div id="afk-pill" class="metric-pill afk-pill" style="display:none;">💤 Inactivos: <span id="total-afk">0</span></div>
       <div id="alert-pill" class="metric-pill danger" style="display:none;">🚨 Alertas SLA: <span id="total-alerts">0</span></div>
       <button id="btn-alert-center" class="btn-action btn-alert-hub" onclick="openAlertsCenterModal()">🚨 Alertas de Conducta (<span id="count-behavior-alerts">0</span>)</button>
-      <button class="btn-action" onclick="openChatAuditsModal()">📄 Auditoría de Chats (MD)</button>
+      <button class="btn-action" onclick="openChatAuditsModal()">📄 Historial de Chats (MD)</button>
       <button class="btn-action" onclick="openBannedWordsModal()">🛡️ Palabras Prohibidas</button>
       <button id="btn-sound" class="btn-action" onclick="toggleAudio()">🔇 Sonido: OFF</button>
     </div>
@@ -467,31 +467,31 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   <div id="operators-grid" class="grid-operators"></div>
 
-  <!-- MODAL 1: CENTRO DE ALERTAS PSICOLÓGICAS / CONDUCTA -->
+  <!-- MODAL 1: CENTRO DE ALERTAS CONDUCTUALES -->
   <div id="modal-alerts-hub" class="modal-overlay">
     <div class="modal-content">
       <div class="modal-header">
-        <span>🚨 CENTRO DE ALERTAS DE CONDUCTA & MANIPULACIÓN EN TIEMPO REAL</span>
+        <span>🚨 CENTRO DE ALERTAS: MANIPULACIÓN, MALTRATO & INCOHERENCIAS</span>
         <button class="btn-action" onclick="closeModals()">✕</button>
       </div>
       <div class="modal-body" id="alerts-hub-list">
-        <p style="color:var(--text-muted);">No hay alertas pendientes de atención en este momento.</p>
+        <p style="color:var(--text-muted);">No hay alertas de conducta pendientes en este momento.</p>
       </div>
     </div>
   </div>
 
-  <!-- MODAL 2: HISTORIAL DE CHATS EN MARKDOWN -->
+  <!-- MODAL 2: HISTORIAL DE CHATS EN MARKDOWN (ESTRUCTURADO Y LIMPIO) -->
   <div id="modal-chats" class="modal-overlay">
     <div class="modal-content">
       <div class="modal-header">
-        <span>📄 AUDITORÍA HISTÓRICA DE CONVERSACIONES (MARKDOWN)</span>
+        <span>📄 AUDITORÍA HISTÓRICA DE DIÁLOGOS (MARKDOWN SIN DUPLICADOS)</span>
         <button class="btn-action" onclick="closeModals()">✕</button>
       </div>
       <div style="display:flex; gap:8px;">
-        <input type="text" id="input-search-audit" oninput="filterAudits()" placeholder="Buscar por operador, perfil o cliente..." style="flex:1; padding:8px; background:#060913; border:1px solid #3a506b; color:#fff; border-radius:6px; outline:none; font-size:12px;">
+        <input type="text" id="input-search-audit" oninput="filterAudits()" placeholder="Buscar por operador, perfil, ID de usuario o cliente..." style="flex:1; padding:8px; background:#060913; border:1px solid #3a506b; color:#fff; border-radius:6px; outline:none; font-size:12px;">
       </div>
       <div class="modal-body" id="chat-audits-list">
-        <p style="color:var(--text-muted);">Cargando transcripciones...</p>
+        <p style="color:var(--text-muted);">Cargando transcripciones desde Supabase...</p>
       </div>
     </div>
   </div>
@@ -643,7 +643,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       }
     }
 
-    // MODAL CENTRO DE ALERTAS PSICOLÓGICAS / DE CONDUCTA
+    // MODAL CENTRO DE ALERTAS
     async function openAlertsCenterModal() {
       document.getElementById('modal-alerts-hub').style.display = 'flex';
       const container = document.getElementById('alerts-hub-list');
@@ -661,7 +661,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         <div class="alert-card" id="card-alert-\${a.id}">
           <div class="alert-card-header">
             <span class="alert-category">\${a.category}</span>
-            <span class="alert-meta">👤 Op: <b>\${a.operatorName}</b> | 🎯 Perfil: <b>\${a.profileName}</b> | 💬 Cliente: <b>\${a.clientName}</b></span>
+            <span class="alert-meta">👤 Op: <b>\${a.operatorName}</b> | 🎯 Perfil: <b>\${a.profileName}</b> | 💬 Cliente: <b>\${a.clientName} (ID: \${a.clientId})</b></span>
           </div>
           <div class="alert-snippet">⚠️ Motivo: \${a.snippet}</div>
           <div class="chat-transcript">\${a.markdown}</div>
@@ -685,7 +685,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       fetchBehaviorAlertsCount();
     }
 
-    // MODAL AUDITORÍA HISTÓRICA
+    // MODAL AUDITORÍA HISTÓRICA CON ID DE USUARIO
     async function openChatAuditsModal() {
       document.getElementById('modal-chats').style.display = 'flex';
       const res = await fetch(\`\${API_URL}/api/chats/audits\`);
@@ -709,7 +709,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         return \`
           <div class="alert-card" style="border-color:#1e293b;">
             <div class="alert-card-header">
-              <span style="font-size:12px; font-weight:bold; color:var(--accent-cyan);">👤 Op: \${a.operator} | 🎯 Perfil: \${a.profile} | 💬 Cliente: \${a.clientName}</span>
+              <span style="font-size:12px; font-weight:bold; color:var(--accent-cyan);">👤 Op: \${a.operator} | 🎯 Perfil: \${a.profile} | 💬 Cliente: \${a.clientName} (ID: \${a.clientId})</span>
               <a href="\${downloadUrl}" download="chat_\${a.profile}_\${a.clientId}.md" class="btn-action" style="text-decoration:none;">📥 Descargar .MD</a>
             </div>
             <div style="display:flex; gap:6px; flex-wrap:wrap;">\${flagHtml}</div>
@@ -724,7 +724,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       const filtered = globalAuditsCache.filter(a => 
         a.operator.toLowerCase().includes(query) ||
         a.profile.toLowerCase().includes(query) ||
-        a.clientName.toLowerCase().includes(query)
+        a.clientName.toLowerCase().includes(query) ||
+        String(a.clientId).toLowerCase().includes(query)
       );
       renderAuditsList(filtered);
     }
@@ -786,5 +787,5 @@ app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
 app.listen(PORT, () => {
-  console.log(`🚀 RYR TITAN BACKEND V5.0 activo con Centro de Alertas en puerto ${PORT}`);
+  console.log(`🚀 RYR TITAN BACKEND V6.0 activo en puerto ${PORT}`);
 });
