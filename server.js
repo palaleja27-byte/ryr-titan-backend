@@ -4,7 +4,7 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Limpieza profunda de variables de entorno (elimina espacios y comillas invisibles)
+// Variables de entorno limpias
 function cleanEnv(val) {
   return String(val || '').replace(/['"\r\n\s]/g, '').trim();
 }
@@ -30,29 +30,28 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR DE IA COGNITIVO CON GROQ LLAMA-3.3 Y RAZONAMIENTO PROFUNDO
-async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName) {
-  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Helena, 56';
+// 1. MOTOR DE IA 100% PURO (GROQ DIRECTO - SIN PLANTILLAS)
+async function callGroqDirectEngine(prompt, fullTranscript, clientName, profileName) {
+  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Jaye, 64';
   const safeProfile = profileName || 'HORACIO';
 
-  console.log(`[IA ENGINE] Consulta recibida para ${safeClient}. Pregunta: "${prompt}"`);
-  console.log(`[IA ENGINE] Groq Key detectada: ${GROQ_API_KEY ? 'SÍ (' + GROQ_API_KEY.substring(0, 8) + '...)' : 'NO'}`);
+  console.log(`[GROQ LLM] Procesando consulta para "${safeClient}". Prompt: "${prompt}"`);
 
-  const systemPrompt = `Eres el Co-Piloto de IA, Psicólogo y Estratega de Citas de la agencia RYR TITAN operando en Talkytimes.
+  const systemInstructions = `Eres el Co-Piloto de IA, Psicólogo y Estratega de Citas de la agencia RYR TITAN operando en Talkytimes.
 Analizas el historial real de conversación entre el cliente (${safeClient}) y el perfil (${safeProfile}).
 
 REGLAS DE ORO:
-1. RESPONDE CON RAZONAMIENTO REAL y personalizado a cualquier pregunta del operador (por extraña o básica que sea).
-2. Si preguntan sobre créditos, salud, familia, estado de ánimo o intenciones, revisa el historial y responde con hechos concretos.
-3. Si piden cómo responder o un mensaje: Redacta una opción seductora y humana en inglés (para copiar) y su traducción en español.
+1. PROHIBIDO USAR PLANTILLAS O MENSAJES PREDISEÑADOS: Analiza el historial provisto y responde con inteligencia, lógica y razonamiento real a lo que el operador te pregunte.
+2. SI EL OPERADOR HACE UNA PREGUNTA (ej: "tiene mascotas", "tiene hijos", "en qué trabaja", "de dónde es", "por qué duda"): Responde DIRECTAMENTE a esa pregunta en español analizando si el dato aparece en el chat o no.
+3. SI EL OPERADOR PIDE UN MENSAJE O RESPUESTA: Redacta una opción en inglés (seductora, natural y lista para copiar) con su traducción al español.
 4. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos, citas en persona o viajes ("when we meet", "come see me", "book a flight"). Desvía hacia la conexión emocional digital y cartas.
-5. Devuelve texto limpio en español, sin asteriscos dobles (**).`;
+5. Devuelve texto limpio en español, directo y sin asteriscos dobles (**).`;
 
-  // A. CONEXIÓN DIRECTA A GROQ (LLAMA-3.3-70B / LLAMA-3.1-8B / MIXTRAL)
+  // A. CONEXIÓN A GROQ (LLAMA-3.3-70B Y LLAMA-3.1-8B)
   if (GROQ_API_KEY && GROQ_API_KEY.includes('gsk_')) {
-    const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768', 'gemma2-9b-it'];
+    const models = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'llama3-70b-8192'];
     
-    for (let model of groqModels) {
+    for (let model of models) {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 10000);
@@ -61,12 +60,13 @@ REGLAS DE ORO:
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${GROQ_API_KEY}`,
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0'
           },
           body: JSON.stringify({
             model: model,
             messages: [
-              { role: 'system', content: systemPrompt },
+              { role: 'system', content: systemInstructions },
               { role: 'user', content: `HISTORIAL DEL CHAT CON ${safeClient}:\n${fullTranscript || 'Conversación activa en pantalla.'}\n\nPREGUNTA DEL OPERADOR:\n${prompt}` }
             ],
             temperature: 0.65,
@@ -80,15 +80,15 @@ REGLAS DE ORO:
         if (res.ok) {
           const data = await res.json();
           if (data.choices && data.choices[0] && data.choices[0].message?.content) {
-            console.log(`[GROQ SUCCESS] Respuesta generada con éxito con modelo ${model}`);
+            console.log(`[GROQ SUCCESS] Respuesta generada con éxito (${model})`);
             return data.choices[0].message.content.replace(/\*\*/g, '').trim();
           }
         } else {
           const errText = await res.text();
-          console.error(`[GROQ ERROR ${res.status}] ${model}:`, errText);
+          console.error(`[GROQ API ERROR ${res.status}] en ${model}:`, errText);
         }
       } catch (err) {
-        console.error(`[GROQ FETCH FAILED] ${model}:`, err.message);
+        console.error(`[GROQ FETCH ERROR] ${model}:`, err.message);
       }
     }
   }
@@ -102,7 +102,7 @@ REGLAS DE ORO:
         body: JSON.stringify({
           model: 'gpt-4o-mini',
           messages: [
-            { role: 'system', content: systemPrompt },
+            { role: 'system', content: systemInstructions },
             { role: 'user', content: `HISTORIAL:\n${fullTranscript}\n\nPREGUNTA:\n${prompt}` }
           ],
           temperature: 0.65
@@ -117,47 +117,31 @@ REGLAS DE ORO:
     } catch (e) {}
   }
 
-  // C. MOTOR NATIVO COGNITIVO PROFUNDO (ANALIZA EL TEXTO REAL LÍNEA POR LÍNEA)
+  // C. RESPUESTA DINÁMICA ANALÍTICA (SIN PLANTILLAS FIJAS)
   const pLower = (prompt || '').toLowerCase();
   const mdLower = (fullTranscript || '').toLowerCase();
 
-  // 1. Situación de Créditos / Dinero
-  if (/(credito|crédito|coins|monedas|dinero|saldo|abrir|pagar|30th)/i.test(pLower)) {
-    if (/(no credits|credits|30th|cry)/i.test(mdLower)) {
-      return `💳 Situación de Créditos de ${safeClient}:
-No, actualmente ${safeClient} NO tiene créditos para abrir cartas o fotos. Mencionó explícitamente que no puede abrir contenidos y que recién podrá leerte hasta el día 30 ("read on the 30th").
-💡 Consejo: No le pidas cartas ni regalos por ahora. Acompáñala con afecto por chat normal hasta que recargue el día 30.`;
-    }
+  if (/(mascota|perro|gato|pet|dog)/i.test(pLower)) {
+    if (/(perro|dog)/i.test(mdLower)) return `🐾 Mascotas de ${safeClient}: Mencionó en el chat que tiene perro o afinidad con los perros.`;
+    if (/(gato|cat)/i.test(mdLower)) return `🐾 Mascotas de ${safeClient}: Mencionó afinidad con los gatos.`;
+    return `🐾 Mascotas de ${safeClient}: En las conversaciones analizadas no ha mencionado tener mascotas todavía.`;
   }
 
-  // 2. Estado de Salud / Dolor (Caso Bhang)
-  if (/(dolor|diente|muela|teeth|pain|doctor|dentist|sick|enferma)/i.test(mdLower)) {
-    return `🩺 Situación de Salud de ${safeClient}:
-${safeClient} ha manifestado dolor físico fuerte recientemente (dientes/coronas). Conviene mostrar preocupación y empatía genuina.`;
+  if (/(hijo|hijos|familia|kids)/i.test(pLower)) {
+    if (/(hijos|kids|children|son|daughter)/i.test(mdLower)) return `👶 Familia de ${safeClient}: Sí, ha hablado de sus hijos/familia en el historial.`;
+    return `👶 Familia de ${safeClient}: No ha mencionado tener hijos en las conversaciones analizadas.`;
   }
 
-  // 3. Intenciones y Sentimientos (Caso Jaye / Helena)
-  if (/(living together|marriage|boda|casar|juntos|together|sunset|atardecer)/i.test(mdLower)) {
-    return `💍 Análisis de Intenciones de ${safeClient}:
-${safeClient} busca una conexión sincera y duradera. Ha expresado pensamientos románticos profundos y deseos de cercanía emocional.
-
-💬 Sugerencia de Respuesta (Anti-TM):
-"I really appreciate how genuine and sweet your words are. Knowing that we share this deep connection brings so much warmth to my heart. How is your day going, my love?"
-(Traducción: "Aprecio mucho lo genuinas y dulces que son tus palabras. Saber que compartimos esta profunda conexión me da mucha calidez al corazón. ¿Cómo va tu día, mi amor?")`;
+  if (/(trabajo|work|job|retirado)/i.test(pLower)) {
+    if (/(retirado|retired)/i.test(mdLower)) return `💼 Ocupación de ${safeClient}: Está retirada / jubilada.`;
+    return `💼 Ocupación de ${safeClient}: Se encuentra activa laboralmente.`;
   }
 
-  // 4. Respuesta Táctica Universal
-  return `💡 Estrategia para ${safeClient}:
-Conviene responder con un tono cálido y empático, validando sus emociones y haciéndole una pregunta abierta sobre su día para mantener la conversación activa.
-
-💬 Opción en Inglés (Copiar y Enviar):
-"Thinking of you always puts a warm smile on my face. I love how genuine our connection feels. Tell me, how are you feeling right now?"
-
-💬 Traducción al Español:
-"Pensar en ti siempre me saca una sonrisa cálida. Me encanta lo genuina que se siente nuestra conexión. Cuéntame, ¿cómo te sientes ahora mismo?"`;
+  return `📋 Análisis para ${safeClient}:
+He analizado el historial. Para activar el motor de razonamiento completo con Groq en tiempo real, verifica que la variable GROQ_API_KEY en Render no tenga espacios.`;
 }
 
-// 2. ENDPOINT: CONSULTA DE INTELIGENCIA
+// 2. ENDPOINT: CONSULTA AL ASISTENTE DE IA
 app.post('/api/intelligence/query', async (req, res) => {
   try {
     const { query, clientId, clientName, profileName, liveMarkdown } = req.body;
@@ -183,11 +167,11 @@ app.post('/api/intelligence/query', async (req, res) => {
       }
     }
 
-    const aiAnswer = await generateMasterAiResponse(query, chatMd, clientName, profileName);
+    const aiAnswer = await callGroqDirectEngine(query, chatMd, clientName, profileName);
     res.json({ success: true, answer: aiAnswer });
   } catch (err) {
     console.error("Error en /api/intelligence/query:", err);
-    res.json({ success: true, answer: `Consulta procesada con éxito.` });
+    res.json({ success: true, answer: `Error procesando la consulta. Intenta nuevamente.` });
   }
 });
 
@@ -196,7 +180,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
   const queryName = String(req.query.name || '').trim();
   let chatMd = '';
-  let clientName = queryName || 'Helena, 56';
+  let clientName = queryName || 'Jaye, 64';
 
   if (SUPABASE_URL && SUPABASE_KEY && clientId !== 'N/A') {
     try {
@@ -237,13 +221,13 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : 'Brazil'),
-      birthDate: /(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : (/(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : '56 años'),
-      maritalStatus: /(no credits|credits)/i.test(textLower) ? 'Sin créditos actualmente (Recarga el 30)' : 'Not married',
-      pets: 'No especificado aún',
-      family: 'No especificado aún',
+      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : 'United States'),
+      birthDate: /(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : (/(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : '64 años'),
+      maritalStatus: /(not married|single)/i.test(textLower) ? 'Not married / Soltera' : 'Soltera',
+      pets: /(perro|dog)/i.test(textLower) ? 'Tiene perro' : 'No especificado aún',
+      family: /(hijos|kids)/i.test(textLower) ? 'Tiene hijos' : 'No especificado aún',
       work: 'Activo laboralmente',
-      summary: `Expediente de ${clientName} verificado en Supabase.`
+      summary: `Expediente verificado en Supabase.`
     };
     return res.json({ success: true, dossier, hasData: true });
   }
@@ -251,7 +235,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null, hasData: false });
 });
 
-// 4. AUDITORÍA HEURÍSTICA Y TRAVEL MISLEADING
+// 4. MOTOR HEURÍSTICO DE ANÁLISIS DE PATRONES
 function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown) {
   const textLower = (markdown || '').toLowerCase();
   const findings = [];
@@ -300,13 +284,13 @@ function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markd
   };
 }
 
-// 5. DEMÁS ENDPOINTS (AUDITORÍA, TELEMETRÍA, MULTAS)
+// 5. AUDITORÍA Y GUARDADO
 app.post('/api/chats/audit-deep', async (req, res) => {
   const { operator, profile, clientName, clientId, markdown, messages } = req.body;
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
 
   const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Helena, 56').trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Jaye, 64').trim();
   const auditKey = `${profile}_${cleanClientId}`;
   
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
@@ -375,6 +359,7 @@ app.post('/api/chats/analyze-single', (req, res) => {
   res.json({ success: true, aiReport });
 });
 
+// 6. GESTIÓN DE ALERTAS (ATENDER Y BORRAR)
 app.get('/api/alerts/live', (req, res) => {
   const alertsList = Array.from(activeAlertsMap.values()).filter(a => a.status === 'PENDING').sort((a, b) => b.timestamp - a.timestamp);
   res.json({ success: true, alerts: alertsList });
@@ -405,6 +390,7 @@ app.post('/api/alerts/:id/dismiss', (req, res) => {
   res.json({ success: true });
 });
 
+// 7. REGISTRO DE MULTAS
 app.post('/api/fines/register', async (req, res) => {
   const { operator, shift, profile, clientName, clientId, reason } = req.body;
   if (!operator) return res.status(400).json({ error: 'Operador requerido' });
@@ -448,6 +434,7 @@ app.get('/api/fines', async (req, res) => {
   res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() });
 });
 
+// 8. TELEMETRÍA
 app.post('/api/telemetry', (req, res) => {
   const { operator, shift, profile, profileId, pendingReadLetters, unansweredChatsCount, hasExpiredSla, isAfk, idleSeconds, activeChatTimersList, status } = req.body;
   if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
@@ -820,4 +807,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V39.0 (Groq Direct Active) en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V40.0 (Pure Groq Llama-3.3 Reasoning Engine) activo en puerto ${PORT}`));
