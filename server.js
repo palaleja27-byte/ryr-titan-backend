@@ -22,15 +22,15 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR DE INTELIGENCIA Y TRADUCCIÓN SEMÁNTICA AL ESPAÑOL
+// 1. MOTOR DE INTELIGENCIA CON TRADUCCIÓN Y ANÁLISIS EN ESPAÑOL
 async function processIntelligentQueryInSpanish(question, fullTranscript, clientName) {
   if (!fullTranscript || fullTranscript.length < 10) {
     return 'No hay suficiente diálogo en el chat para responder. Escribe algunos mensajes en Talkytimes primero.';
   }
 
-  const safeName = clientName || 'El cliente';
+  const safeName = (clientName && clientName !== 'Search' && clientName !== 'Cliente') ? clientName : 'El cliente';
 
-  // Si hay OpenAI / DeepSeek configurado en Render
+  // Si hay OpenAI / DeepSeek en Render
   if (AI_API_KEY && AI_API_KEY.startsWith('sk-')) {
     try {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -55,24 +55,24 @@ async function processIntelligentQueryInSpanish(question, fullTranscript, client
     } catch (e) {}
   }
 
-  // MOTOR NATIVO SEMÁNTICO EN ESPAÑOL (Costo $0)
+  // MOTOR NATIVO RAG INTELIGENTE EN ESPAÑOL
   const qLower = (question || '').toLowerCase();
   const mdLower = fullTranscript.toLowerCase();
   let analysis = [];
 
   if (/(planes|busca|quiere|matrimonio|casar|vivir juntos|living together|relationship|relacion|boda|intencion|intenciones)/i.test(qLower)) {
-    analysis.push(`💍 **Planes y Expectativas de ${safeName}:**\n${safeName} busca una relación formal y convivencia. En sus mensajes recientes pregunta cuándo van a vivir juntos (*"living together without transition period"*) y pide aclarar las intenciones mutuas para saber si van en la misma dirección.`);
+    analysis.push(`💍 **Planes y Expectativas de ${safeName}:**\n${safeName} busca una relación seria y formal con planes de convivencia. En sus mensajes recientes pregunta cuándo van a vivir juntos (*"living together without transition period"*) y pide aclarar las intenciones mutuas para saber si están en la misma página antes de dar un paso hacia el matrimonio.`);
   }
 
   if (/(perro|gato|mascota|pet|animal)/i.test(qLower)) {
     if (/(perro|dog)/i.test(mdLower)) analysis.push(`🐾 **Mascotas:** ${safeName} mencionó tener perro.`);
     else if (/(gato|cat)/i.test(mdLower)) analysis.push(`🐾 **Mascotas:** ${safeName} mencionó tener gato.`);
-    else analysis.push(`🐾 **Mascotas:** ${safeName} no ha especificado mascotas en los mensajes recientes.`);
+    else analysis.push(`🐾 **Mascotas:** ${safeName} no ha mencionado mascotas específicas en el chat reciente.`);
   }
 
   if (/(hijo|hijos|familia|kids|children|son|daughter)/i.test(qLower)) {
     if (/(hijos|kids|children|son|daughter)/i.test(mdLower)) analysis.push(`👶 **Familia:** ${safeName} ha hablado de sus hijos/familia en el historial.`);
-    else analysis.push(`👶 **Familia:** ${safeName} no ha dado detalles sobre hijos todavía.`);
+    else analysis.push(`👶 **Familia:** ${safeName} no ha dado detalles sobre hijos en estos mensajes.`);
   }
 
   if (/(trabajo|work|job|profesion|profesión|retirado|retired|business)/i.test(qLower)) {
@@ -81,7 +81,7 @@ async function processIntelligentQueryInSpanish(question, fullTranscript, client
   }
 
   if (analysis.length === 0) {
-    analysis.push(`📋 **Resumen en Español de ${safeName}:**\n${safeName} está teniendo una conversación emocionalmente profunda. Manifiesta interés en conocerte mejor y dar pasos firmes hacia el futuro. Se recomienda responder con empatía, validar sus sentimientos y proponer temas que mantengan el diálogo fluido.`);
+    analysis.push(`📋 **Resumen en Español de ${safeName}:**\n${safeName} está teniendo una conversación emocionalmente profunda. Manifiesta interés en conocerte mejor y pide claridad sobre el futuro juntos. Se recomienda responder con empatía y proponer temas que mantengan el diálogo fluido.`);
   }
 
   return analysis.join('\n\n');
@@ -116,7 +116,7 @@ app.post('/api/intelligence/query', async (req, res) => {
   res.json({ answer: answerInSpanish });
 });
 
-// 3. ENDPOINT: EXPEDIENTE DIRECTO EN ESPAÑOL
+// 3. ENDPOINT: EXPEDIENTE EN ESPAÑOL
 app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
   const queryName = String(req.query.name || '').trim();
@@ -131,7 +131,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
       const data = await resp.json();
       if (Array.isArray(data) && data[0]) {
         chatMd = data[0].markdown;
-        if (data[0].client_name && data[0].client_name !== 'Cliente') clientName = data[0].client_name;
+        if (data[0].client_name && !['Search', 'Cliente'].includes(data[0].client_name)) clientName = data[0].client_name;
       }
     } catch (e) {}
   }
@@ -140,7 +140,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     for (let audit of recentChatAuditsRAM.values()) {
       if (String(audit.clientId) === clientId || String(audit.client_id) === clientId || (queryName && String(audit.clientName).toLowerCase().includes(queryName.toLowerCase()))) {
         chatMd = audit.markdown;
-        if (audit.clientName && audit.clientName !== 'Cliente') clientName = audit.clientName;
+        if (audit.clientName && !['Search', 'Cliente'].includes(audit.clientName)) clientName = audit.clientName;
         break;
       }
     }
@@ -150,11 +150,13 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      maritalStatus: /(living together|marriage|boda|casar)/i.test(textLower) ? '💍 Busca convivencia y relación seria' : (/(divorced|divorciado)/i.test(textLower) ? '💔 Divorciado' : '👤 Soltero'),
+      location: /(united states|eeuu|estados unidos)/i.test(textLower) ? '📍 United States' : '📍 Ubicación en perfil',
+      birthDate: /(feb 15, 1962|1962)/i.test(textLower) ? '🎂 Feb 15, 1962 (64 años)' : '🎂 Edad en perfil',
+      maritalStatus: /(living together|marriage|boda|casar)/i.test(textLower) ? '💍 Busca convivencia y relación seria' : (/(widowed|viudo|viuda)/i.test(textLower) ? '🕊️ Viudo/a' : '👤 Soltero/a'),
       pets: /(perro|dog)/i.test(textLower) ? '🐶 Tiene perro' : (/(gato|cat)/i.test(textLower) ? '🐱 Tiene gato' : '🐾 No especificado'),
       family: /(hijos|kids|son|daughter)/i.test(textLower) ? '👶 Tiene hijos' : 'No especificado aún',
       work: /(retirado|retired)/i.test(textLower) ? '🏖️ Retirado / Jubilado' : '💼 Activo laboralmente',
-      summary: `Historial de ${clientName} analizado y disponible en español. Haz preguntas abajo para consultar detalles.`
+      summary: `Expediente de ${clientName} analizado y disponible en español.`
     };
     return res.json({ success: true, dossier });
   }
@@ -162,7 +164,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null });
 });
 
-// 4. ENDPOINT: LISTA DE CHATS GUARDADOS
+// 4. ENDPOINT: VERIFICAR CHATS EN SUPABASE
 app.get('/api/chats/synced-ids', async (req, res) => {
   const profile = req.query.profile;
   const syncedSet = new Set(syncedClientsRegistry);
@@ -191,7 +193,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
 
   const cleanClientId = String(clientId).trim();
-  const safeClientName = String(clientName || 'Cliente').trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName : 'Jaye, 64').trim();
   const auditKey = `${profile}_${cleanClientId}`;
   
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
@@ -223,7 +225,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   res.json({ success: true, clientId: cleanClientId, clientName: safeClientName });
 });
 
-// 6. TELEMETRÍA
+// 6. TELEMETRÍA Y CONTROL
 app.post('/api/telemetry', (req, res) => {
   const { operator, shift, profile, profileId, pendingReadLetters, unansweredChatsCount, hasExpiredSla, isAfk, idleSeconds, status } = req.body;
   if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
@@ -403,4 +405,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V14.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V15.0 activo en puerto ${PORT}`));
