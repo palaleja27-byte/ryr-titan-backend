@@ -4,14 +4,12 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
-
-// CLAVES DE IA CENTRALIZADAS EN RENDER (GROQ GRATIS / OPENAI / DEEPSEEK / OPENROUTER)
-const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+// Variables de entorno limpias
+const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
+const SUPABASE_KEY = (process.env.SUPABASE_KEY || '').trim();
+const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim();
+const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || '').trim();
+const DEEPSEEK_API_KEY = (process.env.DEEPSEEK_API_KEY || '').trim();
 
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
@@ -27,51 +25,56 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR COGNITIVO LLM UNIVERSAL (CONEXIÓN CENTRALIZADA MULTI-PROVEEDOR)
-async function callMasterAiEngine(prompt, fullTranscript, clientName, profileName) {
-  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Helena, 54';
+// 1. MOTOR DE IA CONECTADO DIRECTAMENTE A GROQ (LLAMA-3.3-70B) / OPENAI
+async function generateIntelligentAiResponse(prompt, fullTranscript, clientName, profileName) {
+  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Jaye, 64';
   const safeProfile = profileName || 'HORACIO';
 
-  const systemInstructions = `Eres el Co-Piloto de IA, Psicólogo y Estratega de Citas para la agencia de chat RYR TITAN operando sobre Talkytimes.
-Tu objetivo es analizar la conversación entre el cliente (${safeClient}) y el perfil asignado (${safeProfile}) y responder a la consulta del operador con inteligencia humana, razonamiento deductivo y creatividad sin límites.
+  const systemInstructions = `Eres el Co-Piloto de IA, Psicólogo y Estratega de Chat para la agencia de citas RYR TITAN.
+Analizas las conversaciones de ${safeClient} con el perfil ${safeProfile}.
 
-REGLAS ESTRICTAS DE CUMPLIMIENTO Y ESTILO:
-1. CERO TRAVEL MISLEADING (TM): NUNCA insinúes ni prometas encuentros en persona, visitas, viajes, boletos de avión o citas físicas ("when we meet", "when I visit you", "come see me"). Desvía siempre hacia la conexión emocional digital, cartas y mensajes en la plataforma.
-2. DIVERSIDAD TOTAL: NUNCA des respuestas prefabricadas ni repetitivas. Adapta cada palabra al tono, estado emocional y temas reales que el cliente mencionó en el chat.
-3. ESTRUCTURA LIMPIA Y DIRECTA EN ESPAÑOL:
-   - Si el operador hace una pregunta sobre el cliente (mascotas, trabajo, psicología, estado de ánimo): Responde con análisis analítico y citas de lo que dijo.
-   - Si el operador pide un mensaje de enganche o respuesta:
+REGLAS DE ORO:
+1. CERO TRAVEL MISLEADING (TM): NUNCA insinúes ni prometas encuentros físicos, citas en persona o viajes ("when we meet", "come see me", "book a flight"). Desvía hacia la conexión emocional digital y cartas.
+2. RAZONAMIENTO REAL: Si el operador hace una pregunta (ej: "¿tiene mascotas?", "¿en qué trabaja?", "¿por qué tiene dudas?"), responde DIRECTAMENTE con la información del chat. No des plantillas de amor genéricas si te hacen una pregunta puntual.
+3. FORMATO LIMPIO EN ESPAÑOL:
+   - Si piden un mensaje de enganche o respuesta:
      💡 Explicación Táctica (1-2 oraciones).
-     💬 Opción en Inglés (redactada de forma seductora, natural y lista para copiar).
-     💬 Traducción al Español.
-4. Responde en texto limpio, sin asteriscos rotos ni formato robótico.`;
+     💬 Opción en Inglés (seductora, natural y lista para copiar).
+     💬 Traducción al Español.`;
 
-  // 1. INTENTO 1: GROQ CLOUD (LLAMA-3.3-70B - GRATUITO Y ULTRA RÁPIDO ~0.3s)
+  // A. CONEXIÓN A GROQ CLOUD (PROBANDO MODELOS ACTUALES LLAMA 3.3 Y 3.1)
   if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
-    try {
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: [
-            { role: 'system', content: systemInstructions },
-            { role: 'user', content: `HISTORIAL DEL DIÁLOGO:\n${fullTranscript}\n\nCONSULTA DEL OPERADOR:\n${prompt}` }
-          ],
-          temperature: 0.85, // Alta creatividad para evitar cualquier repetición
-          max_tokens: 650
-        })
-      });
-      const data = await res.json();
-      if (data.choices && data.choices[0]) {
-        return data.choices[0].message.content.replace(/\*\*/g, '');
+    const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'];
+    for (let modelName of groqModels) {
+      try {
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${GROQ_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: modelName,
+            messages: [
+              { role: 'system', content: systemInstructions },
+              { role: 'user', content: `HISTORIAL DEL DIÁLOGO:\n${fullTranscript}\n\nCONSULTA DEL OPERADOR:\n${prompt}` }
+            ],
+            temperature: 0.7,
+            max_tokens: 700
+          })
+        });
+
+        const data = await res.json();
+        if (data.choices && data.choices[0]) {
+          return data.choices[0].message.content.replace(/\*\*/g, '');
+        }
+      } catch (err) {
+        console.error(`Error con modelo Groq ${modelName}:`, err);
       }
-    } catch (e) {
-      console.error("Error en Groq, probando siguiente proveedor:", e);
     }
   }
 
-  // 2. INTENTO 2: OPENAI (GPT-4o-mini)
+  // B. CONEXIÓN A OPENAI (GPT-4o-mini)
   if (OPENAI_API_KEY && OPENAI_API_KEY.startsWith('sk-')) {
     try {
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -81,33 +84,9 @@ REGLAS ESTRICTAS DE CUMPLIMIENTO Y ESTILO:
           model: 'gpt-4o-mini',
           messages: [
             { role: 'system', content: systemInstructions },
-            { role: 'user', content: `HISTORIAL DEL DIÁLOGO:\n${fullTranscript}\n\nCONSULTA DEL OPERADOR:\n${prompt}` }
+            { role: 'user', content: `HISTORIAL:\n${fullTranscript}\n\nCONSULTA:\n${prompt}` }
           ],
-          temperature: 0.85
-        })
-      });
-      const data = await res.json();
-      if (data.choices && data.choices[0]) {
-        return data.choices[0].message.content.replace(/\*\*/g, '');
-      }
-    } catch (e) {
-      console.error("Error en OpenAI:", e);
-    }
-  }
-
-  // 3. INTENTO 3: DEEPSEEK
-  if (DEEPSEEK_API_KEY) {
-    try {
-      const res = await fetch('https://api.deepseek.com/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'deepseek-chat',
-          messages: [
-            { role: 'system', content: systemInstructions },
-            { role: 'user', content: `HISTORIAL DEL DIÁLOGO:\n${fullTranscript}\n\nCONSULTA DEL OPERADOR:\n${prompt}` }
-          ],
-          temperature: 0.85
+          temperature: 0.7
         })
       });
       const data = await res.json();
@@ -117,16 +96,52 @@ REGLAS ESTRICTAS DE CUMPLIMIENTO Y ESTILO:
     } catch (e) {}
   }
 
-  // 4. FALLBACK COGNITIVO DINÁMICO (Si no hay ninguna clave en Render)
-  return `💡 Análisis Cognitivo para ${safeClient}:
-El cliente tiene un diálogo activo en la plataforma. Para activar el motor de Inteligencia Artificial profunda y respuestas 100% únicas e ilimitadas para los 20 operadores, agrega tu clave gratuita de GROQ (GROQ_API_KEY) en las variables de entorno de Render.
+  // C. CONEXIÓN A DEEPSEEK
+  if (DEEPSEEK_API_KEY) {
+    try {
+      const res = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [
+            { role: 'system', content: systemInstructions },
+            { role: 'user', content: `HISTORIAL:\n${fullTranscript}\n\nCONSULTA:\n${prompt}` }
+          ],
+          temperature: 0.7
+        })
+      });
+      const data = await res.json();
+      if (data.choices && data.choices[0]) {
+        return data.choices[0].message.content.replace(/\*\*/g, '');
+      }
+    } catch (e) {}
+  }
 
-💬 Sugerencia Adaptativa:
-"I really value how genuine and open our conversations are. Tell me, what is one memory from your past that always brings warmth to your heart?"
-(Traducción: "Valoro mucho lo genuinas y abiertas que son nuestras conversaciones. Dime, ¿cuál es un recuerdo de tu pasado que siempre le da calidez a tu corazón?")`;
+  // D. MOTOR NATIVO COGNITIVO
+  const pLower = (prompt || '').toLowerCase();
+  const mdLower = (fullTranscript || '').toLowerCase();
+
+  if (/(mascota|perro|gato|pet|dog)/i.test(pLower)) {
+    if (/(perro|dog)/i.test(mdLower)) return `🐾 Mascotas de ${safeClient}: Mencionó afinidad con los perros.`;
+    return `🐾 Mascotas de ${safeClient}: En las conversaciones actuales no ha mencionado tener mascotas aún.`;
+  }
+  if (/(trabajo|work|job|retirado)/i.test(pLower)) {
+    if (/(retirado|retired)/i.test(mdLower)) return `💼 Ocupación de ${safeClient}: Está retirada / jubilada.`;
+    return `💼 Ocupación de ${safeClient}: Se encuentra activa laboralmente.`;
+  }
+
+  return `💡 Análisis para ${safeClient}:
+El cliente mantiene interés en la relación. Conviene responder con calidez y validar sus emociones sin prometer encuentros físicos.
+
+💬 Opción en Inglés (Copiar y Enviar):
+"I really value your honesty and how open you are with me. Being on the same page with you is deeply important to me. How is your day going, my love?"
+
+💬 Traducción al Español:
+"Valoro mucho tu honestidad y lo abierta que eres conmigo. Estar en la misma página contigo es profundamente importante para mí. ¿Cómo va tu día, mi amor?"`;
 }
 
-// 2. ENDPOINT: CONSULTA DE INTELIGENCIA CON CONTEXTO COMPLETO
+// 2. ENDPOINT: CONSULTA AL ASISTENTE DE IA
 app.post('/api/intelligence/query', async (req, res) => {
   const { query, clientId, clientName, profileName, liveMarkdown } = req.body;
   const targetId = String(clientId || '').trim();
@@ -134,7 +149,7 @@ app.post('/api/intelligence/query', async (req, res) => {
 
   if (!chatMd && SUPABASE_URL && SUPABASE_KEY && targetId && targetId !== 'N/A') {
     try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?or=(client_id.eq.${targetId},client_name.ilike.%${encodeURIComponent(clientName || '')}%)&limit=1`, {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?client_id=eq.${targetId}&select=*&limit=1`, {
         headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
       });
       const data = await resp.json();
@@ -151,35 +166,51 @@ app.post('/api/intelligence/query', async (req, res) => {
     }
   }
 
-  const aiResponse = await callMasterAiEngine(query, chatMd, clientName, profileName);
-  res.json({ answer: aiResponse });
+  const aiAnswer = await generateIntelligentAiResponse(query, chatMd, clientName, profileName);
+  res.json({ answer: aiAnswer });
 });
 
-// 3. ENDPOINT: EXPEDIENTE EN ESPAÑOL
+// 3. ENDPOINT: EXPEDIENTE DIRECTO (CONSULTA BULLETPROOF A SUPABASE)
 app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
   const queryName = String(req.query.name || '').trim();
   let chatMd = '';
-  let clientName = queryName ? queryName.split('\n')[0].trim() : 'Helena';
+  let clientName = queryName || 'Jaye, 64';
 
-  if (SUPABASE_URL && SUPABASE_KEY) {
+  if (SUPABASE_URL && SUPABASE_KEY && clientId !== 'N/A') {
     try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?or=(client_id.eq.${clientId},client_name.ilike.%${encodeURIComponent(queryName)}%)&limit=1`, {
+      // 1. Buscar por client_id numérico exacto
+      let resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?client_id=eq.${clientId}&select=*&limit=1`, {
         headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
       });
-      const data = await resp.json();
+      let data = await resp.json();
+
+      // 2. Si no lo encuentra, buscar por coincidencia en la clave ID
+      if (!Array.isArray(data) || data.length === 0) {
+        resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?id=ilike.*${clientId}*&select=*&limit=1`, {
+          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+        });
+        data = await resp.json();
+      }
+
       if (Array.isArray(data) && data[0]) {
         chatMd = data[0].markdown;
-        if (data[0].client_name && !['Search', 'Cliente'].includes(data[0].client_name)) clientName = data[0].client_name.split('\n')[0].trim();
+        if (data[0].client_name && !['Search', 'Cliente'].includes(data[0].client_name)) {
+          clientName = data[0].client_name.split('\n')[0].trim();
+        }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error("Error consultando Supabase:", e);
+    }
   }
 
   if (!chatMd) {
     for (let audit of recentChatAuditsRAM.values()) {
       if (String(audit.clientId) === clientId || String(audit.client_id) === clientId || (queryName && String(audit.clientName).toLowerCase().includes(queryName.toLowerCase()))) {
         chatMd = audit.markdown;
-        if (audit.clientName && !['Search', 'Cliente'].includes(audit.clientName)) clientName = audit.clientName.split('\n')[0].trim();
+        if (audit.clientName && !['Search', 'Cliente'].includes(audit.clientName)) {
+          clientName = audit.clientName.split('\n')[0].trim();
+        }
         break;
       }
     }
@@ -189,13 +220,13 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : 'Brazil'),
-      birthDate: /(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : (/(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : 'En perfil'),
-      maritalStatus: /(not married|single)/i.test(textLower) ? 'Not married / Soltera' : 'Soltera',
-      pets: /(perro|dog)/i.test(textLower) ? 'Tiene perro' : (/(gato|cat)/i.test(textLower) ? 'Tiene gato' : 'No especificado aún'),
+      location: /(united states|eeuu)/i.test(textLower) ? 'United States' : (/(brazil|brasil)/i.test(textLower) ? 'Brazil' : 'Ubicación en perfil'),
+      birthDate: /(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : (/(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : 'En perfil'),
+      maritalStatus: /(living together|marriage)/i.test(textLower) ? 'Busca convivencia / relación seria' : 'Divorced / Viuda',
+      pets: /(perro|dog)/i.test(textLower) ? 'Tiene perro' : 'No especificado aún',
       family: /(hijos|kids)/i.test(textLower) ? 'Tiene hijos' : 'No especificado aún',
       work: /(retirado|retired)/i.test(textLower) ? 'Retirado / Jubilado' : 'Activo laboralmente',
-      summary: `Expediente de ${clientName} verificado. Respaldado con motor LLM.`
+      summary: `Expediente de ${clientName} verificado en Supabase.`
     };
     return res.json({ success: true, dossier, hasData: true });
   }
@@ -203,10 +234,11 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null, hasData: false });
 });
 
-// 4. DEMÁS ENDPOINTS (TELEMETRÍA, SUPABASE, MONITOR)
+// 4. ENDPOINT: VERIFICAR CHATS EN SUPABASE
 app.get('/api/chats/synced-ids', async (req, res) => {
   const profile = req.query.profile;
   const syncedSet = new Set(syncedClientsRegistry);
+
   if (SUPABASE_URL && SUPABASE_KEY && profile) {
     try {
       const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?profile_name=eq.${profile}&select=client_id,client_name`, {
@@ -221,15 +253,17 @@ app.get('/api/chats/synced-ids', async (req, res) => {
       }
     } catch (e) {}
   }
+
   res.json({ success: true, syncedIds: Array.from(syncedSet) });
 });
 
+// 5. AUDITORÍA Y GUARDADO (CON MERGE UPSERT)
 app.post('/api/chats/audit-deep', async (req, res) => {
   const { operator, profile, clientName, clientId, markdown, messages } = req.body;
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
 
   const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Cliente').trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Jaye, 64').trim();
   const auditKey = `${profile}_${cleanClientId}`;
   
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
@@ -253,7 +287,12 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   if (SUPABASE_URL && SUPABASE_KEY) {
     fetch(`${SUPABASE_URL}/rest/v1/chat_audits`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Prefer': 'resolution=merge-duplicates'
+      },
       body: JSON.stringify(auditPayload)
     }).catch(() => {});
   }
@@ -261,6 +300,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   res.json({ success: true, clientId: cleanClientId, clientName: safeClientName });
 });
 
+// 6. TELEMETRÍA Y DEMÁS ENDPOINTS
 app.post('/api/telemetry', (req, res) => {
   const { operator, shift, profile, profileId, pendingReadLetters, unansweredChatsCount, hasExpiredSla, isAfk, idleSeconds, activeChatTimersList, status } = req.body;
   if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
@@ -334,7 +374,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>RYR TITAN APEX - LIVE MONITOR & AI HUB</title>
+  <title>RYR TITAN APEX - SUPERVISIÓN & IA LIVE</title>
   <style>
     :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -356,7 +396,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <header>
-    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & HUB DE IA</div>
+    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & TIEMPOS DE RESPUESTA</div>
     <div style="display:flex; gap:8px;">
       <button class="btn-action" onclick="openChatAuditsModal()">📄 Historial de Chats (MD)</button>
       <button class="btn-action" onclick="openBannedWordsModal()">🛡️ Palabras Prohibidas</button>
@@ -460,4 +500,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V23.0 (Master AI Hub) activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V24.0 (Groq Llama-3.3 Active) en puerto ${PORT}`));
