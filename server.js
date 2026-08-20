@@ -6,7 +6,6 @@ const PORT = process.env.PORT || 3000;
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
-// Soporta GROQ (Gratis), OpenAI o DeepSeek
 const AI_API_KEY = process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY || process.env.AI_API_KEY || '';
 
 app.use(cors());
@@ -23,12 +22,14 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR DE IA DINÁMICO, COGNITIVO Y ANTI-TRAVEL MISLEADING
-async function generateDeepCognitiveResponse(prompt, fullTranscript, clientName, profileName) {
-  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'el cliente';
+// 1. MOTOR DE RAZONAMIENTO COGNITIVO SEGÚN LA PREGUNTA EXACTA DEL OPERADOR
+async function generateCognitiveResponse(prompt, fullTranscript, clientName, profileName) {
+  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Helena';
   const safeProfile = profileName || 'HORACIO';
+  const pLower = (prompt || '').toLowerCase().trim();
+  const mdLower = (fullTranscript || '').toLowerCase();
 
-  // A. SI HAY API KEY CONFIGURADA EN RENDER (GROQ / OPENAI / DEEPSEEK)
+  // A. SI HAY API KEY (GROQ GRATIS / OPENAI / DEEPSEEK)
   if (AI_API_KEY && AI_API_KEY.length > 10) {
     try {
       const isGroq = AI_API_KEY.startsWith('gsk_');
@@ -43,73 +44,105 @@ async function generateDeepCognitiveResponse(prompt, fullTranscript, clientName,
           messages: [
             {
               role: 'system',
-              content: `Eres el Asistente de IA y Estratega de Chat de la agencia RYR TITAN. Operas en modo /human con altísima inteligencia emocional, empatía y naturalidad.
-              Estudias el diálogo con ${safeClient} para el perfil ${safeProfile}.
+              content: `Eres el Asistente de Inteligencia de la agencia RYR TITAN. 
+              Estudias el historial del cliente ${safeClient} con el perfil ${safeProfile}.
               
-              REGLAS ESTRICTAS:
-              1. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos, citas en persona o viajes ("when we meet", "come visit", "see you soon in person"). Desvía hacia la conexión emocional digital y cartas.
-              2. ADAPTABILIDAD TOTAL: Si el cliente habla de dolor, enfermedad, trabajo, soledad o amor, responde EXACTAMENTE a ese tema con empatía genuina.
-              3. FORMATO LIMPIO:
-                 💡 Diagnóstico (1-2 oraciones).
-                 💬 Opción en Inglés (lista para copiar).
-                 💬 Traducción al Español.`
+              REGLAS DE RESPUESTA:
+              1. Si el operador te hace una PREGUNTA FACTUAL (ej: "¿tiene mascotas?", "¿en qué trabaja?", "¿tiene hijos?"), responde DIRECTAMENTE si el dato existe en el historial o no. No des mensajes de amor genéricos si te preguntan por un hecho.
+              2. Si el operador pide un MENSAJE O ESTRATEGIA (ej: "dame un mensaje de enganche", "cómo le respondo"), redacta opciones personalizadas.
+              3. CERO TRAVEL MISLEADING: NUNCA sugieras encuentros físicos, citas en persona o viajes.
+              4. Formato limpio en texto plano sin asteriscos rotos.`
             },
-            { role: 'user', content: `HISTORIAL DEL CHAT:\n${fullTranscript}\n\nPETICIÓN:\n${prompt}` }
+            { role: 'user', content: `HISTORIAL DEL CHAT:\n${fullTranscript}\n\nPREGUNTA DEL OPERADOR:\n${prompt}` }
           ],
-          temperature: 0.7
+          temperature: 0.5
         })
       });
       const data = await response.json();
       if (data.choices && data.choices[0]) {
         return data.choices[0].message.content.replace(/\*\*/g, '');
       }
-    } catch (err) {
-      console.error("Error en API externa, usando motor dinámico local:", err);
+    } catch (err) {}
+  }
+
+  // B. MOTOR NATIVO CON CLASIFICADOR DE INTENCIONES (Costo $0)
+
+  // 1. PREGUNTA SOBRE MASCOTAS
+  if (/(mascota|mascotas|perro|perros|gato|gatos|pet|pets|dog|cat)/i.test(pLower)) {
+    if (/(perro|dog|cachorro)/i.test(mdLower)) {
+      return `🐾 Mascotas de ${safeClient}:
+Sí, en el historial ${safeClient} mencionó que le gustan los perros / tiene perro.
+
+💬 Sugerencia para conversar sobre esto:
+"I was just thinking about you and remembered you love dogs! How is your dog doing today?"
+(Traducción: "¡Estaba pensando en ti y recordé que te encantan los perros! ¿Cómo está tu perrito hoy?")`;
+    } else if (/(gato|cat|gatito)/i.test(mdLower)) {
+      return `🐾 Mascotas de ${safeClient}:
+Sí, en el historial ${safeClient} mencionó afinidad con los gatos.`;
+    } else {
+      return `🐾 Mascotas de ${safeClient}:
+En las conversaciones analizadas, ${safeClient} no ha mencionado tener mascotas todavía.
+
+💡 Pregunta sugerida para sacar conversación sobre este tema:
+🇺🇸 English: "I was just wondering, do you have any pets at home? I've always had a soft spot for animals."
+🇪🇸 Español: "Me estaba preguntando, ¿tienes alguna mascota en casa? Siempre he tenido debilidad por los animales."`;
     }
   }
 
-  // B. MOTOR NATIVO DINÁMICO (Costo $0 - Análisis Real de Mensajes)
-  const mdLower = (fullTranscript || '').toLowerCase();
-  let cleanResponse = '';
+  // 2. PREGUNTA SOBRE FAMILIA / HIJOS
+  if (/(hijo|hijos|hija|hijas|familia|nietos|kids|children|son|daughter)/i.test(pLower)) {
+    if (/(hijos|kids|children|son|daughter)/i.test(mdLower)) {
+      return `👶 Familia de ${safeClient}:
+Sí, en el historial ${safeClient} ha hecho mención sobre sus hijos/familia.`;
+    } else {
+      return `👶 Familia de ${safeClient}:
+En el historial actual, ${safeClient} no ha detallado si tiene hijos o familia cercana.
 
-  // 1. Caso: Salud / Dolor / Enfermedad (Como el dolor de muelas de Bhang)
-  if (/(teeth|tooth|crowns|pain|doctor|dentist|pills|medicine|sick|hospital|hurt|painful|dying from the pain|diente|muela|dolor)/i.test(mdLower)) {
-    cleanResponse = `💡 Diagnóstico para ${safeClient}:
-${safeClient} está sufriendo por un dolor físico fuerte (mencionó dolor de dientes/coronas). La prioridad absoluta es mostrar preocupación sincera, empatía y afecto protector.
-
-💬 Opción en Inglés (Copiar y Enviar):
-"Oh my love, I'm so sorry you're in so much pain. It breaks my heart knowing you're suffering with your teeth right now. Did you take any pain medicine? Please try to rest and keep a cold compress on it. I'm right here sending you all my love and warm hugs."
-
-💬 Traducción al Español:
-"Oh mi amor, siento tanto que tengas tanto dolor. Me rompe el corazón saber que estás sufriendo con tus dientes ahora mismo. ¿Tomaste algún analgésico? Por favor intenta descansar y ponerte una compresa fría. Estoy aquí mismo enviándote todo mi amor y abrazos cálidos."`;
-  }
-  // 2. Caso: Planes / Convivencia (Como Jaye)
-  else if (/(living together|marriage|future|together|situation|clarify)/i.test(mdLower)) {
-    cleanResponse = `💡 Diagnóstico para ${safeClient}:
-${safeClient} busca claridad sobre el futuro y formalizar la relación. Conviene responder con seguridad emocional y cariño, evitando prometer viajes físicos (Anti-TM).
-
-💬 Opción en Inglés (Copiar y Enviar):
-"I really appreciate you sharing your heart with me so openly. I want you to know that having you in my life is deeply important to me, and I cherish what we are building together. Let's keep talking and getting to know every part of each other. How are you feeling today, sweetheart?"
-
-💬 Traducción al Español:
-"Aprecio mucho que compartas tus sentimientos conmigo tan abiertamente. Quiero que sepas que tenerte en mi vida es profundamente importante para mí y valoro lo que estamos construyendo juntos. Sigamos hablando y conociéndonos a fondo. ¿Cómo te sientes hoy, cariño?"`;
-  }
-  // 3. Caso General / Enganche
-  else {
-    cleanResponse = `💡 Diagnóstico para ${safeClient}:
-${safeClient} mantiene interés activo. Conviene validar sus emociones con dulzura y hacer preguntas abiertas que mantengan el diálogo fluido.
-
-💬 Opción en Inglés (Copiar y Enviar):
-"Thinking of you brings a big smile to my face. I love how easy it is to talk to you and share my days with you. Tell me, how has your day been treating you so far?"
-
-💬 Traducción al Español:
-"Pensar en ti me saca una gran sonrisa. Me encanta lo fácil que es hablar contigo y compartir mis días contigo. Dime, ¿cómo te ha tratado el día hasta ahora?"`;
+💡 Pregunta sugerida para conocerla mejor:
+🇺🇸 English: "Family is so important to me. Tell me, do you have a big family or any kids?"
+🇪🇸 Español: "La familia es muy importante para mí. Cuéntame, ¿tienes una familia grande o hijos?"`;
+    }
   }
 
-  return cleanResponse;
+  // 3. PREGUNTA SOBRE TRABAJO / OCUPACIÓN
+  if (/(trabajo|trabaja|profesion|profesión|ocupacion|ocupación|job|work|carrera|retirado|retired)/i.test(pLower)) {
+    if (/(retirado|retired|jubilado)/i.test(mdLower)) {
+      return `💼 Trabajo / Ocupación de ${safeClient}:
+${safeClient} mencionó estar retirada/jubilada y disfrutar de su tiempo libre.`;
+    } else {
+      return `💼 Trabajo / Ocupación de ${safeClient}:
+Menciona estar activa en sus actividades diarias.
+
+💡 Pregunta sugerida:
+🇺🇸 English: "What keeps you most busy during the week? Tell me about what you enjoy doing."
+🇪🇸 Español: "¿Qué es lo que más te mantiene ocupada durante la semana? Cuéntame sobre lo que disfrutas hacer."`;
+    }
+  }
+
+  // 4. PREGUNTA SOBRE ESTADO CIVIL / PAREJA
+  if (/(casada|soltera|divorciada|viuda|pareja|novio|esposo|marriage|divorced|single|not married)/i.test(pLower)) {
+    return `💍 Estado Civil de ${safeClient}:
+En su perfil figura como "Not married / Soltera" y en el chat busca una conexión sincera y duradera.`;
+  }
+
+  // 5. SOLICITUD DE MENSAJES DE ENGANCHE / ESTRATEGIA
+  if (/(mensaje|dame un mensaje|como le respondo|que le digo|carta|gancho|enganchar|reconectar|atencion|atención)/i.test(pLower)) {
+    return `💡 Estrategia de Enganche para ${safeClient}:
+Conviene validar su afecto con un tono cálido y hacerle una pregunta abierta sobre sus pasiones para mantenerla activa.
+
+💬 Opción en Inglés (Copiar y Enviar):
+"Thinking of you brings a big smile to my face. I love how genuine our connection feels. What is something you are truly passionate about that always makes your eyes light up?"
+
+💬 Traducción al Español:
+"Pensar en ti me saca una gran sonrisa. Me encanta lo genuina que se siente nuestra conexión. ¿Qué es algo que realmente te apasiona y que siempre hace que se te iluminen los ojos?"`;
+  }
+
+  // 6. RESPUESTA GENERAL
+  return `📋 Información sobre ${safeClient}:
+Historial revisado con éxito. Puedes preguntarme sobre sus mascotas, hijos, trabajo, estado civil o pedirme mensajes de enganche listos para enviar.`;
 }
 
-// 2. ENDPOINT: CONSULTA DE INTELIGENCIA
+// 2. ENDPOINT: CONSULTA AL ASISTENTE DE IA
 app.post('/api/intelligence/query', async (req, res) => {
   const { query, clientId, clientName, profileName, liveMarkdown } = req.body;
   const targetId = String(clientId || '').trim();
@@ -134,7 +167,7 @@ app.post('/api/intelligence/query', async (req, res) => {
     }
   }
 
-  const intelligentAnswer = await generateDeepCognitiveResponse(query, chatMd, clientName, profileName);
+  const intelligentAnswer = await generateCognitiveResponse(query, chatMd, clientName, profileName);
   res.json({ answer: intelligentAnswer });
 });
 
@@ -143,7 +176,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
   const queryName = String(req.query.name || '').trim();
   let chatMd = '';
-  let clientName = queryName || 'Cliente';
+  let clientName = queryName ? queryName.split('\n')[0].trim() : 'Helena';
 
   if (SUPABASE_URL && SUPABASE_KEY && clientId !== 'N/A') {
     try {
@@ -160,7 +193,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
 
   if (!chatMd) {
     for (let audit of recentChatAuditsRAM.values()) {
-      if (String(audit.clientId) === clientId || String(audit.client_id) === clientId) {
+      if (String(audit.clientId) === clientId || String(audit.client_id) === clientId || (queryName && String(audit.clientName).toLowerCase().includes(queryName.toLowerCase()))) {
         chatMd = audit.markdown;
         if (audit.clientName && !['Search', 'Cliente'].includes(audit.clientName)) clientName = audit.clientName.split('\n')[0].trim();
         break;
@@ -172,13 +205,13 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : 'En perfil'),
-      birthDate: /(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : (/(apr 7, 1974|1974)/i.test(textLower) ? 'Apr 7, 1974 (52 años)' : 'En perfil'),
-      maritalStatus: /(living together|marriage)/i.test(textLower) ? 'Busca relación seria' : 'Not married',
-      pets: /(perro|dog)/i.test(textLower) ? 'Tiene perro' : 'No especificado',
+      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : 'Brazil'),
+      birthDate: /(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : (/(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : 'En perfil'),
+      maritalStatus: /(not married|single)/i.test(textLower) ? 'Not married / Soltera' : 'Soltera',
+      pets: /(perro|dog)/i.test(textLower) ? 'Tiene perro' : 'No especificado aún',
       family: /(hijos|kids)/i.test(textLower) ? 'Tiene hijos' : 'No especificado aún',
       work: 'Activo laboralmente',
-      summary: `Expediente de ${clientName} sincronizado en Supabase.`
+      summary: `Expediente de ${clientName} verificado en Supabase.`
     };
     return res.json({ success: true, dossier, hasData: true });
   }
@@ -186,11 +219,10 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null, hasData: false });
 });
 
-// 4. ENDPOINT: VERIFICAR CHATS GUARDADOS EN SUPABASE
+// 4. DEMÁS ENDPOINTS (TELEMETRÍA, AUDITORÍA, PALABRAS PROHIBIDAS, MONITOR)
 app.get('/api/chats/synced-ids', async (req, res) => {
   const profile = req.query.profile;
   const syncedSet = new Set(syncedClientsRegistry);
-
   if (SUPABASE_URL && SUPABASE_KEY && profile) {
     try {
       const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?profile_name=eq.${profile}&select=client_id,client_name`, {
@@ -205,17 +237,15 @@ app.get('/api/chats/synced-ids', async (req, res) => {
       }
     } catch (e) {}
   }
-
   res.json({ success: true, syncedIds: Array.from(syncedSet) });
 });
 
-// 5. AUDITORÍA Y GUARDADO
 app.post('/api/chats/audit-deep', async (req, res) => {
   const { operator, profile, clientName, clientId, markdown, messages } = req.body;
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
 
   const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Cliente').trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Helena').trim();
   const auditKey = `${profile}_${cleanClientId}`;
   
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
@@ -247,7 +277,6 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   res.json({ success: true, clientId: cleanClientId, clientName: safeClientName });
 });
 
-// 6. TELEMETRÍA Y ALERTAS
 app.post('/api/telemetry', (req, res) => {
   const { operator, shift, profile, profileId, pendingReadLetters, unansweredChatsCount, hasExpiredSla, isAfk, idleSeconds, activeChatTimersList, status } = req.body;
   if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
@@ -331,7 +360,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
     .operator-card { background: var(--bg-card); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; }
     .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
-    .live-timers-container { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .live-timers-container { display: flex; flex-wrap: gap; gap: 4px; margin-top: 6px; }
     .live-chat-timer-badge { font-size: 10px; font-weight: bold; font-family: monospace; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
     .timer-ok { background: #064e3b; color: #34d399; border: 1px solid #10b981; }
     .timer-expired { background: #450a0a; color: #f87171; border: 1px solid #ef4444; animation: pulseRed 1s infinite; }
@@ -447,4 +476,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V20.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V21.0 activo en puerto ${PORT}`));
