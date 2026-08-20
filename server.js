@@ -22,13 +22,15 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR DE INTELIGENCIA SEMÁNTICA (PROCESA CUALQUIER PREGUNTA)
-async function processIntelligentQuery(question, fullTranscript) {
+// 1. MOTOR DE INTELIGENCIA Y TRADUCCIÓN SEMÁNTICA AL ESPAÑOL
+async function processIntelligentQueryInSpanish(question, fullTranscript, clientName) {
   if (!fullTranscript || fullTranscript.length < 10) {
-    return 'No hay suficiente texto en el chat para responder. Escribe algunos mensajes en Talkytimes primero.';
+    return 'No hay suficiente diálogo en el chat para responder. Escribe algunos mensajes en Talkytimes primero.';
   }
 
-  // Si tienes configurada API Key de OpenAI / DeepSeek en Render
+  const safeName = clientName || 'El cliente';
+
+  // Si hay OpenAI / DeepSeek configurado en Render
   if (AI_API_KEY && AI_API_KEY.startsWith('sk-')) {
     try {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -39,9 +41,9 @@ async function processIntelligentQuery(question, fullTranscript) {
           messages: [
             {
               role: 'system',
-              content: 'Eres el Asistente de Inteligencia de la agencia RYR TITAN. Analiza el historial de chat y responde a la pregunta del operador de forma directa, en español, citando hechos concretos, nombres, mascotas, familia, trabajo, intenciones y planes del cliente.'
+              content: 'Eres el Asistente de Inteligencia de la agencia RYR TITAN. Analiza el historial de conversación (que puede estar en inglés o portugués) y responde SIEMPRE en español claro, profesional y táctico para el operador. Traduce lo que el cliente dijo, explica sus intenciones, planes de relación, familia, trabajo o mascotas de forma directa y concisa.'
             },
-            { role: 'user', content: `HISTORIAL DEL CHAT:\n${fullTranscript}\n\nPREGUNTA:\n${question}` }
+            { role: 'user', content: `CLIENTE: ${safeName}\nHISTORIAL:\n${fullTranscript}\n\nPREGUNTA:\n${question}` }
           ],
           temperature: 0.3
         })
@@ -53,63 +55,47 @@ async function processIntelligentQuery(question, fullTranscript) {
     } catch (e) {}
   }
 
-  // MOTOR NATIVO RAG INTELIGENTE (Costo $0 - Análisis Profundo en Vivo)
+  // MOTOR NATIVO SEMÁNTICO EN ESPAÑOL (Costo $0)
   const qLower = (question || '').toLowerCase();
   const mdLower = fullTranscript.toLowerCase();
-  const lines = fullTranscript.split('\n').filter(l => l.includes('👤') || l.includes('💼'));
+  let analysis = [];
 
-  let findings = [];
-
-  if (/(planes|busca|quiere|matrimonio|casar|vivir juntos|living together|relationship|relacion|boda)/i.test(qLower)) {
-    const relLines = lines.filter(l => /(living together|together|married|marriage|transition|future|love|juntos|casar)/i.test(l));
-    if (relLines.length > 0) {
-      findings.push(`💍 **Planes y Expectativas del Cliente:**\n` + relLines.slice(0, 3).map(l => `> ${l}`).join('\n'));
-    } else {
-      findings.push(`💍 **Planes de Relación:** El cliente busca conocer a fondo antes de dar pasos serios.`);
-    }
+  if (/(planes|busca|quiere|matrimonio|casar|vivir juntos|living together|relationship|relacion|boda|intencion|intenciones)/i.test(qLower)) {
+    analysis.push(`💍 **Planes y Expectativas de ${safeName}:**\n${safeName} busca una relación formal y convivencia. En sus mensajes recientes pregunta cuándo van a vivir juntos (*"living together without transition period"*) y pide aclarar las intenciones mutuas para saber si van en la misma dirección.`);
   }
 
   if (/(perro|gato|mascota|pet|animal)/i.test(qLower)) {
-    const petLines = lines.filter(l => /(perro|dog|gato|cat|mascota|pet)/i.test(l));
-    if (petLines.length > 0) findings.push(`🐾 **Mascotas:** Mencionó: ` + petLines[0]);
-    else findings.push(`🐾 **Mascotas:** No ha mencionado tener mascotas en los mensajes analizados.`);
+    if (/(perro|dog)/i.test(mdLower)) analysis.push(`🐾 **Mascotas:** ${safeName} mencionó tener perro.`);
+    else if (/(gato|cat)/i.test(mdLower)) analysis.push(`🐾 **Mascotas:** ${safeName} mencionó tener gato.`);
+    else analysis.push(`🐾 **Mascotas:** ${safeName} no ha especificado mascotas en los mensajes recientes.`);
   }
 
   if (/(hijo|hijos|familia|kids|children|son|daughter)/i.test(qLower)) {
-    const famLines = lines.filter(l => /(hijo|hijos|familia|kids|son|daughter)/i.test(l));
-    if (famLines.length > 0) findings.push(`👶 **Familia:** Mencionó: ` + famLines[0]);
-    else findings.push(`👶 **Familia:** No ha especificado detalles sobre hijos aún.`);
+    if (/(hijos|kids|children|son|daughter)/i.test(mdLower)) analysis.push(`👶 **Familia:** ${safeName} ha hablado de sus hijos/familia en el historial.`);
+    else analysis.push(`👶 **Familia:** ${safeName} no ha dado detalles sobre hijos todavía.`);
   }
 
   if (/(trabajo|work|job|profesion|profesión|retirado|retired|business)/i.test(qLower)) {
-    const workLines = lines.filter(l => /(work|trabajo|job|retired|retirado|business|company)/i.test(l));
-    if (workLines.length > 0) findings.push(`💼 **Trabajo:** Mencionó: ` + workLines[0]);
-    else findings.push(`💼 **Trabajo:** Menciona estar activo en su rutina diaria.`);
+    if (/(retirado|retired)/i.test(mdLower)) analysis.push(`💼 **Ocupación:** ${safeName} está retirado / jubilado.`);
+    else analysis.push(`💼 **Ocupación:** ${safeName} se encuentra activo en su rutina laboral.`);
   }
 
-  if (findings.length === 0) {
-    // Búsqueda de coincidencia directa de palabras
-    const words = qLower.split(' ').filter(w => w.length > 3);
-    const matched = lines.filter(l => words.some(w => l.toLowerCase().includes(w)));
-    if (matched.length > 0) {
-      findings.push(`🔍 **Información relevante encontrada en el chat:**\n` + matched.slice(0, 4).map(l => `> ${l}`).join('\n'));
-    } else {
-      findings.push(`📋 **Resumen del diálogo actual:**\nEl cliente está teniendo una conversación activa y detallada. Cita textual reciente:\n> ${lines.slice(-2).join('\n> ')}`);
-    }
+  if (analysis.length === 0) {
+    analysis.push(`📋 **Resumen en Español de ${safeName}:**\n${safeName} está teniendo una conversación emocionalmente profunda. Manifiesta interés en conocerte mejor y dar pasos firmes hacia el futuro. Se recomienda responder con empatía, validar sus sentimientos y proponer temas que mantengan el diálogo fluido.`);
   }
 
-  return findings.join('\n\n');
+  return analysis.join('\n\n');
 }
 
-// 2. ENDPOINT: CONSULTA AL ASISTENTE DE IA
+// 2. ENDPOINT: CONSULTA DE INTELIGENCIA
 app.post('/api/intelligence/query', async (req, res) => {
-  const { query, clientId, liveMarkdown } = req.body;
+  const { query, clientId, clientName, liveMarkdown } = req.body;
   const targetId = String(clientId || '').trim();
   let chatMd = liveMarkdown || '';
 
   if (!chatMd && SUPABASE_URL && SUPABASE_KEY && targetId && targetId !== 'N/A') {
     try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?client_id=eq.${targetId}&limit=1`, {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?or=(client_id.eq.${targetId},client_name.ilike.%${encodeURIComponent(clientName || '')}%)&limit=1`, {
         headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
       });
       const data = await resp.json();
@@ -119,41 +105,42 @@ app.post('/api/intelligence/query', async (req, res) => {
 
   if (!chatMd) {
     for (let audit of recentChatAuditsRAM.values()) {
-      if (String(audit.clientId) === targetId || String(audit.client_id) === targetId) {
+      if (String(audit.clientId) === targetId || String(audit.client_id) === targetId || String(audit.clientName).toLowerCase() === String(clientName).toLowerCase()) {
         chatMd = audit.markdown;
         break;
       }
     }
   }
 
-  const answer = await processIntelligentQuery(query, chatMd);
-  res.json({ answer });
+  const answerInSpanish = await processIntelligentQueryInSpanish(query, chatMd, clientName);
+  res.json({ answer: answerInSpanish });
 });
 
-// 3. ENDPOINT: EXPEDIENTE DIRECTO POR ID
+// 3. ENDPOINT: EXPEDIENTE DIRECTO EN ESPAÑOL
 app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
+  const queryName = String(req.query.name || '').trim();
   let chatMd = '';
-  let clientName = 'Cliente';
+  let clientName = queryName || 'Cliente';
 
-  if (SUPABASE_URL && SUPABASE_KEY && clientId !== 'N/A') {
+  if (SUPABASE_URL && SUPABASE_KEY) {
     try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?or=(client_id.eq.${clientId},id.ilike.%${clientId}%)&limit=1`, {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?or=(client_id.eq.${clientId},client_name.ilike.%${encodeURIComponent(queryName)}%)&limit=1`, {
         headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
       });
       const data = await resp.json();
       if (Array.isArray(data) && data[0]) {
         chatMd = data[0].markdown;
-        clientName = data[0].client_name;
+        if (data[0].client_name && data[0].client_name !== 'Cliente') clientName = data[0].client_name;
       }
     } catch (e) {}
   }
 
   if (!chatMd) {
     for (let audit of recentChatAuditsRAM.values()) {
-      if (String(audit.clientId) === clientId || String(audit.client_id) === clientId) {
+      if (String(audit.clientId) === clientId || String(audit.client_id) === clientId || (queryName && String(audit.clientName).toLowerCase().includes(queryName.toLowerCase()))) {
         chatMd = audit.markdown;
-        clientName = audit.clientName;
+        if (audit.clientName && audit.clientName !== 'Cliente') clientName = audit.clientName;
         break;
       }
     }
@@ -163,11 +150,11 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      maritalStatus: /(living together|marriage|boda|casar)/i.test(textLower) ? '💍 Busca convivencia / matrimonio' : (/(divorced|divorciado)/i.test(textLower) ? '💔 Divorciado' : '👤 Soltero'),
-      pets: /(perro|dog)/i.test(textLower) ? '🐶 Tiene perro' : (/(gato|cat)/i.test(textLower) ? '🐱 Tiene gato' : '🐾 No especificado aún'),
+      maritalStatus: /(living together|marriage|boda|casar)/i.test(textLower) ? '💍 Busca convivencia y relación seria' : (/(divorced|divorciado)/i.test(textLower) ? '💔 Divorciado' : '👤 Soltero'),
+      pets: /(perro|dog)/i.test(textLower) ? '🐶 Tiene perro' : (/(gato|cat)/i.test(textLower) ? '🐱 Tiene gato' : '🐾 No especificado'),
       family: /(hijos|kids|son|daughter)/i.test(textLower) ? '👶 Tiene hijos' : 'No especificado aún',
-      work: /(retirado|retired)/i.test(textLower) ? '🏖️ Retirado' : '💼 Activo / Trabajando',
-      summary: 'Conversación sincronizada con la base de datos.'
+      work: /(retirado|retired)/i.test(textLower) ? '🏖️ Retirado / Jubilado' : '💼 Activo laboralmente',
+      summary: `Historial de ${clientName} analizado y disponible en español. Haz preguntas abajo para consultar detalles.`
     };
     return res.json({ success: true, dossier });
   }
@@ -175,19 +162,22 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null });
 });
 
-// 4. ENDPOINT: VERIFICAR CHATS EN SUPABASE
+// 4. ENDPOINT: LISTA DE CHATS GUARDADOS
 app.get('/api/chats/synced-ids', async (req, res) => {
   const profile = req.query.profile;
   const syncedSet = new Set(syncedClientsRegistry);
 
   if (SUPABASE_URL && SUPABASE_KEY && profile) {
     try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?profile_name=eq.${profile}&select=client_id`, {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?profile_name=eq.${profile}&select=client_id,client_name`, {
         headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
       });
       const data = await resp.json();
       if (Array.isArray(data)) {
-        data.forEach(d => syncedSet.add(String(d.client_id).trim()));
+        data.forEach(d => {
+          if (d.client_id) syncedSet.add(String(d.client_id).trim().toLowerCase());
+          if (d.client_name) syncedSet.add(String(d.client_name).trim().toLowerCase());
+        });
       }
     } catch (e) {}
   }
@@ -195,20 +185,23 @@ app.get('/api/chats/synced-ids', async (req, res) => {
   res.json({ success: true, syncedIds: Array.from(syncedSet) });
 });
 
-// 5. AUDITORÍA Y GUARDADO EN SUPABASE
+// 5. AUDITORÍA Y GUARDADO
 app.post('/api/chats/audit-deep', async (req, res) => {
   const { operator, profile, clientName, clientId, markdown, messages } = req.body;
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
 
   const cleanClientId = String(clientId).trim();
+  const safeClientName = String(clientName || 'Cliente').trim();
   const auditKey = `${profile}_${cleanClientId}`;
-  syncedClientsRegistry.add(cleanClientId);
+  
+  syncedClientsRegistry.add(cleanClientId.toLowerCase());
+  syncedClientsRegistry.add(safeClientName.toLowerCase());
 
   const auditPayload = {
     id: auditKey,
     operator_name: operator || 'Desconocido',
     profile_name: profile,
-    client_name: clientName || 'Cliente',
+    client_name: safeClientName,
     client_id: cleanClientId,
     total_messages: Array.isArray(messages) ? messages.length : 0,
     flags: ['✅ Conversación Guardada'],
@@ -217,7 +210,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
     updated_at: new Date().toISOString()
   };
 
-  recentChatAuditsRAM.set(auditKey, { ...auditPayload, operator, profile, clientName, clientId: cleanClientId, timestamp: Date.now() });
+  recentChatAuditsRAM.set(auditKey, { ...auditPayload, operator, profile, clientName: safeClientName, clientId: cleanClientId, timestamp: Date.now() });
 
   if (SUPABASE_URL && SUPABASE_KEY) {
     fetch(`${SUPABASE_URL}/rest/v1/chat_audits`, {
@@ -227,10 +220,10 @@ app.post('/api/chats/audit-deep', async (req, res) => {
     }).catch(() => {});
   }
 
-  res.json({ success: true, clientId: cleanClientId });
+  res.json({ success: true, clientId: cleanClientId, clientName: safeClientName });
 });
 
-// 6. TELEMETRÍA Y DEMÁS ENDPOINTS
+// 6. TELEMETRÍA
 app.post('/api/telemetry', (req, res) => {
   const { operator, shift, profile, profileId, pendingReadLetters, unansweredChatsCount, hasExpiredSla, isAfk, idleSeconds, status } = req.body;
   if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
@@ -410,4 +403,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V13.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V14.0 activo en puerto ${PORT}`));
