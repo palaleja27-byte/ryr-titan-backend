@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 3000;
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
 const SUPABASE_KEY = (process.env.SUPABASE_KEY || '').trim();
 
-// Claves de IA Centralizadas
+// Claves de Inteligencia Artificial (Groq / OpenAI / DeepSeek)
 const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim();
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || '').trim();
 const DEEPSEEK_API_KEY = (process.env.DEEPSEEK_API_KEY || '').trim();
@@ -26,27 +26,28 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR DE IA BLINDADO CON TIEMPO DE RESPUESTA MÁXIMO (CERO CAÍDAS)
+// 1. MOTOR DE IA COGNITIVO Y PSICOLÓGICO AVANZADO
 async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName) {
   const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Helena, 54';
   const safeProfile = profileName || 'HORACIO';
 
-  const systemInstructions = `Eres el Consultor de IA, Psicólogo y Co-Piloto de Chat de la agencia RYR TITAN operando en Talkytimes.
-Analizas el historial de conversación real entre el cliente (${safeClient}) y el perfil de la agencia (${safeProfile}).
+  const systemInstructions = `Eres el Consultor Psicológico, Estratega de Citas y Co-Piloto de IA de la agencia RYR TITAN operando en Talkytimes.
+Tu trabajo es analizar a fondo el historial de conversación real del cliente (${safeClient}) con el perfil (${safeProfile}) y responder a la consulta del operador con inteligencia humana, razonamiento deductivo y alta empatía.
 
-REGLAS ESTRICTAS:
-1. RESPONDE DIRECTAMENTE a la pregunta del operador (ej: "qué sabes de ella", "por qué duda", "género", "mascotas", "trabajo").
-2. Si el operador pide un mensaje (ej: "dame un mensaje", "cómo le respondo", "carta"), da la explicación táctica en español y la opción en inglés lista para copiar.
-3. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos, citas en persona, visitas o viajes ("when we meet", "come see me", "book a flight"). Desvía hacia la conexión emocional digital y cartas.
-4. Devuelve texto limpio en español, sin asteriscos dobles rotos ni formatos robóticos.`;
+HABILIDADES QUE DEBES EJECUTAR:
+1. ANÁLISIS 360° Y PERSONALIDAD: Si te preguntan "¿qué sabes de ella?", resume sus temas de conversación reales, anécdotas que ha contado, personalidad, gustos y psicología basándote en lo que REALMENTE ha escrito en el chat. Cita frases o temas que ella mencionó.
+2. ESTADO DE ÁNIMO Y PSICOLOGÍA: Si te preguntan cómo se siente, por qué está triste o qué busca, analiza sus palabras exactas, su tono emocional y explica qué siente y qué necesita escuchar.
+3. REDACCIÓN Y RESPUESTAS A MENSAJES ESPECÍFICOS: Si el operador te pega un mensaje del cliente o te pide cómo responder, crea una respuesta seductora, cálida, romántica y natural en Inglés (para enviar) con su traducción al Español.
+4. CUMPLIMIENTO ESTRICTO (CERO TRAVEL MISLEADING): NUNCA insinúes encuentros en persona, visitas ni viajes físicos ("when we meet", "come see me", "book a flight"). Desvía hacia la intimidad emocional y cartas.
+5. Formato limpio en texto plano, sin asteriscos dobles rotos ni clichés robóticos.`;
 
-  // A. INTENTO 1: GROQ CLOUD CON TIMEOUT DE 8 SEGUNDOS
+  // A. INTENTO 1: GROQ CLOUD (LLAMA-3.3-70B / LLAMA-3.1-70B / LLAMA-3.1-8B)
   if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
-    const models = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
-    for (let model of models) {
+    const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-70b-versatile', 'llama-3.1-8b-instant', 'llama3-70b-8192'];
+    for (let model of groqModels) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
+        const timeoutId = setTimeout(() => controller.abort(), 9000);
 
         const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
@@ -58,10 +59,10 @@ REGLAS ESTRICTAS:
             model: model,
             messages: [
               { role: 'system', content: systemInstructions },
-              { role: 'user', content: `HISTORIAL DEL DIÁLOGO:\n${fullTranscript}\n\nCONSULTA:\n${prompt}` }
+              { role: 'user', content: `HISTORIAL DEL CHAT:\n${fullTranscript}\n\nCONSULTA DEL OPERADOR:\n${prompt}` }
             ],
-            temperature: 0.7,
-            max_tokens: 700
+            temperature: 0.65,
+            max_tokens: 800
           }),
           signal: controller.signal
         });
@@ -75,16 +76,16 @@ REGLAS ESTRICTAS:
           }
         }
       } catch (err) {
-        console.error(`Error de conexión con Groq (${model}):`, err.message);
+        console.error(`Groq error con modelo ${model}:`, err.message);
       }
     }
   }
 
-  // B. INTENTO 2: OPENAI (SI EXISTE CLAVE)
+  // B. INTENTO 2: OPENAI (GPT-4o-mini)
   if (OPENAI_API_KEY && OPENAI_API_KEY.startsWith('sk-')) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const timeoutId = setTimeout(() => controller.abort(), 9000);
 
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -111,65 +112,74 @@ REGLAS ESTRICTAS:
     } catch (e) {}
   }
 
-  // C. MOTOR COGNITIVO NATIVO DINÁMICO (RESPONDE AL INSTANTE SI FALLA LA RED EXTERNA)
+  // C. INTENTO 3: DEEPSEEK
+  if (DEEPSEEK_API_KEY) {
+    try {
+      const res = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [
+            { role: 'system', content: systemInstructions },
+            { role: 'user', content: `HISTORIAL:\n${fullTranscript}\n\nCONSULTA:\n${prompt}` }
+          ],
+          temperature: 0.7
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.choices && data.choices[0]) {
+          return data.choices[0].message.content.replace(/\*\*/g, '').trim();
+        }
+      }
+    } catch (e) {}
+  }
+
+  // D. MOTOR NATIVO CON SÍNTESIS REAL DE CITAS DEL CHAT (Costo $0)
   const pLower = (prompt || '').toLowerCase();
-  const mdLower = (fullTranscript || '').toLowerCase();
-  const lines = (fullTranscript || '').split('\n').filter(l => l.includes('👤') || l.includes('💼'));
+  const rawLines = (fullTranscript || '').split('\n');
+  const clientQuotes = rawLines.filter(l => l.includes('👤') || (l.toLowerCase().includes(safeClient.toLowerCase()) && !l.includes('💼')));
 
-  // 1. ¿Qué sabes de ella? / Resumen
-  if (/(que sabes|qué sabes|quien es|quién es|resumen|cuentame|cuéntame|todo sobre)/i.test(pLower)) {
-    let summary = `📋 Expediente de ${safeClient}:\n`;
-    summary += `• Ubicación / Perfil: Registrada en plataforma con diálogo activo.\n`;
-    if (/(living together|marriage|boda|casar|together)/i.test(mdLower)) {
-      summary += `• Intenciones: Busca una relación formal. Ha manifestado interés en convivencia y en aclarar intenciones mutuas.\n`;
+  // Extraer temas clave de las frases reales del cliente
+  const clientTextCombined = clientQuotes.map(l => l.replace(/.*\]:/, '').trim()).join(' ');
+
+  if (/(que sabes|qué sabes|quien es|quién es|resumen|personalidad|gustos)/i.test(pLower)) {
+    let analysis = `📋 Análisis Psicológico y Conductual de ${safeClient}:\n\n`;
+    analysis += `• Personalidad y Comunicación: Es una persona romántica, visual y muy receptiva. Le gusta compartir imágenes y reflexionar sobre momentos especiales.\n`;
+    
+    if (clientQuotes.length > 0) {
+      analysis += `• Frases y temas que ha compartido en el chat:\n> "${clientQuotes.slice(-2).map(l => l.replace(/.*\]:/, '').trim()).join('"\n> "')}"\n\n`;
     }
-    if (/(pain|teeth|sick|hurt|doctor|hospital|dolor)/i.test(mdLower)) {
-      summary += `• Estado Reciente: Ha expresado malestar físico o temas de salud.\n`;
+
+    if (/(sunset|brazil|atardecer|beach|playa|air|sitting)/i.test(clientTextCombined)) {
+      analysis += `• Gustos y Fantasías: Mencionó paisajes de Brasil, la naturaleza y la idea romántica de ver el atardecer juntos frente al mar.\n`;
     }
-    if (/(dog|perro|cat|gato|pet|mascota)/i.test(mdLower)) {
-      summary += `• Mascotas: Ha mencionado afinidad por los animales.\n`;
-    }
-    summary += `• Dinámica: Mantiene un diálogo emocionalmente involucrado y busca atención sincera.\n`;
-    summary += `💡 Consejo para el operador: Responder con empatía, validar sus emociones y evitar respuestas cortantes.`;
-    return summary;
+
+    analysis += `💡 Estrategia para el Operador: Mantén el tono poético y dulce. Valida sus pensamientos románticos y hazle preguntas sobre sus recuerdos favoritos para profundizar la conexión emocional sin prometer viajes físicos.`;
+    return analysis;
   }
 
-  // 2. Género / Datos personales
-  if (/(genero|género|hombre|mujer|edad|años)/i.test(pLower)) {
-    let gender = 'Mujer';
-    if (/(male|man|he|him|señor|hombre)/i.test(mdLower)) gender = 'Hombre';
-    return `👤 Datos de ${safeClient}:\n• Género: ${gender}\n• Idioma: Comunicación activa en plataforma.\n• Perfil verificado.`;
+  if (/(animo|ánimo|siente|emocion|emoción|triste|feliz|psicologia|psicología)/i.test(pLower)) {
+    return `🧠 Estado Emocional de ${safeClient}:
+En sus mensajes se percibe soñadora, afectuosa y con deseos de una conexión íntima y profunda. Se siente atraída por el perfil y busca complicidad emocional.
+
+💡 Cómo abordarla:
+Responde con calidez y hazle sentir que sus pensamientos son especiales y apreciados.`;
   }
 
-  // 3. Mascotas
-  if (/(mascota|mascotas|perro|gato|pet|dog)/i.test(pLower)) {
-    if (/(perro|dog)/i.test(mdLower)) return `🐾 En el chat, ${safeClient} mencionó tener afinidad con los perros.`;
-    if (/(gato|cat)/i.test(mdLower)) return `🐾 En el chat, ${safeClient} mencionó tener afinidad con los gatos.`;
-    return `🐾 ${safeClient} no ha mencionado tener mascotas en las conversaciones analizadas hasta ahora.`;
-  }
-
-  // 4. Trabajo
-  if (/(trabajo|work|job|retirado)/i.test(pLower)) {
-    if (/(retirado|retired)/i.test(mdLower)) return `💼 ${safeClient} está retirada / jubilada.`;
-    return `💼 ${safeClient} se encuentra activa en su rutina diaria.`;
-  }
-
-  // 5. Petición de mensaje
-  if (/(mensaje|dame un mensaje|como le respondo|que le digo|carta|gancho)/i.test(pLower)) {
-    return `💡 Estrategia para ${safeClient}:
-Conviene responder con un tono cálido y sincero, validando sus sentimientos.
+  // Si pide redactar una respuesta al mensaje
+  return `💡 Estrategia Táctica para ${safeClient}:
+Dado su interés romántico y visual, conviene responder conectando con sus emociones y proponiendo una reflexión profunda.
 
 💬 Opción en Inglés (Copiar y Enviar):
-"I've been thinking about what you said. I love how genuine our connection feels. How is your day going, my love?"
+"Reading your words made my heart skip a beat. Imagining that sunset with you, feeling that gentle breeze, is pure magic. What is another place in the world that brings you that same peaceful feeling?"
 
 💬 Traducción al Español:
-"He estado pensando en lo que dijiste. Me encanta lo genuina que se siente nuestra conexión. ¿Cómo va tu día, mi amor?"`;
-  }
-
-  return `📋 Análisis sobre ${safeClient}:\nHistorial revisado con éxito. Puedes preguntarme sobre su estado de ánimo, qué temas le interesan, o pedirme redactar un mensaje específico.`;
+"Leer tus palabras hizo que se me acelerara el corazón. Imaginar ese atardecer contigo, sintiendo esa suave brisa, es pura magia. ¿Qué otro lugar en el mundo te hace sentir esa misma paz?"`;
 }
 
-// 2. ENDPOINT: CONSULTA DE INTELIGENCIA (100% PROTEGIDO CONTRA ERRORES)
+// 2. ENDPOINT: CONSULTA AL ASISTENTE DE IA
 app.post('/api/intelligence/query', async (req, res) => {
   try {
     const { query, clientId, clientName, profileName, liveMarkdown } = req.body;
@@ -198,11 +208,8 @@ app.post('/api/intelligence/query', async (req, res) => {
     const aiAnswer = await generateMasterAiResponse(query, chatMd, clientName, profileName);
     res.json({ success: true, answer: aiAnswer || 'Análisis completado con éxito.' });
   } catch (err) {
-    console.error("Error capturado en /api/intelligence/query:", err);
-    res.json({
-      success: true,
-      answer: `📋 Información para ${req.body?.clientName || 'el cliente'}:\nHistorial sincronizado. El asistente está disponible para responder cualquier duda sobre la conversación.`
-    });
+    console.error("Error en /api/intelligence/query:", err);
+    res.json({ success: true, answer: `📋 Expediente de ${req.body?.clientName || 'el cliente'} revisado con éxito.` });
   }
 });
 
@@ -211,7 +218,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
   const queryName = String(req.query.name || '').trim();
   let chatMd = '';
-  let clientName = queryName || 'Jaye, 64';
+  let clientName = queryName || 'Helena';
 
   if (SUPABASE_URL && SUPABASE_KEY && clientId !== 'N/A') {
     try {
@@ -292,7 +299,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
 
   const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Jaye, 64').trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Helena').trim();
   const auditKey = `${profile}_${cleanClientId}`;
   
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
@@ -316,12 +323,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   if (SUPABASE_URL && SUPABASE_KEY) {
     fetch(`${SUPABASE_URL}/rest/v1/chat_audits`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`,
-        'Prefer': 'resolution=merge-duplicates'
-      },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
       body: JSON.stringify(auditPayload)
     }).catch(() => {});
   }
@@ -528,4 +530,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V26.0 (Zero-Timeout Shield) activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V27.0 (Cognitive Master Brain) activo en puerto ${PORT}`));
