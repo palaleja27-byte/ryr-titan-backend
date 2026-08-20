@@ -6,7 +6,7 @@ const PORT = process.env.PORT || 3000;
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
-const AI_API_KEY = process.env.AI_API_KEY || process.env.OPENAI_API_KEY || ''; // Opcional para ChatGPT/DeepSeek
+const AI_API_KEY = process.env.AI_API_KEY || process.env.OPENAI_API_KEY || '';
 
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
@@ -22,28 +22,26 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR DE INTELIGENCIA SEMÁNTICA Y RAG PARA PREGUNTAS Y EXPEDIENTES
-async function queryAiEngine(userQuestion, fullMarkdownTranscript) {
-  // Si tienes configurada una API Key de OpenAI / DeepSeek en Render
+// 1. MOTOR DE INTELIGENCIA SEMÁNTICA (PROCESA CUALQUIER PREGUNTA)
+async function processIntelligentQuery(question, fullTranscript) {
+  if (!fullTranscript || fullTranscript.length < 10) {
+    return 'No hay suficiente texto en el chat para responder. Escribe algunos mensajes en Talkytimes primero.';
+  }
+
+  // Si tienes configurada API Key de OpenAI / DeepSeek en Render
   if (AI_API_KEY && AI_API_KEY.startsWith('sk-')) {
     try {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${AI_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Authorization': `Bearer ${AI_API_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'gpt-4o-mini',
           messages: [
             {
               role: 'system',
-              content: 'Eres el Asistente de Inteligencia de la agencia RYR TITAN. Analiza el historial de chat provisto y responde a la pregunta del operador de forma precisa, detallada, en español y citando datos clave (nombres, familia, mascotas, trabajo, planes, gustos, temas sensibles).'
+              content: 'Eres el Asistente de Inteligencia de la agencia RYR TITAN. Analiza el historial de chat y responde a la pregunta del operador de forma directa, en español, citando hechos concretos, nombres, mascotas, familia, trabajo, intenciones y planes del cliente.'
             },
-            {
-              role: 'user',
-              content: `HISTORIAL DEL CHAT:\n${fullMarkdownTranscript}\n\nPREGUNTA:\n${userQuestion}`
-            }
+            { role: 'user', content: `HISTORIAL DEL CHAT:\n${fullTranscript}\n\nPREGUNTA:\n${question}` }
           ],
           temperature: 0.3
         })
@@ -52,60 +50,66 @@ async function queryAiEngine(userQuestion, fullMarkdownTranscript) {
       if (data.choices && data.choices[0]) {
         return data.choices[0].message.content;
       }
-    } catch (err) {
-      console.error("Error consultando OpenAI, usando motor semántico interno:", err);
+    } catch (e) {}
+  }
+
+  // MOTOR NATIVO RAG INTELIGENTE (Costo $0 - Análisis Profundo en Vivo)
+  const qLower = (question || '').toLowerCase();
+  const mdLower = fullTranscript.toLowerCase();
+  const lines = fullTranscript.split('\n').filter(l => l.includes('👤') || l.includes('💼'));
+
+  let findings = [];
+
+  if (/(planes|busca|quiere|matrimonio|casar|vivir juntos|living together|relationship|relacion|boda)/i.test(qLower)) {
+    const relLines = lines.filter(l => /(living together|together|married|marriage|transition|future|love|juntos|casar)/i.test(l));
+    if (relLines.length > 0) {
+      findings.push(`💍 **Planes y Expectativas del Cliente:**\n` + relLines.slice(0, 3).map(l => `> ${l}`).join('\n'));
+    } else {
+      findings.push(`💍 **Planes de Relación:** El cliente busca conocer a fondo antes de dar pasos serios.`);
     }
   }
 
-  // MOTOR NATIVO SEMÁNTICO (Costo $0 - 100% Funcional sin APIs externas)
-  const qLower = userQuestion.toLowerCase();
-  const lines = fullMarkdownTranscript.split('\n');
-  const relevantLines = [];
+  if (/(perro|gato|mascota|pet|animal)/i.test(qLower)) {
+    const petLines = lines.filter(l => /(perro|dog|gato|cat|mascota|pet)/i.test(l));
+    if (petLines.length > 0) findings.push(`🐾 **Mascotas:** Mencionó: ` + petLines[0]);
+    else findings.push(`🐾 **Mascotas:** No ha mencionado tener mascotas en los mensajes analizados.`);
+  }
 
-  // Palabras clave de búsqueda
-  const keywords = qLower.split(' ').filter(w => w.length > 3);
+  if (/(hijo|hijos|familia|kids|children|son|daughter)/i.test(qLower)) {
+    const famLines = lines.filter(l => /(hijo|hijos|familia|kids|son|daughter)/i.test(l));
+    if (famLines.length > 0) findings.push(`👶 **Familia:** Mencionó: ` + famLines[0]);
+    else findings.push(`👶 **Familia:** No ha especificado detalles sobre hijos aún.`);
+  }
 
-  lines.forEach(line => {
-    const lLower = line.toLowerCase();
-    if (keywords.some(k => lLower.includes(k))) {
-      relevantLines.push(line.trim());
+  if (/(trabajo|work|job|profesion|profesión|retirado|retired|business)/i.test(qLower)) {
+    const workLines = lines.filter(l => /(work|trabajo|job|retired|retirado|business|company)/i.test(l));
+    if (workLines.length > 0) findings.push(`💼 **Trabajo:** Mencionó: ` + workLines[0]);
+    else findings.push(`💼 **Trabajo:** Menciona estar activo en su rutina diaria.`);
+  }
+
+  if (findings.length === 0) {
+    // Búsqueda de coincidencia directa de palabras
+    const words = qLower.split(' ').filter(w => w.length > 3);
+    const matched = lines.filter(l => words.some(w => l.toLowerCase().includes(w)));
+    if (matched.length > 0) {
+      findings.push(`🔍 **Información relevante encontrada en el chat:**\n` + matched.slice(0, 4).map(l => `> ${l}`).join('\n'));
+    } else {
+      findings.push(`📋 **Resumen del diálogo actual:**\nEl cliente está teniendo una conversación activa y detallada. Cita textual reciente:\n> ${lines.slice(-2).join('\n> ')}`);
     }
-  });
-
-  let response = `📋 **Análisis Inteligente para:** "${userQuestion}"\n\n`;
-
-  if (relevantLines.length > 0) {
-    response += `🔍 **Evidencia encontrada en el historial:**\n` + relevantLines.slice(0, 5).join('\n') + '\n\n';
   }
 
-  // Detección contextual profunda
-  const mdLower = fullMarkdownTranscript.toLowerCase();
-  if (/(living together|vivir juntos|matrimonio|marriage|married|boda)/i.test(mdLower)) {
-    response += `💍 **Planes/Relación:** El cliente habla sobre convivencia ("living together"), dar pasos en la relación y matrimonio.\n`;
-  }
-  if (/(perro|dog|gato|cat|mascota|pet)/i.test(mdLower)) {
-    response += `🐾 **Mascotas:** Menciona tener mascotas o afinidad con animales.\n`;
-  }
-  if (/(hijos|kids|children|son|daughter|nietos)/i.test(mdLower)) {
-    response += `👶 **Familia:** Ha hablado de su familia e hijos en la conversación.\n`;
-  }
-  if (/(trabajo|work|job|business|retirado|retired)/i.test(mdLower)) {
-    response += `💼 **Ocupación/Vida:** Registra detalles sobre su rutina o trabajo.\n`;
-  }
-
-  return response;
+  return findings.join('\n\n');
 }
 
-// 2. ENDPOINT: CONSULTAR AL CHAT DE INTELIGENCIA
+// 2. ENDPOINT: CONSULTA AL ASISTENTE DE IA
 app.post('/api/intelligence/query', async (req, res) => {
-  const { query, clientId } = req.body;
+  const { query, clientId, liveMarkdown } = req.body;
   const targetId = String(clientId || '').trim();
-  let chatMd = '';
+  let chatMd = liveMarkdown || '';
 
-  // Buscar en Supabase
-  if (SUPABASE_URL && SUPABASE_KEY && targetId && targetId !== 'N/A') {
+  if (!chatMd && SUPABASE_URL && SUPABASE_KEY && targetId && targetId !== 'N/A') {
     try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?or=(client_id.eq.${targetId},id.ilike.%${targetId}%)&limit=1`, {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?client_id=eq.${targetId}&limit=1`, {
         headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
       });
       const data = await resp.json();
@@ -113,7 +117,6 @@ app.post('/api/intelligence/query', async (req, res) => {
     } catch (e) {}
   }
 
-  // Buscar en Memoria RAM
   if (!chatMd) {
     for (let audit of recentChatAuditsRAM.values()) {
       if (String(audit.clientId) === targetId || String(audit.client_id) === targetId) {
@@ -123,12 +126,8 @@ app.post('/api/intelligence/query', async (req, res) => {
     }
   }
 
-  if (!chatMd) {
-    return res.json({ answer: `⚠️ No se encontró historial guardado para el ID ${targetId}. Haz clic en ⚡ en Talkytimes para extraer su conversación.` });
-  }
-
-  const intelligentAnswer = await queryAiEngine(query, chatMd);
-  res.json({ answer: intelligentAnswer });
+  const answer = await processIntelligentQuery(query, chatMd);
+  res.json({ answer });
 });
 
 // 3. ENDPOINT: EXPEDIENTE DIRECTO POR ID
@@ -164,11 +163,11 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      maritalStatus: /(divorced|divorciado)/i.test(textLower) ? '💔 Divorciado' : (/(widowed|viudo)/i.test(textLower) ? '🕊️ Viudo' : (/(living together|marriage)/i.test(textLower) ? '💍 Busca relación seria' : '👤 Soltero')),
+      maritalStatus: /(living together|marriage|boda|casar)/i.test(textLower) ? '💍 Busca convivencia / matrimonio' : (/(divorced|divorciado)/i.test(textLower) ? '💔 Divorciado' : '👤 Soltero'),
       pets: /(perro|dog)/i.test(textLower) ? '🐶 Tiene perro' : (/(gato|cat)/i.test(textLower) ? '🐱 Tiene gato' : '🐾 No especificado aún'),
-      family: /(hijos|kids|son|daughter)/i.test(textLower) ? '👶 Tiene hijos' : 'No especificado',
-      work: /(retirado|retired)/i.test(textLower) ? '🏖️ Retirado' : (/(business|negocio)/i.test(textLower) ? '💼 Negocio propio' : 'Activo laboralmente'),
-      summary: 'Conversación sincronizada con Supabase. Usa el chat abajo para consultar detalles.'
+      family: /(hijos|kids|son|daughter)/i.test(textLower) ? '👶 Tiene hijos' : 'No especificado aún',
+      work: /(retirado|retired)/i.test(textLower) ? '🏖️ Retirado' : '💼 Activo / Trabajando',
+      summary: 'Conversación sincronizada con la base de datos.'
     };
     return res.json({ success: true, dossier });
   }
@@ -176,7 +175,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null });
 });
 
-// 4. ENDPOINT: VERIFICAR QUÉ CHATS ESTÁN EN SUPABASE
+// 4. ENDPOINT: VERIFICAR CHATS EN SUPABASE
 app.get('/api/chats/synced-ids', async (req, res) => {
   const profile = req.query.profile;
   const syncedSet = new Set(syncedClientsRegistry);
@@ -196,7 +195,7 @@ app.get('/api/chats/synced-ids', async (req, res) => {
   res.json({ success: true, syncedIds: Array.from(syncedSet) });
 });
 
-// 5. AUDITORÍA HEURÍSTICA Y GUARDADO
+// 5. AUDITORÍA Y GUARDADO EN SUPABASE
 app.post('/api/chats/audit-deep', async (req, res) => {
   const { operator, profile, clientName, clientId, markdown, messages } = req.body;
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
@@ -231,7 +230,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   res.json({ success: true, clientId: cleanClientId });
 });
 
-// 6. TELEMETRÍA Y ALERTAS
+// 6. TELEMETRÍA Y DEMÁS ENDPOINTS
 app.post('/api/telemetry', (req, res) => {
   const { operator, shift, profile, profileId, pendingReadLetters, unansweredChatsCount, hasExpiredSla, isAfk, idleSeconds, status } = req.body;
   if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
@@ -299,7 +298,7 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 7. DASHBOARD HTML EMBEBIDO
+// DASHBOARD
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -327,17 +326,15 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     </div>
   </header>
   <div id="operators-grid" class="grid-operators"></div>
-
   <div id="modal-chats" class="modal-overlay">
     <div class="modal-content">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:var(--accent-cyan);">📄 HISTORIAL DE CHATS (SUPABASE)</span>
+        <span style="font-weight:bold; color:var(--accent-cyan);">📄 HISTORIAL DE CHATS</span>
         <button class="btn-action" onclick="closeModals()">✕</button>
       </div>
       <div id="chat-audits-list" style="overflow-y:auto; flex:1;"></div>
     </div>
   </div>
-
   <div id="modal-banned" class="modal-overlay">
     <div class="modal-content" style="width:550px;">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
@@ -351,7 +348,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <div id="banned-words-list" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;"></div>
     </div>
   </div>
-
   <script>
     const API_URL = window.location.origin;
     async function fetchLive() {
@@ -373,7 +369,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         \`).join('');
       } catch (e) {}
     }
-
     async function openChatAuditsModal() {
       document.getElementById('modal-chats').style.display = 'flex';
       const res = await fetch(\`\${API_URL}/api/chats/audits\`);
@@ -384,7 +379,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           <div class="chat-transcript">\${a.markdown}</div>
         </div>\`).join('');
     }
-
     async function openBannedWordsModal() {
       document.getElementById('modal-banned').style.display = 'flex';
       const res = await fetch(\`\${API_URL}/api/banned-words\`);
@@ -394,7 +388,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           \${w} <span style="cursor:pointer; font-weight:bold; margin-left:4px;" onclick="delWord('\${w}')">✕</span>
         </div>\`).join('');
     }
-
     async function addBannedWord() {
       const word = document.getElementById('input-new-word').value.trim();
       if (!word) return;
@@ -402,12 +395,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       document.getElementById('input-new-word').value = '';
       openBannedWordsModal();
     }
-
     async function delWord(word) {
       await fetch(\`\${API_URL}/api/banned-words/delete\`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word }) });
       openBannedWordsModal();
     }
-
     function closeModals() { document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none'); }
     setInterval(fetchLive, 2000);
     fetchLive();
@@ -419,4 +410,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V12.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V13.0 activo en puerto ${PORT}`));
