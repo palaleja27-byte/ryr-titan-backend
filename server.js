@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 3000;
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
 const SUPABASE_KEY = (process.env.SUPABASE_KEY || '').trim();
 
-// Claves de Inteligencia Artificial
+// Claves de Inteligencia Artificial (Groq / OpenAI / DeepSeek)
 const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim();
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || '').trim();
 const DEEPSEEK_API_KEY = (process.env.DEEPSEEK_API_KEY || '').trim();
@@ -27,48 +27,33 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. HELPER: PARSER DE MENSAJES
-function parseTranscriptToMessages(markdownText) {
-  const lines = (markdownText || '').split('\n');
-  const messages = [];
-
-  lines.forEach(line => {
-    const match = line.match(/^-\s*(👤|💼)\s*\*\*([^*]+)\*\*\s*\[([^\]]+)\]:\s*(.+)$/);
-    if (match) {
-      messages.push({
-        isOperator: match[1] === '💼',
-        sender: match[2].trim(),
-        time: match[3].trim(),
-        text: match[4].trim()
-      });
-    }
-  });
-
-  return messages;
-}
-
-// 2. MOTOR DE IA COGNITIVO (GROQ / OPENAI)
+// 1. MOTOR DE IA COGNITIVO PURO (GROQ LLAMA-3.3-70B - CERO PLANTILLAS)
 async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName) {
   const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Helena, 56';
   const safeProfile = profileName || 'HORACIO';
+
+  console.log(`[GROQ LLM] Procesando consulta para ${safeClient}. Pregunta: "${prompt}"`);
 
   const systemPrompt = `Eres el Co-Piloto de IA, Psicólogo y Estratega de Citas de la agencia RYR TITAN operando en Talkytimes.
 Analizas el historial real de conversación entre el cliente (${safeClient}) y el perfil (${safeProfile}).
 
 REGLAS DE ORO:
-1. RESPONDE CON RAZONAMIENTO REAL a cualquier pregunta del operador (hijos, mascotas, trabajo, créditos, estado de ánimo, qué busca, etc.).
-2. Si te preguntan si tiene créditos, revisa si el cliente dijo "no credits", cuándo recarga, etc.
-3. Si te piden un mensaje de respuesta o enganche, redacta una opción seductora y humana en inglés (para copiar) y su traducción en español.
+1. CERO PLANTILLAS PRE-DISEÑADAS: Responde a CUALQUIER pregunta del operador (por extraña, analítica, básica o compleja que sea) razonando con total inteligencia, lógica deductiva y empatía humana basándote en el historial provisto.
+2. SI EL OPERADOR PIDE CÓMO RESPONDER O UN MENSAJE: Lee con atención lo último que dijo el cliente (incluso si puso "???", una queja o una duda) y redacta una respuesta perfectamente contextualizada:
+   💡 Explicación Táctica (1-2 oraciones).
+   💬 Opción en Inglés (seductora, natural y lista para copiar).
+   💬 Traducción al Español.
+3. SI EL OPERADOR HACE UNA PREGUNTA SOBRE EL CLIENTE (datos, emociones, psicología, créditos, trabajo, familia): Responde con análisis analítico y hechos concretos en español.
 4. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos, citas en persona o viajes ("when we meet", "come see me", "book a flight"). Desvía hacia la conexión emocional digital y cartas.
-5. Texto limpio en español sin asteriscos dobles (**).`;
+5. Devuelve texto limpio en español, sin asteriscos dobles (**).`;
 
-  // A. CONEXIÓN A GROQ
+  // A. CONEXIÓN A GROQ CLOUD (PROBANDO MODELOS OFICIALES)
   if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
-    const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+    const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'llama-3.1-70b-versatile'];
     for (let model of groqModels) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 9000);
+        const timeoutId = setTimeout(() => controller.abort(), 12000);
 
         const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
@@ -81,9 +66,9 @@ REGLAS DE ORO:
             model: model,
             messages: [
               { role: 'system', content: systemPrompt },
-              { role: 'user', content: `HISTORIAL DEL CHAT:\n${fullTranscript || 'Sin historial previo.'}\n\nPREGUNTA DEL OPERADOR:\n${prompt}` }
+              { role: 'user', content: `HISTORIAL DEL CHAT CON ${safeClient}:\n${fullTranscript || 'Sin historial previo registrado.'}\n\nPREGUNTA DEL OPERADOR:\n${prompt}` }
             ],
-            temperature: 0.65,
+            temperature: 0.7,
             max_tokens: 850
           }),
           signal: controller.signal
@@ -94,19 +79,22 @@ REGLAS DE ORO:
         if (res.ok) {
           const data = await res.json();
           if (data.choices && data.choices[0] && data.choices[0].message?.content) {
+            console.log(`[GROQ OK] Respuesta generada exitosamente con ${model}`);
             return data.choices[0].message.content.replace(/\*\*/g, '').trim();
           }
+        } else {
+          const errBody = await res.text();
+          console.error(`[GROQ ERROR ${res.status}] en modelo ${model}:`, errBody);
         }
-      } catch (err) {}
+      } catch (err) {
+        console.error(`[GROQ FETCH ERROR] ${model}:`, err.message);
+      }
     }
   }
 
-  // B. CONEXIÓN A OPENAI
+  // B. CONEXIÓN A OPENAI (SI EXISTE CLAVE)
   if (OPENAI_API_KEY && OPENAI_API_KEY.startsWith('sk-')) {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 9000);
-
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
@@ -116,13 +104,9 @@ REGLAS DE ORO:
             { role: 'system', content: systemPrompt },
             { role: 'user', content: `HISTORIAL:\n${fullTranscript}\n\nPREGUNTA:\n${prompt}` }
           ],
-          temperature: 0.65
-        }),
-        signal: controller.signal
+          temperature: 0.7
+        })
       });
-
-      clearTimeout(timeoutId);
-
       if (res.ok) {
         const data = await res.json();
         if (data.choices && data.choices[0]) {
@@ -132,57 +116,34 @@ REGLAS DE ORO:
     } catch (e) {}
   }
 
-  // C. FALLBACK COGNITIVO NATIVO
-  const pLower = (prompt || '').toLowerCase().trim();
-  const mdLower = (fullTranscript || '').toLowerCase();
-  const structuredMsgs = parseTranscriptToMessages(fullTranscript);
-  const clientMsgs = structuredMsgs.filter(m => !m.isOperator);
-
-  if (/(credito|crédito|coins|monedas|dinero|saldo)/i.test(pLower)) {
-    if (/(no credits|credits|30th|cry)/i.test(mdLower)) {
-      return `💳 Situación de Créditos de ${safeClient}:
-No, actualmente ${safeClient} NO tiene créditos para abrir cartas o fotos. Escribió que recién podrá leerte el día 30 ("read on the 30th").
-💡 Consejo: Mantén la conversación con cariño por chat normal hasta que recargue el día 30.`;
-    }
-    return `💳 Situación de Créditos de ${safeClient}: No ha manifestado falta de créditos en los mensajes analizados.`;
+  // C. CONEXIÓN A DEEPSEEK
+  if (DEEPSEEK_API_KEY) {
+    try {
+      const res = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `HISTORIAL:\n${fullTranscript}\n\nPREGUNTA:\n${prompt}` }
+          ],
+          temperature: 0.7
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.choices && data.choices[0]) {
+          return data.choices[0].message.content.replace(/\*\*/g, '').trim();
+        }
+      }
+    } catch (e) {}
   }
 
-  if (/(hijo|hijos|familia|kids)/i.test(pLower)) {
-    if (/(hijos|kids|children|son|daughter)/i.test(mdLower)) {
-      return `👶 Familia e Hijos de ${safeClient}: Sí, ha mencionado tener hijos en el historial.`;
-    }
-    return `👶 Familia e Hijos de ${safeClient}: En las conversaciones analizadas hasta ahora, ${safeClient} no ha mencionado tener hijos.`;
-  }
-
-  if (/(mascota|perro|gato|pet|dog)/i.test(pLower)) {
-    if (/(perro|dog)/i.test(mdLower)) return `🐾 Mascotas de ${safeClient}: Mencionó afinidad con los perros.`;
-    return `🐾 Mascotas de ${safeClient}: No ha mencionado tener mascotas en el chat reciente.`;
-  }
-
-  if (/(trabajo|work|job|retirado)/i.test(pLower)) {
-    if (/(retirado|retired)/i.test(mdLower)) return `💼 Trabajo de ${safeClient}: Está retirada / jubilada.`;
-    return `💼 Trabajo de ${safeClient}: Se encuentra activa laboralmente.`;
-  }
-
-  if (/(como responder|cómo responder|como le respondo|que le digo|mensaje)/i.test(pLower)) {
-    if (clientMsgs.length > 0) {
-      const lastMsg = clientMsgs[clientMsgs.length - 1];
-      return `💡 Cómo responder al último mensaje de ${safeClient}:
-En su último mensaje dijo: "${lastMsg.text}". Conviene responder con un tono cariñoso y comprensivo.
-
-💬 Opción en Inglés (Copiar y Enviar):
-"Your sweet words always bring so much peace to my heart. I love how genuine our connection feels. How are you feeling right now, my love?"
-
-💬 Traducción al Español:
-"Tus dulces palabras siempre traen mucha paz a mi corazón. Me encanta lo genuina que se siente nuestra conexión. ¿Cómo te sientes ahora mismo, mi amor?"`;
-    }
-  }
-
-  return `📋 Análisis sobre ${safeClient}:
-Historial revisado con éxito. Puedes preguntarme si tiene créditos, hijos, mascotas, de dónde es o pedirme cómo responderle.`;
+  return `⚠️ Error de comunicación con el motor de IA. Por favor verifica que el servicio de Groq en Render esté activo.`;
 }
 
-// 3. ENDPOINTS DE LA API
+// 2. ENDPOINT: CONSULTA AL ASISTENTE DE IA
 app.post('/api/intelligence/query', async (req, res) => {
   try {
     const { query, clientId, clientName, profileName, liveMarkdown } = req.body;
@@ -211,10 +172,12 @@ app.post('/api/intelligence/query', async (req, res) => {
     const aiAnswer = await generateMasterAiResponse(query, chatMd, clientName, profileName);
     res.json({ success: true, answer: aiAnswer });
   } catch (err) {
-    res.json({ success: true, answer: `Consulta procesada con éxito.` });
+    console.error("Error en /api/intelligence/query:", err);
+    res.json({ success: true, answer: `Error procesando la consulta. Intenta nuevamente.` });
   }
 });
 
+// 3. ENDPOINT: EXPEDIENTE EN ESPAÑOL
 app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
   const queryName = String(req.query.name || '').trim();
@@ -261,12 +224,12 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const dossier = {
       clientName: clientName,
       location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : 'Brazil'),
-      birthDate: /(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : '56 años',
-      maritalStatus: /(no credits|credits)/i.test(textLower) ? 'Sin créditos actualmente (Recarga el 30)' : 'Not married',
+      birthDate: /(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : (/(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : '56 años'),
+      maritalStatus: /(no credits|credits)/i.test(textLower) ? 'Sin créditos actualmente' : 'Not married',
       pets: 'No especificado aún',
       family: 'No especificado aún',
       work: 'Activo laboralmente',
-      summary: `Expediente de ${clientName} verificado en Supabase.`
+      summary: `Expediente verificado en Supabase.`
     };
     return res.json({ success: true, dossier, hasData: true });
   }
@@ -323,6 +286,7 @@ function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markd
   };
 }
 
+// 5. AUDITORÍA Y GUARDADO
 app.post('/api/chats/audit-deep', async (req, res) => {
   const { operator, profile, clientName, clientId, markdown, messages } = req.body;
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
@@ -397,7 +361,7 @@ app.post('/api/chats/analyze-single', (req, res) => {
   res.json({ success: true, aiReport });
 });
 
-// 5. ALERTAS Y MULTAS ($10.000 COP)
+// 6. GESTIÓN DE ALERTAS
 app.get('/api/alerts/live', (req, res) => {
   const alertsList = Array.from(activeAlertsMap.values()).filter(a => a.status === 'PENDING').sort((a, b) => b.timestamp - a.timestamp);
   res.json({ success: true, alerts: alertsList });
@@ -428,6 +392,7 @@ app.post('/api/alerts/:id/dismiss', (req, res) => {
   res.json({ success: true });
 });
 
+// 7. REGISTRO DE MULTAS
 app.post('/api/fines/register', async (req, res) => {
   const { operator, shift, profile, clientName, clientId, reason } = req.body;
   if (!operator) return res.status(400).json({ error: 'Operador requerido' });
@@ -471,7 +436,7 @@ app.get('/api/fines', async (req, res) => {
   res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() });
 });
 
-// 6. TELEMETRÍA
+// 8. TELEMETRÍA
 app.post('/api/telemetry', (req, res) => {
   const { operator, shift, profile, profileId, pendingReadLetters, unansweredChatsCount, hasExpiredSla, isAfk, idleSeconds, activeChatTimersList, status } = req.body;
   if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
@@ -560,7 +525,7 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 7. DASHBOARD EMBEBIDO
+// DASHBOARD
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -844,4 +809,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V37.0 (Verified Syntax) en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V38.0 (Pure Llama-3.3 Reasoning) activo en puerto ${PORT}`));
