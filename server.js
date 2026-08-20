@@ -22,8 +22,8 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR DE IA MODO HUMANIZADO /human (RESPUESTAS LIMPIAS Y NATURALES)
-async function generateHumanizedStrategyAndMessages(prompt, fullTranscript, clientName, profileName) {
+// 1. MOTOR DE IA MODO /human CON CUMPLIMIENTO ESTRICTO ANTI-TRAVEL MISLEADING (ANTI-TM)
+async function generateSafeHumanizedMessages(prompt, fullTranscript, clientName, profileName) {
   const safeClient = (clientName && clientName !== 'Search' && clientName !== 'Cliente') ? clientName.split('\n')[0].trim() : 'Jaye, 64';
   const safeProfile = profileName || 'HORACIO';
 
@@ -37,17 +37,19 @@ async function generateHumanizedStrategyAndMessages(prompt, fullTranscript, clie
           messages: [
             {
               role: 'system',
-              content: `Eres el Asistente de IA de la agencia RYR TITAN operando en modo /human (alto nivel de empatía, calidez y seducción natural).
-              Estudia el diálogo con ${safeClient} para el perfil ${safeProfile}.
-              IMPORTANTE: Devuelve texto limpio, bien espaciado, sin caracteres extraños ni asteriscos dobles innecesarios.
-              Estructura:
-              1. Diagnóstico rápido de intención (1-2 oraciones).
-              2. Opción en Inglés (lista para copiar y enviar a Talkytimes).
-              3. Traducción al Español.`
+              content: `Eres el Asistente de IA y Estratega de Chat para la agencia RYR TITAN. Operas en modo /human (alta empatía, romanticismo cálido y natural).
+              
+              REGLA DE ORO DE SEGURIDAD (POLÍTICA ESTRICTA DE LA PLATAFORMA - CERO TRAVEL MISLEADING):
+              - PROHIBICIÓN ABSOLUTA de insinuar encuentros en persona, citas físicas, viajes, visitas o promesas de vivir juntos en el mundo real (NUNCA digas: "when we meet", "when I visit", "come see me", "book a flight", "travel to you").
+              - Si el cliente insiste en verse en persona o vivir juntos, debes DESVIAR la conversación con elegancia hacia el presente: enfocarse en la conexión emocional que tienen aquí, conocerse a fondo por cartas y valorar este espacio digital íntimo.
+              - Estructura de respuesta limpia:
+                1. Breve explicación táctica (1-2 oraciones).
+                2. Opción en Inglés (lista para copiar y enviar).
+                3. Traducción al Español.`
             },
-            { role: 'user', content: `HISTORIAL:\n${fullTranscript}\n\nPETICIÓN:\n${prompt}` }
+            { role: 'user', content: `CLIENTE: ${safeClient}\nHISTORIAL:\n${fullTranscript}\n\nPETICIÓN:\n${prompt}` }
           ],
-          temperature: 0.7
+          temperature: 0.65
         })
       });
       const data = await response.json();
@@ -57,43 +59,111 @@ async function generateHumanizedStrategyAndMessages(prompt, fullTranscript, clie
     } catch (e) {}
   }
 
-  // MOTOR NATIVO /human (TEXTO PLANO Y ULTRA LIMPIO)
+  // MOTOR NATIVO CON PROTOCOLO ANTI-TM (Costo $0)
   const pLower = (prompt || '').toLowerCase();
   let cleanResponse = '';
 
   if (/(llamar la atencion|llamar la atención|gancho|mensaje para|atraer|reconectar)/i.test(pLower)) {
-    cleanResponse = `💡 Estrategia para ${safeClient}:
-${safeClient} busca seguridad emocional y saber que ambos están en la misma página. Este mensaje valida sus sentimientos con cariño y abre la puerta a planear el futuro juntos.
+    cleanResponse = `💡 Estrategia Segura (Cero Travel Misleading):
+Desviamos la presión de un encuentro físico hacia una conexión emocional profunda en el presente, haciéndola sentir escuchada y especial sin violar las normas de la plataforma.
 
 💬 Opción en Inglés (Copiar y Enviar):
-"I've been thinking about what you said, and I love how open and honest you are with me. Being on the same page with you is everything I want. Tell me, what is the first thing we should do together once we meet?"
+"I've been reflecting on what you said, and I truly value how open and honest you are with me. What matters most to me right now is understanding your heart, your thoughts, and building something genuinely meaningful between us. What is something about you that very few people truly know?"
 
 💬 Traducción al Español:
-"He estado pensando en lo que dijiste, y me encanta lo abierta y honesta que eres conmigo. Estar en la misma página contigo es todo lo que quiero. Dime, ¿qué es lo primero que deberíamos hacer juntos una vez que nos veamos?"`;
+"He estado reflexionando sobre lo que dijiste, y realmente valoro lo abierta y honesta que eres conmigo. Lo que más me importa ahora es comprender tu corazón, tus pensamientos y construir algo genuinamente significativo entre nosotros. ¿Qué es algo de ti que muy pocas personas realmente conocen?"`;
   } else if (/(carta|letter|invitar|vender)/i.test(pLower)) {
-    cleanResponse = `💡 Estrategia de Carta para ${safeClient}:
-Aprovecha que ${safeClient} busca profundidad emocional para invitarla a leer una carta íntima.
+    cleanResponse = `💡 Estrategia Segura para Carta (Monetización Permitida):
+Invitamos al cliente a profundizar a través de una carta detallada sin prometer encuentros físicos.
 
 💬 Opción en Inglés (Copiar y Enviar):
-"I wanted to give you the detailed answer you deserve about our future, so I put my whole heart into a letter for you. Let me know when you read it, my love."
+"You have such a special way of expressing yourself. I wanted to share some deeper reflections about my life and what our connection means to me, so I wrote a long letter for you. I hope it brings a warm smile to your day."
 
 💬 Traducción al Español:
-"Quería darte la respuesta detallada que mereces sobre nuestro futuro, así que puse todo mi corazón en una carta para ti. Avísame cuando la leas, mi amor."`;
+"Tienes una forma muy especial de expresarte. Quería compartir algunas reflexiones más profundas sobre mi vida y lo que significa nuestra conexión para mí, así que te escribí una carta larga. Espero que te saque una cálida sonrisa hoy."`;
   } else {
-    cleanResponse = `💡 Análisis para ${safeClient}:
-${safeClient} está muy interesada en formalizar la relación y busca que el perfil (${safeProfile}) le dé tranquilidad sobre el futuro.
+    cleanResponse = `💡 Respuesta Táctica Segura:
+Enfocada en validar las emociones del cliente y mantener la interacción en el chat sin dar falsas expectativas de viajes.
 
-💬 Respuesta Recomendada en Inglés:
-"I appreciate your honesty so much. I want you to know you are my priority, and I see a real future with you. What do you need most from me right now to feel completely at ease?"
+💬 Opción en Inglés (Copiar y Enviar):
+"I really appreciate your vulnerability with me. I want you to feel completely comfortable and safe sharing whatever is on your mind. Having you in my days brings me a lot of peace. How has your day been treating you so far?"
 
 💬 Traducción al Español:
-"Aprecio mucho tu honestidad. Quiero que sepas que eres mi prioridad y veo un futuro real contigo. ¿Qué es lo que más necesitas de mí ahora mismo para sentirte totalmente tranquila?"`;
+"Aprecio mucho tu vulnerabilidad conmigo. Quiero que te sientas completamente cómoda y segura compartiendo lo que tengas en mente. Tenerte en mis días me trae mucha paz. ¿Cómo te ha tratado el día hasta ahora?"`;
   }
 
   return cleanResponse;
 }
 
-// 2. ENDPOINT: ASISTENTE DE IA
+// 2. MOTOR DE AUDITORÍA HEURÍSTICA CON DETECCIÓN DE TRAVEL MISLEADING (TM)
+function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown) {
+  const textLower = (markdown || '').toLowerCase();
+  const findings = [];
+  let qualityScore = 100;
+  let riskLevel = 'BAJO';
+
+  // A. DETECCIÓN CRÍTICA DE TRAVEL MISLEADING (TM) / PROMESAS DE VIAJE O ENCUENTRO
+  const travelMisleadingRegex = /(?:when we meet|when i visit|come visit|meet in person|see you in person|book a flight|buy a ticket|flying to you|fly to you|stay at a hotel|pack your bags|live together soon|cuando nos veamos|cuando nos conozcamos en persona|cuando viaje|ven a verme|viajar a verte|comprar el pasaje|boleto de avión|hotel juntos|nos vemos pronto en persona)/i;
+  if (travelMisleadingRegex.test(textLower)) {
+    findings.push({
+      title: '🚨 INFRACCIÓN GRAVE: TRAVEL MISLEADING (TM)',
+      description: 'El operador insinuó un encuentro personal, cita física o viaje, violando la regla de oro de la agencia y poniendo la cuenta en riesgo de sanción.'
+    });
+    qualityScore -= 45;
+    riskLevel = 'CRÍTICO';
+  }
+
+  // B. Coacción / Mendicidad de Regalos
+  if (/(?:si me quisieras|si me amaras|envíame un regalo|mandame un regalo|dame un regalo|cómprame un regalo|send me a gift|buy me a present|need coins)/i.test(textLower)) {
+    findings.push({ title: '🛑 Coacción por Regalos', description: 'Petición directa de regalos detectada en el diálogo.' });
+    qualityScore -= 30;
+    if (riskLevel !== 'CRÍTICO') riskLevel = 'ALTO';
+  }
+
+  // C. Incomodidad del Cliente
+  if (/(?:por qué me hablas así|por que me tratas así|no te acuerdas de mí|olvidaste mi nombre|solo quieres mi dinero|you forgot my name|you are rude)/i.test(textLower)) {
+    findings.push({ title: '💔 Incomodidad Manifiesta del Cliente', description: 'Reclamo explícito del usuario en el historial.' });
+    qualityScore -= 25;
+    if (riskLevel !== 'CRÍTICO') riskLevel = 'ALTO';
+  }
+
+  // D. Hostilidad
+  if (/(?:cállate|callate|no me importa|qué pereza|que pereza|apúrate|apurate|no tengo tiempo|fastidio|idiota|shut up|waste of time)/i.test(textLower)) {
+    findings.push({ title: '🚨 Maltrato / Tono Hostil', description: 'Lenguaje inapropiado o agresivo detectado.' });
+    qualityScore -= 30;
+    riskLevel = 'CRÍTICO';
+  }
+
+  // E. Palabras Prohibidas
+  for (let word of dynamicBannedWords) {
+    if (textLower.includes(word.toLowerCase())) {
+      findings.push({ title: '🛑 Palabra Prohibida', description: `Se detectó la palabra: "${word}".` });
+      qualityScore -= 25;
+      if (riskLevel !== 'CRÍTICO') riskLevel = 'ALTO';
+      break;
+    }
+  }
+
+  qualityScore = Math.max(0, qualityScore);
+
+  let diagnosis = 'Conversación fluida, respetuosa y 100% libre de Travel Misleading (TM).';
+  let recommendation = 'Mantener la interacción dentro de los límites de la plataforma.';
+
+  if (riskLevel === 'CRÍTICO') {
+    diagnosis = 'ALTO RIESGO: Se detectaron infracciones graves de Travel Misleading o conducta.';
+    recommendation = 'Corregir al operador de inmediato. Recordar que NUNCA se debe prometer verse en persona.';
+  }
+
+  return {
+    score: qualityScore,
+    riskLevel: riskLevel,
+    diagnosis: diagnosis,
+    recommendation: recommendation,
+    findings: findings
+  };
+}
+
+// 3. ENDPOINT: ASISTENTE DE IA
 app.post('/api/intelligence/query', async (req, res) => {
   const { query, clientId, clientName, profileName, liveMarkdown } = req.body;
   const targetId = String(clientId || '').trim();
@@ -118,11 +188,11 @@ app.post('/api/intelligence/query', async (req, res) => {
     }
   }
 
-  const cleanHumanResponse = await generateHumanizedStrategyAndMessages(query, chatMd, clientName, profileName);
-  res.json({ answer: cleanHumanResponse });
+  const safeResponse = await generateSafeHumanizedMessages(query, chatMd, clientName, profileName);
+  res.json({ answer: safeResponse });
 });
 
-// 3. ENDPOINT: EXPEDIENTE EN ESPAÑOL
+// 4. ENDPOINTS DE TELEMETRÍA Y DEMÁS
 app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
   const queryName = String(req.query.name || '').trim();
@@ -158,11 +228,11 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
       clientName: clientName,
       location: /(united states|eeuu)/i.test(textLower) ? 'United States' : 'Ubicación en perfil',
       birthDate: /(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : 'Edad en perfil',
-      maritalStatus: /(living together|marriage|boda|casar)/i.test(textLower) ? 'Busca convivencia y relación formal' : 'Divorced / Viuda',
-      pets: /(perro|dog)/i.test(textLower) ? 'Tiene perro' : 'No especificado aún',
+      maritalStatus: /(living together|marriage|boda|casar)/i.test(textLower) ? 'Interesada en formalizar (Atención: No prometer viajes)' : 'Divorced / Viuda',
+      pets: /(perro|dog)/i.test(textLower) ? 'Tiene perro' : 'No especificado',
       family: /(hijos|kids|son|daughter)/i.test(textLower) ? 'Tiene hijos' : 'No especificado aún',
       work: /(retirado|retired)/i.test(textLower) ? 'Retirado / Jubilado' : 'Activo laboralmente',
-      summary: `Expediente de ${clientName} analizado y disponible en español.`
+      summary: `Expediente seguro de ${clientName}. Todas las sugerencias cumplen con la política Anti-TM.`
     };
     return res.json({ success: true, dossier });
   }
@@ -170,14 +240,8 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null });
 });
 
-// 4. TELEMETRÍA (RECIBE LOS CRONÓMETROS DE CADA CHAT EN VIVO)
 app.post('/api/telemetry', (req, res) => {
-  const {
-    operator, shift, profile, profileId,
-    pendingReadLetters, unansweredChatsCount,
-    hasExpiredSla, isAfk, idleSeconds, activeChatTimersList, status
-  } = req.body;
-
+  const { operator, shift, profile, profileId, pendingReadLetters, unansweredChatsCount, hasExpiredSla, isAfk, idleSeconds, activeChatTimersList, status } = req.body;
   if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
 
   const sessionKey = `${operator.toLowerCase().trim()}_${profile.toLowerCase().trim()}`;
@@ -203,55 +267,31 @@ app.post('/api/telemetry', (req, res) => {
   res.json({ success: true });
 });
 
-// 5. CONSOLIDADO EN VIVO PARA EL MONITOR
 app.get('/api/telemetry/live', (req, res) => {
   const now = Date.now();
   const operatorsMap = new Map();
-
   for (const [key, data] of liveTelemetryMap.entries()) {
     if (now - data.lastSeen > 35000) {
       liveTelemetryMap.delete(key);
     } else {
       const opKey = data.operatorName.toLowerCase();
       if (!operatorsMap.has(opKey)) {
-        operatorsMap.set(opKey, {
-          operatorName: data.operatorName,
-          shift: data.shift,
-          lastSeen: data.lastSeen,
-          isAfkGlobal: false,
-          hasExpiredSlaGlobal: false,
-          totalLetters: 0,
-          profiles: []
-        });
+        operatorsMap.set(opKey, { operatorName: data.operatorName, shift: data.shift, lastSeen: data.lastSeen, isAfkGlobal: false, hasExpiredSlaGlobal: false, totalLetters: 0, profiles: [] });
       }
-
       const opEntry = operatorsMap.get(opKey);
-      opEntry.profiles.push({
-        profileName: data.profileName,
-        profileId: data.profileId,
-        pendingReadLetters: data.pendingReadLetters,
-        unansweredChatsCount: data.unansweredChatsCount,
-        hasExpiredSla: data.hasExpiredSla,
-        isAfk: data.isAfk,
-        idleSeconds: data.idleSeconds,
-        activeChatTimersList: data.activeChatTimersList || []
-      });
-
+      opEntry.profiles.push({ profileName: data.profileName, profileId: data.profileId, pendingReadLetters: data.pendingReadLetters, unansweredChatsCount: data.unansweredChatsCount, hasExpiredSla: data.hasExpiredSla, isAfk: data.isAfk, idleSeconds: data.idleSeconds, activeChatTimersList: data.activeChatTimersList || [] });
       opEntry.totalLetters += data.pendingReadLetters;
       if (data.hasExpiredSla) opEntry.hasExpiredSlaGlobal = true;
       if (data.isAfk) opEntry.isAfkGlobal = true;
       if (data.lastSeen > opEntry.lastSeen) opEntry.lastSeen = data.lastSeen;
     }
   }
-
   res.json({ success: true, operators: Array.from(operatorsMap.values()) });
 });
 
-// 6. ENDPOINTS DE CHATS Y PALABRAS PROHIBIDAS
 app.get('/api/chats/synced-ids', async (req, res) => {
   const profile = req.query.profile;
   const syncedSet = new Set(syncedClientsRegistry);
-
   if (SUPABASE_URL && SUPABASE_KEY && profile) {
     try {
       const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?profile_name=eq.${profile}&select=client_id,client_name`, {
@@ -266,7 +306,6 @@ app.get('/api/chats/synced-ids', async (req, res) => {
       }
     } catch (e) {}
   }
-
   res.json({ success: true, syncedIds: Array.from(syncedSet) });
 });
 
@@ -281,6 +320,8 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
   syncedClientsRegistry.add(safeClientName.toLowerCase());
 
+  const aiReport = runDeepAiPatternAnalysis(operator, profile, safeClientName, cleanClientId, markdown);
+
   const auditPayload = {
     id: auditKey,
     operator_name: operator || 'Desconocido',
@@ -288,8 +329,8 @@ app.post('/api/chats/audit-deep', async (req, res) => {
     client_name: safeClientName,
     client_id: cleanClientId,
     total_messages: Array.isArray(messages) ? messages.length : 0,
-    flags: ['✅ Conversación Guardada'],
-    has_breach: false,
+    flags: aiReport.findings.map(f => f.title),
+    has_breach: aiReport.riskLevel === 'CRÍTICO' || aiReport.riskLevel === 'ALTO',
     markdown: markdown,
     updated_at: new Date().toISOString()
   };
@@ -304,7 +345,13 @@ app.post('/api/chats/audit-deep', async (req, res) => {
     }).catch(() => {});
   }
 
-  res.json({ success: true, clientId: cleanClientId, clientName: safeClientName });
+  res.json({ success: true, clientId: cleanClientId, clientName: safeClientName, aiReport });
+});
+
+app.post('/api/chats/analyze-single', (req, res) => {
+  const { operator, profile, clientName, clientId, markdown } = req.body;
+  const aiReport = runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown);
+  res.json({ success: true, aiReport });
 });
 
 app.get('/api/chats/audits', async (req, res) => {
@@ -326,12 +373,12 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 7. DASHBOARD EMBEBIDO
+// DASHBOARD
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>RYR TITAN APEX - LIVE SUPERVISION & AI</title>
+  <title>RYR TITAN APEX - LIVE SUPERVISION & ANTI-TM AI</title>
   <style>
     :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -353,13 +400,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <header>
-    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & TIEMPOS DE RESPUESTA</div>
+    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & ANTI-TRAVEL MISLEADING</div>
     <div style="display:flex; gap:8px;">
       <button class="btn-action" onclick="openChatAuditsModal()">📄 Historial de Chats (MD)</button>
       <button class="btn-action" onclick="openBannedWordsModal()">🛡️ Palabras Prohibidas</button>
     </div>
   </header>
   <div id="operators-grid" class="grid-operators"></div>
+
   <div id="modal-chats" class="modal-overlay">
     <div class="modal-content">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
@@ -369,6 +417,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <div id="chat-audits-list" style="overflow-y:auto; flex:1;"></div>
     </div>
   </div>
+
   <div id="modal-banned" class="modal-overlay">
     <div class="modal-content" style="width:550px;">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
@@ -382,6 +431,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <div id="banned-words-list" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;"></div>
     </div>
   </div>
+
   <script>
     const API_URL = window.location.origin;
     async function fetchLive() {
@@ -416,6 +466,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         \`).join('');
       } catch (e) {}
     }
+
     async function openChatAuditsModal() {
       document.getElementById('modal-chats').style.display = 'flex';
       const res = await fetch(\`\${API_URL}/api/chats/audits\`);
@@ -426,6 +477,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           <div class="chat-transcript">\${a.markdown}</div>
         </div>\`).join('');
     }
+
     async function openBannedWordsModal() {
       document.getElementById('modal-banned').style.display = 'flex';
       const res = await fetch(\`\${API_URL}/api/banned-words\`);
@@ -435,6 +487,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           \${w} <span style="cursor:pointer; font-weight:bold; margin-left:4px;" onclick="delWord('\${w}')">✕</span>
         </div>\`).join('');
     }
+
     async function addBannedWord() {
       const word = document.getElementById('input-new-word').value.trim();
       if (!word) return;
@@ -442,10 +495,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       document.getElementById('input-new-word').value = '';
       openBannedWordsModal();
     }
+
     async function delWord(word) {
       await fetch(\`\${API_URL}/api/banned-words/delete\`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word }) });
       openBannedWordsModal();
     }
+
     function closeModals() { document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none'); }
     setInterval(fetchLive, 2000);
     fetchLive();
@@ -457,4 +512,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V17.0 (/human Mode) activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V18.0 (Anti-TM Strict) activo en puerto ${PORT}`));
