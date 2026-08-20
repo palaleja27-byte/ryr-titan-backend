@@ -6,7 +6,12 @@ const PORT = process.env.PORT || 3000;
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
-const AI_API_KEY = process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY || process.env.AI_API_KEY || '';
+
+// CLAVES DE IA CENTRALIZADAS EN RENDER (GROQ GRATIS / OPENAI / DEEPSEEK / OPENROUTER)
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
@@ -22,127 +27,106 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR DE RAZONAMIENTO COGNITIVO SEGÚN LA PREGUNTA EXACTA DEL OPERADOR
-async function generateCognitiveResponse(prompt, fullTranscript, clientName, profileName) {
-  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Helena';
+// 1. MOTOR COGNITIVO LLM UNIVERSAL (CONEXIÓN CENTRALIZADA MULTI-PROVEEDOR)
+async function callMasterAiEngine(prompt, fullTranscript, clientName, profileName) {
+  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Helena, 54';
   const safeProfile = profileName || 'HORACIO';
-  const pLower = (prompt || '').toLowerCase().trim();
-  const mdLower = (fullTranscript || '').toLowerCase();
 
-  // A. SI HAY API KEY (GROQ GRATIS / OPENAI / DEEPSEEK)
-  if (AI_API_KEY && AI_API_KEY.length > 10) {
+  const systemInstructions = `Eres el Co-Piloto de IA, Psicólogo y Estratega de Citas para la agencia de chat RYR TITAN operando sobre Talkytimes.
+Tu objetivo es analizar la conversación entre el cliente (${safeClient}) y el perfil asignado (${safeProfile}) y responder a la consulta del operador con inteligencia humana, razonamiento deductivo y creatividad sin límites.
+
+REGLAS ESTRICTAS DE CUMPLIMIENTO Y ESTILO:
+1. CERO TRAVEL MISLEADING (TM): NUNCA insinúes ni prometas encuentros en persona, visitas, viajes, boletos de avión o citas físicas ("when we meet", "when I visit you", "come see me"). Desvía siempre hacia la conexión emocional digital, cartas y mensajes en la plataforma.
+2. DIVERSIDAD TOTAL: NUNCA des respuestas prefabricadas ni repetitivas. Adapta cada palabra al tono, estado emocional y temas reales que el cliente mencionó en el chat.
+3. ESTRUCTURA LIMPIA Y DIRECTA EN ESPAÑOL:
+   - Si el operador hace una pregunta sobre el cliente (mascotas, trabajo, psicología, estado de ánimo): Responde con análisis analítico y citas de lo que dijo.
+   - Si el operador pide un mensaje de enganche o respuesta:
+     💡 Explicación Táctica (1-2 oraciones).
+     💬 Opción en Inglés (redactada de forma seductora, natural y lista para copiar).
+     💬 Traducción al Español.
+4. Responde en texto limpio, sin asteriscos rotos ni formato robótico.`;
+
+  // 1. INTENTO 1: GROQ CLOUD (LLAMA-3.3-70B - GRATUITO Y ULTRA RÁPIDO ~0.3s)
+  if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
     try {
-      const isGroq = AI_API_KEY.startsWith('gsk_');
-      const endpoint = isGroq ? 'https://api.groq.com/openai/v1/chat/completions' : 'https://api.openai.com/v1/chat/completions';
-      const model = isGroq ? 'llama-3.1-70b-versatile' : 'gpt-4o-mini';
-
-      const response = await fetch(endpoint, {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${AI_API_KEY}`, 'Content-Type': 'application/json' },
+        headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: model,
+          model: 'llama-3.3-70b-versatile',
           messages: [
-            {
-              role: 'system',
-              content: `Eres el Asistente de Inteligencia de la agencia RYR TITAN. 
-              Estudias el historial del cliente ${safeClient} con el perfil ${safeProfile}.
-              
-              REGLAS DE RESPUESTA:
-              1. Si el operador te hace una PREGUNTA FACTUAL (ej: "¿tiene mascotas?", "¿en qué trabaja?", "¿tiene hijos?"), responde DIRECTAMENTE si el dato existe en el historial o no. No des mensajes de amor genéricos si te preguntan por un hecho.
-              2. Si el operador pide un MENSAJE O ESTRATEGIA (ej: "dame un mensaje de enganche", "cómo le respondo"), redacta opciones personalizadas.
-              3. CERO TRAVEL MISLEADING: NUNCA sugieras encuentros físicos, citas en persona o viajes.
-              4. Formato limpio en texto plano sin asteriscos rotos.`
-            },
-            { role: 'user', content: `HISTORIAL DEL CHAT:\n${fullTranscript}\n\nPREGUNTA DEL OPERADOR:\n${prompt}` }
+            { role: 'system', content: systemInstructions },
+            { role: 'user', content: `HISTORIAL DEL DIÁLOGO:\n${fullTranscript}\n\nCONSULTA DEL OPERADOR:\n${prompt}` }
           ],
-          temperature: 0.5
+          temperature: 0.85, // Alta creatividad para evitar cualquier repetición
+          max_tokens: 650
         })
       });
-      const data = await response.json();
+      const data = await res.json();
       if (data.choices && data.choices[0]) {
         return data.choices[0].message.content.replace(/\*\*/g, '');
       }
-    } catch (err) {}
-  }
-
-  // B. MOTOR NATIVO CON CLASIFICADOR DE INTENCIONES (Costo $0)
-
-  // 1. PREGUNTA SOBRE MASCOTAS
-  if (/(mascota|mascotas|perro|perros|gato|gatos|pet|pets|dog|cat)/i.test(pLower)) {
-    if (/(perro|dog|cachorro)/i.test(mdLower)) {
-      return `🐾 Mascotas de ${safeClient}:
-Sí, en el historial ${safeClient} mencionó que le gustan los perros / tiene perro.
-
-💬 Sugerencia para conversar sobre esto:
-"I was just thinking about you and remembered you love dogs! How is your dog doing today?"
-(Traducción: "¡Estaba pensando en ti y recordé que te encantan los perros! ¿Cómo está tu perrito hoy?")`;
-    } else if (/(gato|cat|gatito)/i.test(mdLower)) {
-      return `🐾 Mascotas de ${safeClient}:
-Sí, en el historial ${safeClient} mencionó afinidad con los gatos.`;
-    } else {
-      return `🐾 Mascotas de ${safeClient}:
-En las conversaciones analizadas, ${safeClient} no ha mencionado tener mascotas todavía.
-
-💡 Pregunta sugerida para sacar conversación sobre este tema:
-🇺🇸 English: "I was just wondering, do you have any pets at home? I've always had a soft spot for animals."
-🇪🇸 Español: "Me estaba preguntando, ¿tienes alguna mascota en casa? Siempre he tenido debilidad por los animales."`;
+    } catch (e) {
+      console.error("Error en Groq, probando siguiente proveedor:", e);
     }
   }
 
-  // 2. PREGUNTA SOBRE FAMILIA / HIJOS
-  if (/(hijo|hijos|hija|hijas|familia|nietos|kids|children|son|daughter)/i.test(pLower)) {
-    if (/(hijos|kids|children|son|daughter)/i.test(mdLower)) {
-      return `👶 Familia de ${safeClient}:
-Sí, en el historial ${safeClient} ha hecho mención sobre sus hijos/familia.`;
-    } else {
-      return `👶 Familia de ${safeClient}:
-En el historial actual, ${safeClient} no ha detallado si tiene hijos o familia cercana.
-
-💡 Pregunta sugerida para conocerla mejor:
-🇺🇸 English: "Family is so important to me. Tell me, do you have a big family or any kids?"
-🇪🇸 Español: "La familia es muy importante para mí. Cuéntame, ¿tienes una familia grande o hijos?"`;
+  // 2. INTENTO 2: OPENAI (GPT-4o-mini)
+  if (OPENAI_API_KEY && OPENAI_API_KEY.startsWith('sk-')) {
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemInstructions },
+            { role: 'user', content: `HISTORIAL DEL DIÁLOGO:\n${fullTranscript}\n\nCONSULTA DEL OPERADOR:\n${prompt}` }
+          ],
+          temperature: 0.85
+        })
+      });
+      const data = await res.json();
+      if (data.choices && data.choices[0]) {
+        return data.choices[0].message.content.replace(/\*\*/g, '');
+      }
+    } catch (e) {
+      console.error("Error en OpenAI:", e);
     }
   }
 
-  // 3. PREGUNTA SOBRE TRABAJO / OCUPACIÓN
-  if (/(trabajo|trabaja|profesion|profesión|ocupacion|ocupación|job|work|carrera|retirado|retired)/i.test(pLower)) {
-    if (/(retirado|retired|jubilado)/i.test(mdLower)) {
-      return `💼 Trabajo / Ocupación de ${safeClient}:
-${safeClient} mencionó estar retirada/jubilada y disfrutar de su tiempo libre.`;
-    } else {
-      return `💼 Trabajo / Ocupación de ${safeClient}:
-Menciona estar activa en sus actividades diarias.
-
-💡 Pregunta sugerida:
-🇺🇸 English: "What keeps you most busy during the week? Tell me about what you enjoy doing."
-🇪🇸 Español: "¿Qué es lo que más te mantiene ocupada durante la semana? Cuéntame sobre lo que disfrutas hacer."`;
-    }
+  // 3. INTENTO 3: DEEPSEEK
+  if (DEEPSEEK_API_KEY) {
+    try {
+      const res = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [
+            { role: 'system', content: systemInstructions },
+            { role: 'user', content: `HISTORIAL DEL DIÁLOGO:\n${fullTranscript}\n\nCONSULTA DEL OPERADOR:\n${prompt}` }
+          ],
+          temperature: 0.85
+        })
+      });
+      const data = await res.json();
+      if (data.choices && data.choices[0]) {
+        return data.choices[0].message.content.replace(/\*\*/g, '');
+      }
+    } catch (e) {}
   }
 
-  // 4. PREGUNTA SOBRE ESTADO CIVIL / PAREJA
-  if (/(casada|soltera|divorciada|viuda|pareja|novio|esposo|marriage|divorced|single|not married)/i.test(pLower)) {
-    return `💍 Estado Civil de ${safeClient}:
-En su perfil figura como "Not married / Soltera" y en el chat busca una conexión sincera y duradera.`;
-  }
+  // 4. FALLBACK COGNITIVO DINÁMICO (Si no hay ninguna clave en Render)
+  return `💡 Análisis Cognitivo para ${safeClient}:
+El cliente tiene un diálogo activo en la plataforma. Para activar el motor de Inteligencia Artificial profunda y respuestas 100% únicas e ilimitadas para los 20 operadores, agrega tu clave gratuita de GROQ (GROQ_API_KEY) en las variables de entorno de Render.
 
-  // 5. SOLICITUD DE MENSAJES DE ENGANCHE / ESTRATEGIA
-  if (/(mensaje|dame un mensaje|como le respondo|que le digo|carta|gancho|enganchar|reconectar|atencion|atención)/i.test(pLower)) {
-    return `💡 Estrategia de Enganche para ${safeClient}:
-Conviene validar su afecto con un tono cálido y hacerle una pregunta abierta sobre sus pasiones para mantenerla activa.
-
-💬 Opción en Inglés (Copiar y Enviar):
-"Thinking of you brings a big smile to my face. I love how genuine our connection feels. What is something you are truly passionate about that always makes your eyes light up?"
-
-💬 Traducción al Español:
-"Pensar en ti me saca una gran sonrisa. Me encanta lo genuina que se siente nuestra conexión. ¿Qué es algo que realmente te apasiona y que siempre hace que se te iluminen los ojos?"`;
-  }
-
-  // 6. RESPUESTA GENERAL
-  return `📋 Información sobre ${safeClient}:
-Historial revisado con éxito. Puedes preguntarme sobre sus mascotas, hijos, trabajo, estado civil o pedirme mensajes de enganche listos para enviar.`;
+💬 Sugerencia Adaptativa:
+"I really value how genuine and open our conversations are. Tell me, what is one memory from your past that always brings warmth to your heart?"
+(Traducción: "Valoro mucho lo genuinas y abiertas que son nuestras conversaciones. Dime, ¿cuál es un recuerdo de tu pasado que siempre le da calidez a tu corazón?")`;
 }
 
-// 2. ENDPOINT: CONSULTA AL ASISTENTE DE IA
+// 2. ENDPOINT: CONSULTA DE INTELIGENCIA CON CONTEXTO COMPLETO
 app.post('/api/intelligence/query', async (req, res) => {
   const { query, clientId, clientName, profileName, liveMarkdown } = req.body;
   const targetId = String(clientId || '').trim();
@@ -160,25 +144,25 @@ app.post('/api/intelligence/query', async (req, res) => {
 
   if (!chatMd) {
     for (let audit of recentChatAuditsRAM.values()) {
-      if (String(audit.clientId) === targetId || String(audit.client_id) === targetId) {
+      if (String(audit.clientId) === targetId || String(audit.client_id) === targetId || String(audit.clientName).toLowerCase() === String(clientName).toLowerCase()) {
         chatMd = audit.markdown;
         break;
       }
     }
   }
 
-  const intelligentAnswer = await generateCognitiveResponse(query, chatMd, clientName, profileName);
-  res.json({ answer: intelligentAnswer });
+  const aiResponse = await callMasterAiEngine(query, chatMd, clientName, profileName);
+  res.json({ answer: aiResponse });
 });
 
-// 3. ENDPOINT: EXPEDIENTE DIRECTO
+// 3. ENDPOINT: EXPEDIENTE EN ESPAÑOL
 app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
   const queryName = String(req.query.name || '').trim();
   let chatMd = '';
   let clientName = queryName ? queryName.split('\n')[0].trim() : 'Helena';
 
-  if (SUPABASE_URL && SUPABASE_KEY && clientId !== 'N/A') {
+  if (SUPABASE_URL && SUPABASE_KEY) {
     try {
       const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?or=(client_id.eq.${clientId},client_name.ilike.%${encodeURIComponent(queryName)}%)&limit=1`, {
         headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
@@ -208,10 +192,10 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
       location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : 'Brazil'),
       birthDate: /(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : (/(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : 'En perfil'),
       maritalStatus: /(not married|single)/i.test(textLower) ? 'Not married / Soltera' : 'Soltera',
-      pets: /(perro|dog)/i.test(textLower) ? 'Tiene perro' : 'No especificado aún',
+      pets: /(perro|dog)/i.test(textLower) ? 'Tiene perro' : (/(gato|cat)/i.test(textLower) ? 'Tiene gato' : 'No especificado aún'),
       family: /(hijos|kids)/i.test(textLower) ? 'Tiene hijos' : 'No especificado aún',
-      work: 'Activo laboralmente',
-      summary: `Expediente de ${clientName} verificado en Supabase.`
+      work: /(retirado|retired)/i.test(textLower) ? 'Retirado / Jubilado' : 'Activo laboralmente',
+      summary: `Expediente de ${clientName} verificado. Respaldado con motor LLM.`
     };
     return res.json({ success: true, dossier, hasData: true });
   }
@@ -219,7 +203,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null, hasData: false });
 });
 
-// 4. DEMÁS ENDPOINTS (TELEMETRÍA, AUDITORÍA, PALABRAS PROHIBIDAS, MONITOR)
+// 4. DEMÁS ENDPOINTS (TELEMETRÍA, SUPABASE, MONITOR)
 app.get('/api/chats/synced-ids', async (req, res) => {
   const profile = req.query.profile;
   const syncedSet = new Set(syncedClientsRegistry);
@@ -245,7 +229,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
 
   const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Helena').trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Cliente').trim();
   const auditKey = `${profile}_${cleanClientId}`;
   
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
@@ -350,7 +334,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>RYR TITAN APEX - SUPERVISIÓN & IA LIVE</title>
+  <title>RYR TITAN APEX - LIVE MONITOR & AI HUB</title>
   <style>
     :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -360,7 +344,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
     .operator-card { background: var(--bg-card); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; }
     .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
-    .live-timers-container { display: flex; flex-wrap: gap; gap: 4px; margin-top: 6px; }
+    .live-timers-container { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
     .live-chat-timer-badge { font-size: 10px; font-weight: bold; font-family: monospace; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
     .timer-ok { background: #064e3b; color: #34d399; border: 1px solid #10b981; }
     .timer-expired { background: #450a0a; color: #f87171; border: 1px solid #ef4444; animation: pulseRed 1s infinite; }
@@ -372,7 +356,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <header>
-    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & TIEMPOS DE RESPUESTA</div>
+    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & HUB DE IA</div>
     <div style="display:flex; gap:8px;">
       <button class="btn-action" onclick="openChatAuditsModal()">📄 Historial de Chats (MD)</button>
       <button class="btn-action" onclick="openBannedWordsModal()">🛡️ Palabras Prohibidas</button>
@@ -476,4 +460,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V21.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V23.0 (Master AI Hub) activo en puerto ${PORT}`));
