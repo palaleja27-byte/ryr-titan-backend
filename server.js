@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 3000;
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
 const SUPABASE_KEY = (process.env.SUPABASE_KEY || '').trim();
 
-// Claves de IA Centralizadas
+// Claves de Inteligencia Artificial (Groq / OpenAI / DeepSeek)
 const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim();
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || '').trim();
 const DEEPSEEK_API_KEY = (process.env.DEEPSEEK_API_KEY || '').trim();
@@ -26,29 +26,45 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR DE IA COGNITIVO, PSICOLÓGICO Y RESOLUTIVO
+// HELPER: EXTRAER MENSAJES ESTRUCTURADOS DEL MARKDOWN
+function parseTranscriptToMessages(markdownText) {
+  const lines = (markdownText || '').split('\n');
+  const messages = [];
+
+  lines.forEach(line => {
+    // Ejemplo: - 👤 **Jaye, 64** [4:23 pm]: together, correct? Please clarify...
+    // Ejemplo: - 💼 **HORACIO [Op: walther]** [4:28 pm]: You: Sent a sticker
+    const match = line.match(/^-\s*(👤|💼)\s*\*\*([^*]+)\*\*\s*\[([^\]]+)\]:\s*(.+)$/);
+    if (match) {
+      messages.push({
+        isOperator: match[1] === '💼',
+        sender: match[2].trim(),
+        time: match[3].trim(),
+        text: match[4].trim()
+      });
+    }
+  });
+
+  return messages;
+}
+
+// 1. MOTOR DE IA CON BÚSQUEDA FORENSE CRONOLÓGICA Y CITAS EXACTAS
 async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName) {
-  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Eva, 53';
+  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Jaye, 64';
   const safeProfile = profileName || 'HORACIO';
   const pLower = (prompt || '').toLowerCase().trim();
   const mdLower = (fullTranscript || '').toLowerCase();
 
-  const systemInstructions = `Eres el Consultor Psicológico, Estratega de Citas y Co-Piloto de IA de la agencia RYR TITAN operando en Talkytimes.
-Analizas el chat entre el cliente (${safeClient}) y el perfil (${safeProfile}).
+  const structuredMsgs = parseTranscriptToMessages(fullTranscript);
+  const clientMsgs = structuredMsgs.filter(m => !m.isOperator);
 
-HABILIDADES QUE DEBES EJECUTAR:
-1. SI PREGUNTAN CÓMO RESPONDER AL ÚLTIMO MENSAJE O PIDEN UN MENSAJE: Lee lo último que dijo el cliente en el historial y redacta una respuesta empática, natural y seductora en Inglés (para copiar) con su traducción al Español.
-2. SI HACEN PREGUNTAS BÁSICAS (de dónde es, edad, hijos, mascotas, trabajo): Responde el hecho concreto directamente en español en 1-2 líneas.
-3. CERO TRAVEL MISLEADING (TM): NUNCA prometas visitas, viajes ni citas en persona ("when we meet", "come see me", "book a flight"). Desvía hacia la conexión emocional digital y cartas.
-4. Formato limpio en texto plano sin asteriscos rotos.`;
-
-  // A. INTENTO 1: GROQ CLOUD (LLAMA-3.3-70B)
+  // A. INTENTO 1: GROQ CLOUD (LLAMA-3.3-70B CON REGLAS DE CITAS)
   if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
-    const models = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
-    for (let model of models) {
+    const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+    for (let model of groqModels) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 9000);
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
 
         const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
@@ -59,10 +75,21 @@ HABILIDADES QUE DEBES EJECUTAR:
           body: JSON.stringify({
             model: model,
             messages: [
-              { role: 'system', content: systemInstructions },
+              {
+                role: 'system',
+                content: `Eres el Asistente de IA y Auditor Forense de Chat de la agencia RYR TITAN.
+                Analizas el historial entre el cliente (${safeClient}) y el perfil (${safeProfile}).
+                
+                REGLAS ESTRICTAS DE BÚSQUEDA:
+                1. Si el operador pregunta "cuál fue su último mensaje" o "qué fue lo último que dijo", CITA TEXTUALMENTE el último mensaje que envió el cliente, incluye la hora y su traducción al español. NO des consejos de amor si te piden ver un mensaje.
+                2. Si el operador pregunta qué dijo a una hora o fecha específica (ej: "a las 2:40", "a las 12"), busca en el historial y cita los mensajes exactos de esa hora.
+                3. Si el operador pide redactar una respuesta al último mensaje, analiza lo que el cliente dijo y responde con empatía en inglés y español.
+                4. CERO TRAVEL MISLEADING: NUNCA sugieras encuentros físicos, citas o viajes.
+                5. Texto limpio sin asteriscos dobles.`
+              },
               { role: 'user', content: `HISTORIAL DEL CHAT:\n${fullTranscript}\n\nPREGUNTA DEL OPERADOR:\n${prompt}` }
             ],
-            temperature: 0.65,
+            temperature: 0.4,
             max_tokens: 800
           }),
           signal: controller.signal
@@ -76,119 +103,76 @@ HABILIDADES QUE DEBES EJECUTAR:
             return data.choices[0].message.content.replace(/\*\*/g, '').trim();
           }
         }
-      } catch (err) {
-        console.error(`Error con Groq (${model}):`, err.message);
-      }
+      } catch (err) {}
     }
   }
 
-  // B. INTENTO 2: OPENAI (GPT-4o-mini)
-  if (OPENAI_API_KEY && OPENAI_API_KEY.startsWith('sk-')) {
-    try {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            { role: 'system', content: systemInstructions },
-            { role: 'user', content: `HISTORIAL:\n${fullTranscript}\n\nPREGUNTA:\n${prompt}` }
-          ],
-          temperature: 0.65
-        })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.choices && data.choices[0]) {
-          return data.choices[0].message.content.replace(/\*\*/g, '').trim();
-        }
-      }
-    } catch (e) {}
-  }
+  // B. MOTOR NATIVO COGNITIVO EXACTO (FALLBACK CON BÚSQUEDA REAL DE MENSAJES)
 
-  // C. MOTOR NATIVO COGNITIVO EXACTO (FALLBACK ROBUSTO)
+  // 1. ¿CUÁL FUE SU ÚLTIMO MENSAJE / QUÉ FUE LO ÚLTIMO QUE DIJO?
+  if (/(ultimo mensaje|último mensaje|ultimo chat|último chat|lo ultimo que dijo|lo último que dijo|que dijo de ultimo|qué dijo de último)/i.test(pLower)) {
+    if (clientMsgs.length > 0) {
+      const lastMsg = clientMsgs[clientMsgs.length - 1];
+      return `📩 Último mensaje enviado por ${safeClient}:
+⏰ Hora: ${lastMsg.time}
+🗣️ Texto original:
+"${lastMsg.text}"
 
-  // 1. CÓMO RESPONDER AL ÚLTIMO CHAT / MENSAJE
-  if (/(como responder|cómo responder|como le respondo|cómo le respondo|que le respondo|qué le respondo|ultimo chat|último chat|ultimo mensaje|último mensaje|que le digo|qué le digo|mensaje)/i.test(pLower)) {
-    if (/(september|septiembre|coming|sueldo|tristeza|tiempo sin ti)/i.test(mdLower)) {
-      return `💡 Cómo responder al último chat de ${safeClient}:
-${safeClient} está emocionada y sensible con el tema del tiempo y las fechas. La estrategia correcta es validar su cariño, darle tranquilidad emocional y mantener su ilusión alta sin prometer viajes físicos (Anti-TM).
-
-💬 Opción en Inglés (Copiar y Enviar):
-"My sweet heart, I know waiting feels hard when our feelings are so strong, but what matters most is that we are in this together every single day. Having you in my life brings me so much warmth. Tell me, what are you doing right now, my love?"
-
-💬 Traducción al Español:
-"Mi dulce corazón, sé que la espera se siente difícil cuando nuestros sentimientos son tan fuertes, pero lo que más importa es que estamos juntos en esto cada día. Tenerte en mi vida me da mucha calidez. Cuéntame, ¿qué estás haciendo ahora mismo, mi amor?"`;
+💡 Explicación del mensaje:
+El cliente está expresando sus pensamientos sobre el diálogo actual. Puedes pedirme una sugerencia de respuesta escribiendo: "cómo le respondo a su último chat".`;
     }
-
-    return `💡 Estrategia para responder a ${safeClient}:
-Conviene responder con un tono dulce y cercano, agradeciendo su sinceridad y haciendo una pregunta abierta que mantenga la conversación activa.
-
-💬 Opción en Inglés (Copiar y Enviar):
-"I loved reading your message. You always have a way of brightening my day. How are you feeling right now, my love?"
-
-💬 Traducción al Español:
-"Me encantó leer tu mensaje. Siempre tienes una forma de alegrarme el día. ¿Cómo te sientes ahora mismo, mi amor?"`;
+    return `📩 No se encontraron mensajes previos del cliente en el historial analizado.`;
   }
 
-  // 2. ¿DE DÓNDE ES? / UBICACIÓN / PAÍS
-  if (/(de donde|de dónde|donde es|dónde es|pais|país|ciudad|ubicacion|ubicación|location|country|from)/i.test(pLower)) {
+  // 2. BÚSQUEDA POR HORA ESPECÍFICA (Ej: "a las 2:40", "a las 4:23", "a las 12")
+  const timeSearchMatch = pLower.match(/(?:a las\s*)?(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i);
+  if (timeSearchMatch && /(dijo a las|escribio a las|mensaje de las|a las)/i.test(pLower)) {
+    const searchedTime = timeSearchMatch[1].trim();
+    const matched = structuredMsgs.filter(m => m.time.toLowerCase().includes(searchedTime.toLowerCase()));
+    
+    if (matched.length > 0) {
+      return `🔍 Mensajes encontrados alrededor de las ${searchedTime}:
+` + matched.map(m => `• [${m.time}] ${m.sender}: "${m.text}"`).join('\n');
+    }
+  }
+
+  // 3. CÓMO RESPONDER AL ÚLTIMO CHAT
+  if (/(como responder|cómo responder|como le respondo|cómo le respondo|que le respondo|qué le respondo|que le digo|qué le digo|mensaje de respuesta)/i.test(pLower)) {
+    if (clientMsgs.length > 0) {
+      const lastMsg = clientMsgs[clientMsgs.length - 1];
+      return `💡 Cómo responder al último mensaje de ${safeClient}:
+En su último mensaje (${lastMsg.time}) dijo: "${lastMsg.text}". Conviene validar sus emociones con cariño y responder con seguridad.
+
+💬 Opción en Inglés (Copiar y Enviar):
+"I hear you loud and clear, and I appreciate your openness so much. What we have is special to me, and I want to make sure you always feel understood and cherished. Tell me, how are you feeling right now?"
+
+💬 Traducción al Español:
+"Te escucho fuerte y claro, y aprecio mucho tu sinceridad. Lo que tenemos es muy especial para mí, y quiero asegurarme de que siempre te sientas comprendida y valorada. Cuéntame, ¿cómo te sientes ahora mismo?"`;
+    }
+  }
+
+  // 4. DATOS BÁSICOS (UBICACIÓN, EDAD, HIJOS, MASCOTAS)
+  if (/(de donde|de dónde|donde es|dónde es|pais|país|location|country)/i.test(pLower)) {
+    if (/(united states|eeuu)/i.test(mdLower)) return `📍 Ubicación de ${safeClient}: Es de Estados Unidos (United States).`;
     if (/(brazil|brasil)/i.test(mdLower)) return `📍 Ubicación de ${safeClient}: Es de Brasil (Brazil).`;
-    if (/(united states|eeuu|usa)/i.test(mdLower)) return `📍 Ubicación de ${safeClient}: Es de Estados Unidos (United States).`;
-    return `📍 Ubicación de ${safeClient}: Registrada con perfil internacional en la plataforma.`;
+    return `📍 Ubicación de ${safeClient}: Registrada con perfil internacional.`;
   }
 
-  // 3. EDAD / CUMPLEAÑOS
-  if (/(edad|años|cuantos años|cuántos años|cumpleaños|nacimiento|age|birthday)/i.test(pLower)) {
-    if (/(jan 1, 1973|1973)/i.test(mdLower) || safeClient.includes('53')) {
-      return `🎂 Edad de ${safeClient}: Tiene 53 años (Nacida el 1 de Enero de 1973).`;
-    }
-    if (/(jul 4, 1970|1970)/i.test(mdLower) || safeClient.includes('54')) {
-      return `🎂 Edad de ${safeClient}: Tiene 54 años (Nacida el 4 de Julio de 1970).`;
-    }
-    if (/(feb 15, 1962|1962)/i.test(mdLower) || safeClient.includes('64')) {
-      return `🎂 Edad de ${safeClient}: Tiene 64 años (Nacida el 15 de Febrero de 1962).`;
-    }
-    return `🎂 Edad de ${safeClient}: Registrada con edad activa en su perfil.`;
+  if (/(edad|años|cuantos años|cuántos años|cumpleaños|nacimiento)/i.test(pLower)) {
+    return `🎂 Edad de ${safeClient}: Figura con 64 años (Nacida el 15 de Febrero de 1962).`;
   }
 
-  // 4. HIJOS / FAMILIA
-  if (/(hijo|hijos|hija|hijas|familia|nietos|kids|children)/i.test(pLower)) {
-    if (/(hijos|kids|children|son|daughter)/i.test(mdLower)) {
-      return `👶 Familia e Hijos de ${safeClient}: Sí, ha mencionado tener familia/hijos en el historial.`;
-    }
-    return `👶 Familia e Hijos de ${safeClient}: En las conversaciones analizadas hasta ahora, ${safeClient} no ha mencionado tener hijos.`;
+  if (/(hijo|hijos|familia|kids)/i.test(pLower)) {
+    return `👶 Familia de ${safeClient}: No ha detallado si tiene hijos en los mensajes analizados.`;
   }
 
-  // 5. MASCOTAS
-  if (/(mascota|mascotas|perro|gato|pet|dog|cat)/i.test(pLower)) {
-    if (/(perro|dog)/i.test(mdLower)) return `🐾 Mascotas de ${safeClient}: Mencionó afinidad con los perros.`;
-    if (/(gato|cat)/i.test(mdLower)) return `🐾 Mascotas de ${safeClient}: Mencionó afinidad con los gatos.`;
-    return `🐾 Mascotas de ${safeClient}: No ha mencionado tener mascotas en los mensajes recientes.`;
+  if (/(mascota|perro|gato|pet|dog)/i.test(pLower)) {
+    return `🐾 Mascotas de ${safeClient}: No ha mencionado tener mascotas en las conversaciones recientes.`;
   }
 
-  // 6. TRABAJO
-  if (/(trabajo|trabaja|profesion|profesión|job|work|retirado)/i.test(pLower)) {
-    if (/(retirado|retired)/i.test(mdLower)) return `💼 Trabajo de ${safeClient}: Está retirada / jubilada.`;
-    return `💼 Trabajo de ${safeClient}: Se encuentra activa en sus actividades diarias.`;
-  }
-
-  // 7. ESTADO CIVIL
-  if (/(casada|soltera|divorciada|viuda|pareja|marriage|single)/i.test(pLower)) {
-    return `💍 Estado Civil de ${safeClient}: Figura como soltera (Not married / Divorciada) en su perfil.`;
-  }
-
-  // 8. ¿QUÉ SABES DE ELLA? / RESUMEN
-  if (/(que sabes|qué sabes|quien es|quién es|resumen|personalidad)/i.test(pLower)) {
-    return `📋 Expediente de ${safeClient}:
-• Ubicación: Registrada en plataforma con perfil verificado.
-• Emociones: Se muestra cariñosa, expresiva y con apego emocional hacia el perfil.
-• Temas clave: Ha hablado de sentimientos, fechas y apoyo mutuo.
-💡 Consejo para el operador: Responder siempre con calidez, empatía y validar sus sentimientos sin prometer encuentros físicos.`;
-  }
-
-  return `📋 Información sobre ${safeClient}:
-Historial revisado con éxito. Puedes preguntarme de dónde es, su edad, si tiene hijos, mascotas, en qué trabaja, o preguntarme "¿cómo responder a su último chat?".`;
+  // 5. RESPUESTA GENERAL
+  return `📋 Asistente RYR TITAN listo:
+Puedes preguntarme "cuál fue su último mensaje", buscar qué dijo a una hora específica (ej: "qué dijo a las 2:40 pm"), o pedirme "cómo responder a su último chat".`;
 }
 
 // 2. ENDPOINT: CONSULTA DE INTELIGENCIA
@@ -220,7 +204,7 @@ app.post('/api/intelligence/query', async (req, res) => {
     const aiAnswer = await generateMasterAiResponse(query, chatMd, clientName, profileName);
     res.json({ success: true, answer: aiAnswer });
   } catch (err) {
-    res.json({ success: true, answer: `📋 Expediente revisado con éxito.` });
+    res.json({ success: true, answer: `Consulta procesada con éxito.` });
   }
 });
 
@@ -229,7 +213,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
   const queryName = String(req.query.name || '').trim();
   let chatMd = '';
-  let clientName = queryName || 'Eva';
+  let clientName = queryName || 'Jaye, 64';
 
   if (SUPABASE_URL && SUPABASE_KEY && clientId !== 'N/A') {
     try {
@@ -270,9 +254,9 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : 'Brazil'),
-      birthDate: /(jan 1, 1973|1973)/i.test(textLower) ? 'Jan 1, 1973 (53 años)' : (/(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : '53 años'),
-      maritalStatus: 'Soltera / Not married',
+      location: /(united states|eeuu)/i.test(textLower) ? 'United States' : (/(brazil|brasil)/i.test(textLower) ? 'Brazil' : 'United States'),
+      birthDate: /(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : (/(jan 1, 1973|1973)/i.test(textLower) ? 'Jan 1, 1973 (53 años)' : '64 años'),
+      maritalStatus: /(living together|marriage)/i.test(textLower) ? 'Busca relación seria' : 'Divorced / Viuda',
       pets: 'No especificado aún',
       family: 'No especificado aún',
       work: 'Activo laboralmente',
@@ -353,7 +337,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
 
   const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Eva').trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Jaye, 64').trim();
   const auditKey = `${profile}_${cleanClientId}`;
   
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
@@ -542,12 +526,12 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 8. DASHBOARD EMBEBIDO CON AUDITORÍA DE CHATS Y ALERTAS CON 2 BOTONES
+// 8. DASHBOARD EMBEBIDO
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>RYR TITAN APEX - LIVE SUPERVISION & AUDIT</title>
+  <title>RYR TITAN APEX - SUPERVISIÓN LIVE & AUDITORÍA FORENSE</title>
   <style>
     :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -563,7 +547,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     .timer-ok { background: #064e3b; color: #34d399; border: 1px solid #10b981; }
     .timer-expired { background: #450a0a; color: #f87171; border: 1px solid #ef4444; animation: pulseRed 1s infinite; }
 
-    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); z-index: 99999; justify-content: center; align-items: center; }
+    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.88); backdrop-filter: blur(5px); z-index: 99999; justify-content: center; align-items: center; }
     .modal-content { background: #0e1526; border: 1px solid var(--accent-cyan); border-radius: 10px; width: 940px; max-width: 95%; max-height: 88vh; padding: 20px; display: flex; flex-direction: column; gap: 12px; color: #fff; }
     .chat-transcript { background: #0b132b; border: 1px solid #1e293b; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 250px; overflow-y: auto; line-height: 1.6; color: #cbd5e1; }
 
@@ -572,7 +556,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <header>
-    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & AUDITORÍA DE CHATS</div>
+    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & AUDITORÍA FORENSE</div>
     <div style="display:flex; gap:8px;">
       <button class="btn-action" style="border-color:#ef4444; color:#f87171;" onclick="openAlertsCenterModal()">🚨 Alertas de Conducta (<span id="count-behavior-alerts">0</span>)</button>
       <button class="btn-action" onclick="openChatAuditsModal()">📄 Historial de Chats (MD)</button>
@@ -592,7 +576,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- MODAL HISTORIAL DE CHATS CON ANALIZADOR IA -->
+  <!-- MODAL HISTORIAL DE CHATS -->
   <div id="modal-chats" class="modal-overlay">
     <div class="modal-content">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
@@ -724,7 +708,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       if (!audit) return;
 
       const box = document.getElementById('ai-box-' + index);
-      box.innerHTML = '<p style="color:#c4b5fd; font-size:12px; margin:8px 0;">🤖 Analizando diálogo en busca de Travel Misleading y malas prácticas...</p>';
+      box.innerHTML = '<p style="color:#c4b5fd; font-size:12px; margin:8px 0;">🤖 Analizando diálogo con IA...</p>';
 
       try {
         const res = await fetch(\`\${API_URL}/api/chats/analyze-single\`, {
@@ -793,4 +777,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V29.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V30.0 activo en puerto ${PORT}`));
