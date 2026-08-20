@@ -22,12 +22,11 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR DE IA GENERATIVO Y ESTRATEGA DE ENGANCHE
-async function generateIntelligentStrategyAndMessages(prompt, fullTranscript, clientName, profileName) {
-  const safeClient = (clientName && clientName !== 'Search' && clientName !== 'Cliente') ? clientName : 'Jaye, 64';
+// 1. MOTOR DE IA MODO HUMANIZADO /human (RESPUESTAS LIMPIAS Y NATURALES)
+async function generateHumanizedStrategyAndMessages(prompt, fullTranscript, clientName, profileName) {
+  const safeClient = (clientName && clientName !== 'Search' && clientName !== 'Cliente') ? clientName.split('\n')[0].trim() : 'Jaye, 64';
   const safeProfile = profileName || 'HORACIO';
 
-  // Si hay OpenAI / DeepSeek configurado en Render
   if (AI_API_KEY && AI_API_KEY.startsWith('sk-')) {
     try {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -38,58 +37,63 @@ async function generateIntelligentStrategyAndMessages(prompt, fullTranscript, cl
           messages: [
             {
               role: 'system',
-              content: `Eres el Asistente de IA y Estratega de Chat para la agencia RYR TITAN. Tu objetivo es ayudar al operador a mantener enganchado al cliente (${safeClient}), generar empatía y maximizar la interacción para el perfil ${safeProfile}. 
-              Cuando te pidan mensajes de enganche, respuestas o preguntas:
-              1. Da una breve explicación táctica en español de por qué ese mensaje funciona.
-              2. Proporciona 2 opciones de mensajes redactados en Inglés (listos para copiar y pegar) con su traducción al Español.`
+              content: `Eres el Asistente de IA de la agencia RYR TITAN operando en modo /human (alto nivel de empatía, calidez y seducción natural).
+              Estudia el diálogo con ${safeClient} para el perfil ${safeProfile}.
+              IMPORTANTE: Devuelve texto limpio, bien espaciado, sin caracteres extraños ni asteriscos dobles innecesarios.
+              Estructura:
+              1. Diagnóstico rápido de intención (1-2 oraciones).
+              2. Opción en Inglés (lista para copiar y enviar a Talkytimes).
+              3. Traducción al Español.`
             },
-            { role: 'user', content: `HISTORIAL:\n${fullTranscript}\n\nPETICIÓN DEL OPERADOR:\n${prompt}` }
+            { role: 'user', content: `HISTORIAL:\n${fullTranscript}\n\nPETICIÓN:\n${prompt}` }
           ],
           temperature: 0.7
         })
       });
       const data = await response.json();
       if (data.choices && data.choices[0]) {
-        return data.choices[0].message.content;
+        return data.choices[0].message.content.replace(/\*\*/g, '');
       }
     } catch (e) {}
   }
 
-  // MOTOR NATIVO GENERATIVO INTELIGENTE (Costo $0)
+  // MOTOR NATIVO /human (TEXTO PLANO Y ULTRA LIMPIO)
   const pLower = (prompt || '').toLowerCase();
-  let response = '';
+  let cleanResponse = '';
 
   if (/(llamar la atencion|llamar la atención|gancho|mensaje para|atraer|reconectar)/i.test(pLower)) {
-    response = `🧠 **Estrategia de Enganche para ${safeClient}:**
-Dado que ${safeClient} ha mostrado interés en la convivencia y en saber si están en la misma página, el mensaje debe validar sus emociones y proyectar seguridad y afecto.
+    cleanResponse = `💡 Estrategia para ${safeClient}:
+${safeClient} busca seguridad emocional y saber que ambos están en la misma página. Este mensaje valida sus sentimientos con cariño y abre la puerta a planear el futuro juntos.
 
-💬 **Opción 1 (Afectiva y Profunda):**
-🇺🇸 **English:** *"I've been thinking about what you said, and I love how open and honest you are with me. Being on the same page with you is everything I want. Tell me, what is the first thing we should do together once we meet?"*
-🇪🇸 **Español:** *"He estado pensando en lo que dijiste, y me encanta lo abierta y honesta que eres conmigo. Estar en la misma página contigo es todo lo que quiero. Dime, ¿qué es lo primero que deberíamos hacer juntos una vez que nos veamos?"*
+💬 Opción en Inglés (Copiar y Enviar):
+"I've been thinking about what you said, and I love how open and honest you are with me. Being on the same page with you is everything I want. Tell me, what is the first thing we should do together once we meet?"
 
-💬 **Opción 2 (Gancho Emocional para Carta):**
-🇺🇸 **English:** *"You have a way of touching my heart that words here can barely capture. I just wrote something special for you in a letter to explain how I really feel... go check it out!"*
-🇪🇸 **Español:** *"Tienes una forma de tocar mi corazón que las palabras aquí apenas pueden capturar. Acabo de escribirte algo especial en una carta para explicarte cómo me siento realmente... ¡ve a revisarla!"*`;
+💬 Traducción al Español:
+"He estado pensando en lo que dijiste, y me encanta lo abierta y honesta que eres conmigo. Estar en la misma página contigo es todo lo que quiero. Dime, ¿qué es lo primero que deberíamos hacer juntos una vez que nos veamos?"`;
   } else if (/(carta|letter|invitar|vender)/i.test(pLower)) {
-    response = `🧠 **Estrategia para Enviar Carta a ${safeClient}:**
+    cleanResponse = `💡 Estrategia de Carta para ${safeClient}:
 Aprovecha que ${safeClient} busca profundidad emocional para invitarla a leer una carta íntima.
 
-💬 **Mensaje de Gancho:**
-🇺🇸 **English:** *"I wanted to give you the detailed answer you deserve about our future, so I put my whole heart into a letter for you. Let me know when you read it, my love."*
-🇪🇸 **Español:** *"Quería darte la respuesta detallada que mereces sobre nuestro futuro, así que puse todo mi corazón en una carta para ti. Avísame cuando la leas, mi amor."*`;
-  } else {
-    response = `📋 **Análisis y Respuesta Táctica para ${safeClient}:**
-Basado en su conversación, ${safeClient} está muy interesada en formalizar la relación y busca que el perfil (${safeProfile}) le dé seguridad sobre el futuro.
+💬 Opción en Inglés (Copiar y Enviar):
+"I wanted to give you the detailed answer you deserve about our future, so I put my whole heart into a letter for you. Let me know when you read it, my love."
 
-💬 **Respuesta Sugerida:**
-🇺🇸 **English:** *"I appreciate your honesty so much. I want you to know you are my priority, and I see a real future with you. What do you need most from me right now to feel completely at ease?"*
-🇪🇸 **Español:** *"Aprecio mucho tu honestidad. Quiero que sepas que eres mi prioridad y veo un futuro real contigo. ¿Qué es lo que más necesitas de mí ahora mismo para sentirte totalmente tranquila?"*`;
+💬 Traducción al Español:
+"Quería darte la respuesta detallada que mereces sobre nuestro futuro, así que puse todo mi corazón en una carta para ti. Avísame cuando la leas, mi amor."`;
+  } else {
+    cleanResponse = `💡 Análisis para ${safeClient}:
+${safeClient} está muy interesada en formalizar la relación y busca que el perfil (${safeProfile}) le dé tranquilidad sobre el futuro.
+
+💬 Respuesta Recomendada en Inglés:
+"I appreciate your honesty so much. I want you to know you are my priority, and I see a real future with you. What do you need most from me right now to feel completely at ease?"
+
+💬 Traducción al Español:
+"Aprecio mucho tu honestidad. Quiero que sepas que eres mi prioridad y veo un futuro real contigo. ¿Qué es lo que más necesitas de mí ahora mismo para sentirte totalmente tranquila?"`;
   }
 
-  return response;
+  return cleanResponse;
 }
 
-// 2. ENDPOINT: ASISTENTE DE IA GENERATIVO
+// 2. ENDPOINT: ASISTENTE DE IA
 app.post('/api/intelligence/query', async (req, res) => {
   const { query, clientId, clientName, profileName, liveMarkdown } = req.body;
   const targetId = String(clientId || '').trim();
@@ -114,8 +118,8 @@ app.post('/api/intelligence/query', async (req, res) => {
     }
   }
 
-  const aiGeneratedResponse = await generateIntelligentStrategyAndMessages(query, chatMd, clientName, profileName);
-  res.json({ answer: aiGeneratedResponse });
+  const cleanHumanResponse = await generateHumanizedStrategyAndMessages(query, chatMd, clientName, profileName);
+  res.json({ answer: cleanHumanResponse });
 });
 
 // 3. ENDPOINT: EXPEDIENTE EN ESPAÑOL
@@ -123,7 +127,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
   const queryName = String(req.query.name || '').trim();
   let chatMd = '';
-  let clientName = queryName || 'Jaye, 64';
+  let clientName = queryName ? queryName.split('\n')[0].trim() : 'Jaye, 64';
 
   if (SUPABASE_URL && SUPABASE_KEY) {
     try {
@@ -133,16 +137,16 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
       const data = await resp.json();
       if (Array.isArray(data) && data[0]) {
         chatMd = data[0].markdown;
-        if (data[0].client_name && !['Search', 'Cliente'].includes(data[0].client_name)) clientName = data[0].client_name;
+        if (data[0].client_name && !['Search', 'Cliente'].includes(data[0].client_name)) clientName = data[0].client_name.split('\n')[0].trim();
       }
     } catch (e) {}
   }
 
   if (!chatMd) {
     for (let audit of recentChatAuditsRAM.values()) {
-      if (String(audit.clientId) === clientId || String(audit.client_id) === clientId) {
+      if (String(audit.clientId) === clientId || String(audit.client_id) === clientId || (queryName && String(audit.clientName).toLowerCase().includes(queryName.toLowerCase()))) {
         chatMd = audit.markdown;
-        if (audit.clientName && !['Search', 'Cliente'].includes(audit.clientName)) clientName = audit.clientName;
+        if (audit.clientName && !['Search', 'Cliente'].includes(audit.clientName)) clientName = audit.clientName.split('\n')[0].trim();
         break;
       }
     }
@@ -152,12 +156,12 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      location: /(united states|eeuu)/i.test(textLower) ? '📍 United States' : '📍 Ubicación en perfil',
-      birthDate: /(feb 15, 1962|1962)/i.test(textLower) ? '🎂 Feb 15, 1962 (64 años)' : '🎂 Edad en perfil',
-      maritalStatus: /(living together|marriage|boda|casar)/i.test(textLower) ? '💍 Busca convivencia y relación formal' : '👤 Soltero/a',
-      pets: /(perro|dog)/i.test(textLower) ? '🐶 Tiene perro' : '🐾 No especificado aún',
-      family: /(hijos|kids|son|daughter)/i.test(textLower) ? '👶 Tiene hijos' : 'No especificado aún',
-      work: /(retirado|retired)/i.test(textLower) ? '🏖️ Retirado / Jubilado' : '💼 Activo laboralmente',
+      location: /(united states|eeuu)/i.test(textLower) ? 'United States' : 'Ubicación en perfil',
+      birthDate: /(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : 'Edad en perfil',
+      maritalStatus: /(living together|marriage|boda|casar)/i.test(textLower) ? 'Busca convivencia y relación formal' : 'Divorced / Viuda',
+      pets: /(perro|dog)/i.test(textLower) ? 'Tiene perro' : 'No especificado aún',
+      family: /(hijos|kids|son|daughter)/i.test(textLower) ? 'Tiene hijos' : 'No especificado aún',
+      work: /(retirado|retired)/i.test(textLower) ? 'Retirado / Jubilado' : 'Activo laboralmente',
       summary: `Expediente de ${clientName} analizado y disponible en español.`
     };
     return res.json({ success: true, dossier });
@@ -199,7 +203,7 @@ app.post('/api/telemetry', (req, res) => {
   res.json({ success: true });
 });
 
-// 5. CONSOLIDADO EN VIVO PARA EL MONITOR (CON SEGUNDEROS DE CADA CHAT)
+// 5. CONSOLIDADO EN VIVO PARA EL MONITOR
 app.get('/api/telemetry/live', (req, res) => {
   const now = Date.now();
   const operatorsMap = new Map();
@@ -271,7 +275,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
 
   const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName : 'Jaye, 64').trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Jaye, 64').trim();
   const auditKey = `${profile}_${cleanClientId}`;
   
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
@@ -322,7 +326,7 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 7. DASHBOARD EMBEBIDO CON SEGUNDEROS EN VIVO PARA SUPERVISORES
+// 7. DASHBOARD EMBEBIDO
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -336,14 +340,11 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 11px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; }
     .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
     .operator-card { background: var(--bg-card); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; }
-    
-    /* FILA DE TEMPORIZADORES EN VIVO EN EL MONITOR */
     .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
     .live-timers-container { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
     .live-chat-timer-badge { font-size: 10px; font-weight: bold; font-family: monospace; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
     .timer-ok { background: #064e3b; color: #34d399; border: 1px solid #10b981; }
     .timer-expired { background: #450a0a; color: #f87171; border: 1px solid #ef4444; animation: pulseRed 1s infinite; }
-
     .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); z-index: 99999; justify-content: center; align-items: center; }
     .modal-content { background: #0e1526; border: 1px solid var(--accent-cyan); border-radius: 10px; width: 850px; max-width: 95%; max-height: 88vh; padding: 20px; display: flex; flex-direction: column; gap: 12px; color: #fff; }
     .chat-transcript { background: #0b132b; border: 1px solid #1e293b; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 250px; overflow-y: auto; color: #cbd5e1; }
@@ -359,7 +360,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     </div>
   </header>
   <div id="operators-grid" class="grid-operators"></div>
-
   <div id="modal-chats" class="modal-overlay">
     <div class="modal-content">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
@@ -369,7 +369,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <div id="chat-audits-list" style="overflow-y:auto; flex:1;"></div>
     </div>
   </div>
-
   <div id="modal-banned" class="modal-overlay">
     <div class="modal-content" style="width:550px;">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
@@ -383,10 +382,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <div id="banned-words-list" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;"></div>
     </div>
   </div>
-
   <script>
     const API_URL = window.location.origin;
-
     async function fetchLive() {
       try {
         const res = await fetch(\`\${API_URL}/api/telemetry/live\`);
@@ -419,7 +416,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         \`).join('');
       } catch (e) {}
     }
-
     async function openChatAuditsModal() {
       document.getElementById('modal-chats').style.display = 'flex';
       const res = await fetch(\`\${API_URL}/api/chats/audits\`);
@@ -430,7 +426,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           <div class="chat-transcript">\${a.markdown}</div>
         </div>\`).join('');
     }
-
     async function openBannedWordsModal() {
       document.getElementById('modal-banned').style.display = 'flex';
       const res = await fetch(\`\${API_URL}/api/banned-words\`);
@@ -440,7 +435,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           \${w} <span style="cursor:pointer; font-weight:bold; margin-left:4px;" onclick="delWord('\${w}')">✕</span>
         </div>\`).join('');
     }
-
     async function addBannedWord() {
       const word = document.getElementById('input-new-word').value.trim();
       if (!word) return;
@@ -448,12 +442,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       document.getElementById('input-new-word').value = '';
       openBannedWordsModal();
     }
-
     async function delWord(word) {
       await fetch(\`\${API_URL}/api/banned-words/delete\`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word }) });
       openBannedWordsModal();
     }
-
     function closeModals() { document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none'); }
     setInterval(fetchLive, 2000);
     fetchLive();
@@ -465,4 +457,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V16.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V17.0 (/human Mode) activo en puerto ${PORT}`));
