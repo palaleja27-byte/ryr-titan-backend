@@ -1,3 +1,4 @@
+
 /**
  * ============================================================================
  * RYR TITAN APEX - BACKEND CORE & CO-PILOTO ANALÍTICO IA
@@ -5,7 +6,7 @@
  * Stack: Node.js, Express, Groq SDK, Supabase
  */
 
-// 1. CARGA SEGURA DE MÓDULOS (A prueba de fallos)
+// 1. CARGA SEGURA DE MÓDULOS
 let dotenv, createClient, Groq;
 
 try { require('dotenv').config(); } catch (e) {}
@@ -14,13 +15,13 @@ try {
     const supabasePkg = require('@supabase/supabase-js');
     createClient = supabasePkg.createClient;
 } catch (e) {
-    console.warn('⚠️ [@supabase/supabase-js]: No instalado aún en node_modules.');
+    console.warn('⚠️ [@supabase/supabase-js]: No instalado en node_modules.');
 }
 
 try {
     Groq = require('groq-sdk');
 } catch (e) {
-    console.warn('⚠️ [groq-sdk]: No instalado aún en node_modules.');
+    console.warn('⚠️ [groq-sdk]: No instalado en node_modules.');
 }
 
 const express = require('express');
@@ -29,16 +30,15 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Configuración de Middlewares
+// Middlewares
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // ==========================================
-// 2. INICIALIZACIÓN DE SERVICIOS EXTERNOS
+// 2. CONEXIONES (SUPABASE Y GROQ)
 // ==========================================
 
-// Supabase
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 let supabase = null;
@@ -46,13 +46,12 @@ let supabase = null;
 if (createClient && SUPABASE_URL && SUPABASE_KEY) {
     try {
         supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-        console.log('✅ [Supabase]: Conexión establecida.');
+        console.log('✅ [Supabase]: Conectado exitosamente.');
     } catch (err) {
         console.warn('⚠️ [Supabase Warn]:', err.message);
     }
 }
 
-// Groq
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 let groq = null;
 if (Groq && GROQ_API_KEY) {
@@ -64,9 +63,7 @@ if (Groq && GROQ_API_KEY) {
     }
 }
 
-// ==========================================
-// 3. AUTO-DISCOVERY DE MODELOS GROQ
-// ==========================================
+// Auto-selección inteligente de modelo Groq
 let cachedGroqModel = null;
 let lastModelCheck = 0;
 
@@ -97,7 +94,7 @@ async function autoDiscoverGroqModel() {
             if (activeModels.includes(preferred)) {
                 cachedGroqModel = preferred;
                 lastModelCheck = now;
-                console.log(`🤖 [Groq Model Auto-Selected]: ${cachedGroqModel}`);
+                console.log(`🤖 [Groq Model]: ${cachedGroqModel}`);
                 return cachedGroqModel;
             }
         }
@@ -116,11 +113,12 @@ async function autoDiscoverGroqModel() {
 }
 
 // ==========================================
-// 4. MEMORIA VOLÁTIL / TIEMPO REAL
+// 3. MEMORIA EN TIEMPO REAL
 // ==========================================
 const memoryStore = {
     operators: {},
     chatMarkdownLogs: {},
+    clientProfiles: {},
     alerts: [],
     fines: [],
     metrics: {
@@ -132,7 +130,7 @@ const memoryStore = {
 
 const FINE_VALUE_COP = 10000;
 
-// Reglas de Travel Misleading
+// Reglas Heurísticas Travel Misleading
 const FORBIDDEN_TRAVEL_PATTERNS = [
     /voy a ir a verte/i,
     /te ir[eé] a visitar/i,
@@ -162,9 +160,10 @@ function analyzeTravelMisleadingHeuristic(text) {
 }
 
 // ==========================================
-// 5. RUTAS & CONTROLADORES
+// 4. RUTAS DEL API
 // ==========================================
 
+// Health Check
 app.get('/', (req, res) => {
     res.json({
         service: 'RYR Titan Apex Core',
@@ -175,6 +174,63 @@ app.get('/', (req, res) => {
     });
 });
 
+// ------------------------------------------
+// EXPEDIENTE DEL CLIENTE (MÚLTIPLES ALIAS PARA LA EXTENSIÓN)
+// ------------------------------------------
+const handleGetExpediente = async (req, res) => {
+    try {
+        const clientId = req.params.clientId;
+        if (!clientId) {
+            return res.status(400).json({ success: false, error: 'clientId requerido' });
+        }
+
+        let chatMarkdown = memoryStore.chatMarkdownLogs[clientId] || '';
+        let clientData = memoryStore.clientProfiles[clientId] || {};
+
+        // Consultar Supabase si no está en RAM
+        if (supabase) {
+            const { data } = await supabase
+                .from('chat_audits')
+                .select('*')
+                .eq('client_id', String(clientId))
+                .order('last_updated', { ascending: false })
+                .limit(1);
+
+            if (data && data.length > 0) {
+                chatMarkdown = data[0].chat_markdown || chatMarkdown;
+                clientData = {
+                    name: data[0].client_name || clientData.name,
+                    ...clientData
+                };
+            }
+        }
+
+        return res.json({
+            success: true,
+            clientId,
+            name: clientData.name || `Usuario_${clientId}`,
+            location: clientData.location || 'United States',
+            age: clientData.age || 'No especificada',
+            birthdate: clientData.birthdate || 'No especificado',
+            relationship: clientData.relationship || 'Not married',
+            plans: clientData.plans || 'Chat activo',
+            synced: true,
+            chat_markdown: chatMarkdown,
+            historyLength: chatMarkdown.length
+        });
+    } catch (err) {
+        console.error('❌ [Expediente Error]:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+};
+
+app.get('/api/intelligence/user/:clientId', handleGetExpediente);
+app.get('/api/intelligence/expediente/:clientId', handleGetExpediente);
+app.get('/api/expediente/:clientId', handleGetExpediente);
+
+// ------------------------------------------
+// TELEMETRÍA DE OPERADORES
+// ------------------------------------------
 app.post('/api/telemetry', (req, res) => {
     const { operatorId, operatorName, activeChatId, chatOpenTime, isTyping } = req.body;
     if (!operatorId) return res.status(400).json({ error: 'operatorId requerido' });
@@ -192,6 +248,9 @@ app.post('/api/telemetry', (req, res) => {
     res.json({ success: true, timestamp: now });
 });
 
+// ------------------------------------------
+// AUDITORÍA DE MENSAJES & INFRACCIONES
+// ------------------------------------------
 app.post('/api/audit', async (req, res) => {
     try {
         const {
@@ -199,6 +258,7 @@ app.post('/api/audit', async (req, res) => {
             operatorName,
             clientId,
             clientName,
+            clientData,
             messageText,
             sender,
             timestamp,
@@ -209,6 +269,14 @@ app.post('/api/audit', async (req, res) => {
 
         memoryStore.metrics.totalAudits++;
 
+        if (clientData) {
+            memoryStore.clientProfiles[clientId] = {
+                ...memoryStore.clientProfiles[clientId],
+                ...clientData,
+                name: clientName || clientData.name
+            };
+        }
+
         if (chatMarkdownFull) {
             memoryStore.chatMarkdownLogs[clientId] = chatMarkdownFull;
         } else if (messageText) {
@@ -216,6 +284,7 @@ app.post('/api/audit', async (req, res) => {
             memoryStore.chatMarkdownLogs[clientId] = (memoryStore.chatMarkdownLogs[clientId] || '') + formatted;
         }
 
+        // Detección heurística de multas
         let infraction = null;
         if (sender && (sender.toLowerCase().includes('operador') || sender.toLowerCase().includes('yo') || sender.toLowerCase().includes('agent'))) {
             const heuristic = analyzeTravelMisleadingHeuristic(messageText);
@@ -259,6 +328,7 @@ app.post('/api/audit', async (req, res) => {
             }
         }
 
+        // Sincronización con Supabase
         if (supabase && (chatMarkdownFull || messageText)) {
             supabase.from('chat_audits').upsert([{
                 client_id: String(clientId),
@@ -283,15 +353,19 @@ app.post('/api/audit', async (req, res) => {
     }
 });
 
-// CO-PILOTO ANALÍTICO IA (ESTILO CHATGPT / SIN ROLEPLAY)
-app.post('/api/intelligence/query', async (req, res) => {
+// -----------------------------------------------------------
+// CO-PILOTO & ANALISTA IA (CHATGPT STYLE - CERO ROLEPLAY)
+// -----------------------------------------------------------
+app.post(['/api/intelligence/query', '/api/intelligence/ask', '/api/copilot'], async (req, res) => {
     try {
-        const { clientId, query, clientData, operatorName } = req.body;
+        const { clientId, query, prompt, question, message, clientData, operatorName } = req.body;
+        const userQuery = query || prompt || question || message;
 
-        if (!clientId || !query) {
-            return res.status(400).json({ success: false, error: 'clientId y query son requeridos.' });
+        if (!clientId || !userQuery) {
+            return res.status(400).json({ success: false, error: 'clientId y la pregunta son requeridos.' });
         }
 
+        // 1. Obtener historial acumulado del cliente
         let fullChatHistory = memoryStore.chatMarkdownLogs[clientId] || '';
 
         if (!fullChatHistory && supabase) {
@@ -308,36 +382,41 @@ app.post('/api/intelligence/query', async (req, res) => {
             }
         }
 
+        // 2. Construir ficha técnica
+        const effectiveClientData = clientData || memoryStore.clientProfiles[clientId] || {};
         const clientContext = `
-================ INFORMACIÓN DEL CLIENTE (ID: ${clientId}) ================
-- Nombre / Perfil: ${clientData?.name || clientData?.userName || 'No especificado'}
-- Ubicación: ${clientData?.location || 'No especificada'}
-- Edad / Nacimiento: ${clientData?.age || clientData?.birthdate || 'No especificada'}
-- Estado Civil: ${clientData?.relationship || 'No especificado'}
-- Notas previas: ${clientData?.interests || 'No especificados'}
+================ EXPEDIENTE DEL CLIENTE (ID: ${clientId}) ================
+- Nombre / Perfil: ${effectiveClientData.name || effectiveClientData.userName || 'No especificado'}
+- Ubicación: ${effectiveClientData.location || 'No especificada'}
+- Edad / Fecha Nacimiento: ${effectiveClientData.age || effectiveClientData.birthdate || 'No especificada'}
+- Estado Civil / Intenciones: ${effectiveClientData.relationship || 'No especificado'}
+- Notas / Detalles: ${effectiveClientData.interests || 'No especificados'}
 
-================ HISTORIAL DE CONVERSACIONES REALES ================
-${fullChatHistory ? fullChatHistory : 'No hay mensajes previos registrados para este cliente.'}
+================ HISTORIAL COMPLETO DE CONVERSACIONES REALES ================
+${fullChatHistory ? fullChatHistory : 'Sin registros de chat previos.'}
 `;
 
+        // 3. System Prompt de Alta Precisión Analítica
         const systemPrompt = `
 Eres el **Analista de Inteligencia y Co-Piloto Estratégico RYR Titan Apex**.
-Tu rol es asistir a un OPERADOR HUMANO resolviendo dudas puntuales, analizando al cliente y brindando soporte estratégico.
+Tu usuario es un OPERADOR HUMANO que necesita análisis riguroso y directo sobre el cliente con el que interactúa.
 
-🚨 REGLAS ESTRICTAS:
-1. **PROHIBIDO EL ROLEPLAY / SIMULAR CHATS**: NUNCA inventes conversaciones ficticias como "Operador: ..." o "${clientData?.name || 'Cliente'}: ...". Eres un asesor analítico que le responde directamente al operador.
-2. **RAZONAMIENTO DIRECTO (ESTILO CHATGPT)**:
-   - Si preguntan si tiene hijos, revisa el historial y responde con hechos (ej: "No tiene hijos humanos. Mencionó que cuida a su madre y tiene 2 gatos a los que trata como sus hijos.").
-   - Si piden una sugerencia de mensaje, redacta una propuesta atractiva con datos reales del chat sin violar la norma de Travel Misleading.
-3. **CERO PLANTILLAS**: Respuestas fundamentadas y directas.
-4. **HONESTIDAD**: Si no se encuentra el dato en el historial, acláralo expresamente.
-5. **IDIOMA**: Español profesional y conciso.
+🚨 DIRECTIVAS ESTRICTAS:
+1. **PROHIBIDO EL ROLEPLAY O SIMULAR CONVERSACIONES**: NUNCA respondas con formatos ficticios como "Operador: ..." o "Cliente: ...". Eres un asesor analítico que le habla directamente al operador.
+2. **RESPUESTAS CONCRETAS Y RAZONADAS (ESTILO CHATGPT)**:
+   - Si preguntan datos biográficos (hijos, trabajo, mascotas), búscalo en el historial y responde con hechos y citas reales (ej: "No tiene hijos propios. En el chat comentó que cuida a su madre y tiene 2 gatos a los que trata como sus hijos.").
+   - Si piden una sugerencia de mensaje, redacta una propuesta atractiva y natural usando datos reales del cliente sin caer jamás en "Travel Misleading" (cero promesas de visitas o viajes).
+3. **CERO PLANTILLAS GENÉRICAS**: Todo debe ser fundamentado en el historial real.
+4. **SINCERIDAD**: Si la información no está en el chat, indícalo claramente: "En el historial actual no se menciona información sobre [tema]."
+5. **IDIOMA**: Responde siempre en Español claro y profesional.
 `;
 
         if (!groq) {
             return res.json({
                 success: true,
-                reply: 'El módulo Groq SDK no está configurado o inicializado en el servidor.'
+                reply: 'El servicio de IA (Groq) no está inicializado en el servidor. Verifica la variable GROQ_API_KEY.',
+                response: 'El servicio de IA (Groq) no está inicializado en el servidor.',
+                answer: 'El servicio de IA (Groq) no está inicializado en el servidor.'
             });
         }
 
@@ -347,27 +426,39 @@ Tu rol es asistir a un OPERADOR HUMANO resolviendo dudas puntuales, analizando a
             model: groqModel,
             messages: [
                 { role: 'system', content: systemPrompt },
-                { role: 'user', content: `${clientContext}\n\nPREGUNTA DEL OPERADOR (${operatorName || 'Operador'}): "${query}"\n\nResponde directamente como consultor analítico:` }
+                { role: 'user', content: `${clientContext}\n\nCONSULTA DEL OPERADOR (${operatorName || 'Operador'}): "${userQuery}"\n\nResponde directamente como consultor analítico:` }
             ],
             temperature: 0.2,
             max_tokens: 700
         });
 
-        const reply = completion.choices[0]?.message?.content || 'No se pudo generar una respuesta analítica.';
+        const finalReply = (completion.choices[0]?.message?.content || 'No se pudo generar una respuesta analítica.').trim();
 
+        // Enviamos la respuesta con múltiples alias de propiedad para compatibilidad total con la extensión
         return res.json({
             success: true,
             modelUsed: groqModel,
-            reply: reply.trim()
+            reply: finalReply,
+            response: finalReply,
+            answer: finalReply,
+            message: finalReply,
+            text: finalReply
         });
 
     } catch (err) {
         console.error('❌ [Intelligence Query Error]:', err.message);
-        return res.status(500).json({ success: false, error: err.message });
+        return res.status(500).json({
+            success: false,
+            error: err.message,
+            reply: `Error al procesar la consulta: ${err.message}`,
+            response: `Error al procesar la consulta: ${err.message}`
+        });
     }
 });
 
-// DASHBOARD
+// ------------------------------------------
+// MONITOR & DASHBOARD HTML
+// ------------------------------------------
 app.get('/api/dashboard-data', (req, res) => {
     const now = Date.now();
     const activeOperators = Object.values(memoryStore.operators).filter(op => (now - op.lastSeen) < 120000);
@@ -464,11 +555,11 @@ app.get('/dashboard', (req, res) => {
 });
 
 // ==========================================
-// 6. ARRANQUE
+// 5. ARRANQUE DEL SERVIDOR
 // ==========================================
 app.listen(PORT, async () => {
     console.log(`====================================================`);
-    console.log(`🚀 RYR TITAN APEX BACKEND INICIADO EN PUERTO: ${PORT}`);
+    console.log(`🚀 RYR TITAN APEX BACKEND EN PUERTO: ${PORT}`);
     console.log(`📊 Dashboard: http://localhost:${PORT}/dashboard`);
     console.log(`====================================================`);
     await autoDiscoverGroqModel();
