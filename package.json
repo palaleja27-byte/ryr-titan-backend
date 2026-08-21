@@ -1,13 +1,15 @@
 {
   "name": "ryr-titan-backend",
   "version": "3.0.0",
-  "description": "Backend y Dashboard de Supervisión RYR TITAN APEX",
+  "description": "RYR Titan Apex Backend & AI Copilot",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
     "cors": "^2.8.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "groq-sdk": "^0.7.0"
   }
 }
