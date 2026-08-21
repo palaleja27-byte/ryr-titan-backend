@@ -6,7 +6,13 @@
  * Diseñado para despliegue en Render
  */
 
-require('dotenv').config();
+// Carga segura de dotenv (si no está instalado en Render, no romperá la app)
+try {
+    require('dotenv').config();
+} catch (e) {
+    // En Render las variables de entorno se leen directo de process.env
+}
+
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
@@ -374,7 +380,6 @@ Tu rol es asistir a un OPERADOR HUMANO resolviendo dudas puntuales, analizando e
 // API MONITOR DATA & DASHBOARD HTML
 // ------------------------------------------
 app.get('/api/dashboard-data', (req, res) => {
-    // Limpieza de operadores inactivos (> 2 minutos sin latido)
     const now = Date.now();
     const activeOperators = Object.values(memoryStore.operators).filter(op => (now - op.lastSeen) < 120000);
 
@@ -488,7 +493,6 @@ app.get('/dashboard', (req, res) => {
                 document.getElementById('val-fines').innerText = '$' + (data.metrics.totalFinesCOP || 0).toLocaleString('es-CO');
                 document.getElementById('val-alerts').innerText = data.metrics.totalAlerts || 0;
 
-                // Operadores
                 const opTable = document.getElementById('tbl-operators');
                 if (data.operators && data.operators.length > 0) {
                     opTable.innerHTML = data.operators.map(op => \`
@@ -502,7 +506,6 @@ app.get('/dashboard', (req, res) => {
                     opTable.innerHTML = '<tr><td colspan="3" style="text-align:center; color:#64748b;">No hay operadores activos en este momento.</td></tr>';
                 }
 
-                // Multas
                 const fineTable = document.getElementById('tbl-fines');
                 if (data.fines && data.fines.length > 0) {
                     fineTable.innerHTML = data.fines.slice(0, 10).map(f => \`
@@ -535,6 +538,5 @@ app.listen(PORT, async () => {
     console.log(`📊 Dashboard en vivo: http://localhost:${PORT}/dashboard`);
     console.log(`====================================================`);
     
-    // Auto-detección inicial de modelo Groq
     await autoDiscoverGroqModel();
 });
