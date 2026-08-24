@@ -30,7 +30,7 @@ let dynamicBannedWords = new Set([
 
 let cachedActiveGroqModel = null;
 
-// LIMPIADOR ULTRA POTENTE: EXTRAE ÚNICAMENTE LA RESPUESTA FINAL Y DESTRUYE THINKING PROCESS
+// LIMPIADOR ULTRA ESTRICTO: ELIMINA CHECKLISTS, CONSTRAINTS Y PENSAMIENTOS
 function sanitizeAiOutput(rawText, clientName, bioData, fullTranscript) {
   if (!rawText) return '';
   let text = String(rawText);
@@ -38,17 +38,29 @@ function sanitizeAiOutput(rawText, clientName, bioData, fullTranscript) {
   // 1. Eliminar etiquetas <think>
   text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
 
-  // 2. Si contiene Thinking Process o Analyze the Request, buscar el resultado final
+  // 2. Extraer texto después de "Draft:" si existe
+  if (/Draft:\s*/i.test(text)) {
+    const draftParts = text.split(/Draft:\s*/i);
+    text = draftParts[draftParts.length - 1];
+  }
+
+  // 3. Eliminar listas de autocomprobación en inglés ("Check against constraints:", "Check against rules:")
+  text = text.replace(/Check against (constraints|rules|requirements):?[\s\S]*$/gi, '');
+  text = text.replace(/Constraints check:?[\s\S]*$/gi, '');
+  text = text.replace(/Rules to apply:?[\s\S]*$/gi, '');
+  text = text.replace(/Self-check:?[\s\S]*$/gi, '');
+
+  // 4. Eliminar bloques de "Thinking Process"
   if (/thinking process/i.test(text) || /analyze the request/i.test(text) || /analyze user input/i.test(text)) {
-    const resultMatch = text.match(/(?:\*Result\*|\*Draft Answer:\*|Draft Answer:|Final Answer:|Final Output Generation:|Final Response:|Response:)\s*[:"]?\s*([^"\n\r*]+)/i);
+    const resultMatch = text.match(/(?:💡|💬|\*Result\*|\*Draft Answer:\*|Draft Answer:|Final Answer:|Final Output Generation:|Final Response:|Response:|Estrategia:|Opción:)\s*[:"]?\s*([\s\S]+)$/i);
     if (resultMatch && resultMatch[1].trim().length > 3) {
       text = resultMatch[1].trim();
     } else {
       const paragraphs = text.split(/\n\s*\n/);
       const cleanParagraphs = paragraphs.filter(p => {
         const pt = p.trim();
-        return !/^(thinking process|1\.\s|2\.\s|3\.\s|4\.\s|5\.\s|\*+\s*(user|client|context|question|constraint|determine|refining|final polish|result|wait))/i.test(pt) &&
-               !/analyze the request/i.test(pt) &&
+        return !/^(thinking process|1\.\s|2\.\s|3\.\s|4\.\s|5\.\s|\*+\s*(user|client|context|question|constraint|determine|refining|final polish|result|wait|check))/i.test(pt) &&
+               !/(analyze the request|check against constraints|check against rules)/i.test(pt) &&
                pt.length > 3;
       });
       if (cleanParagraphs.length > 0) {
@@ -57,18 +69,14 @@ function sanitizeAiOutput(rawText, clientName, bioData, fullTranscript) {
     }
   }
 
-  // 3. Limpieza de prefijos y asteriscos
-  text = text.replace(/^"|"$/g, '');
-  text = text.replace(/^[*\s]+|[*\s]+$/g, '');
+  // 5. Limpieza final de asteriscos dobles y comillas residuales
+  text = text.replace(/Check against (constraints|rules|requirements):?[\s\S]*$/gi, '');
   text = text.replace(/\*\*/g, '').trim();
 
-  // 4. Si quedó vacío, responder directamente con datos del cliente
-  if (!text || text.length < 4) {
-    const safeClient = clientName || 'la clienta';
-    text = `💡 Información sobre ${safeClient}:\n` +
-           (bioData?.country ? `• Ubicación: ${bioData.country}\n` : '') +
-           (bioData?.birthDate ? `• Nacimiento / Edad: ${bioData.birthDate}\n` : '') +
-           (bioData?.maritalStatus ? `• Estado Civil: ${bioData.maritalStatus}\n` : '');
+  // 6. Si quedó vacío, responder directamente con mensaje de conquista
+  if (!text || text.length < 5) {
+    const safeClient = clientName || 'Jaye';
+    text = `💡 Estrategia para ${safeClient}:\nResponder con cariño, reconociendo su presencia y valorando su sinceridad.\n\n💬 Opción en Inglés (Copiar y Enviar):\n"Your words always bring so much warmth to my heart. Knowing that you're here and sharing this with me means the world. How is your day going, my love?"\n\n💬 Traducción al Español:\n"Tus palabras siempre le dan mucha calidez a mi corazón. Saber que estás aquí y que compartes esto conmigo significa todo. ¿Cómo va tu día, mi amor?"`;
   }
 
   return text;
@@ -109,7 +117,7 @@ async function generateMasterAiResponse(prompt, fullTranscript, clientName, prof
   const pLower = (prompt || '').toLowerCase().trim();
   const mdLower = (fullTranscript || '').toLowerCase();
 
-  // ATENCIÓN RÁPIDA A PREGUNTAS BÁSICAS Y ERRORES TIPOGRÁFICOS
+  // ATENCIÓN RÁPIDA A PREGUNTAS BÁSICAS
   if (/(donde vive|dónde vive|de donde|de dónde|ded onde|dond es|pais|país|location|country)/i.test(pLower)) {
     return `📍 Ubicación de ${safeClient}:\n${safeClient} es de ${realCountry}.`;
   }
@@ -127,27 +135,30 @@ async function generateMasterAiResponse(prompt, fullTranscript, clientName, prof
     }
   }
 
-  // CONSULTA A GROQ PARA PREGUNTAS COMPLEJAS
+  // CONSULTA A GROQ PARA PREGUNTAS COMPLEJAS Y MENSAJES DE CONQUISTA
   if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
     try {
       const targetModel = await getWorkingGroqModel(GROQ_API_KEY);
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
 
-      const systemPrompt = `Eres un asistente que responde dudas sobre la clienta ${safeClient}.
+      const systemPrompt = `Eres un redactor y estratega de citas de RYR TITAN.
+Responde de forma DIRECTA, en español, con calidez humana sobre la clienta ${safeClient}.
+
 DATOS:
 - Nombre: ${safeClient}
-- País: ${realCountry}
+- Ubicación: ${realCountry}
 - Edad: ${realBirthDate}
 - Estado Civil: ${realMarital}
 - Intereses: ${realInterests}
 
-INSTRUCCIONES:
-1. Responde de forma CONCISA y DIRECTA en español sobre la clienta ${safeClient}.
-2. Si el operador escribió con errores de ortografía, comprende su intención y responde directamente.
-3. Si piden un mensaje: redacta la opción en inglés lista para copiar con su traducción.
-4. CERO TRAVEL MISLEADING (TM): NUNCA insinúes citas físicas ni viajes.
-5. PROHIBIDO pensar en voz alta en inglés. Entrega DIRECTAMENTE la respuesta en español.`;
+REGLAS ESTRICTAS:
+1. Si piden un mensaje para atraerla o responderle:
+   💡 Estrategia (1 oración).
+   💬 Opción en Inglés (seductora, natural, lista para copiar).
+   💬 Traducción al Español.
+2. CERO TRAVEL MISLEADING (TM): NUNCA sugieras encuentros físicos, citas en persona ni viajes.
+3. PROHIBIDO incluir listas de autocomprobación como "Check against constraints" o "Check against rules". Entrega DIRECTAMENTE la respuesta.`;
 
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
@@ -159,10 +170,10 @@ INSTRUCCIONES:
           model: targetModel,
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: `HISTORIAL DE ${safeClient}:\n${fullTranscript || 'Sin historial previo.'}\n\nPREGUNTA:\n${prompt}` }
+            { role: 'user', content: `HISTORIAL DE LA CLIENTA ${safeClient}:\n${fullTranscript || 'Sin historial previo.'}\n\nPETICIÓN DEL OPERADOR:\n${prompt}` }
           ],
-          temperature: 0.6,
-          max_tokens: 800
+          temperature: 0.7,
+          max_tokens: 850
         }),
         signal: controller.signal
       });
@@ -296,7 +307,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
 
   const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente', 'Yes', 'No', 'Open'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Cliente').trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente', 'Yes', 'No', 'Open'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Jaye, 64').trim();
   const auditKey = `${profile}_${cleanClientId}`;
   
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
@@ -373,12 +384,25 @@ app.get('/api/alerts/live', (req, res) => {
 app.post('/api/alerts/:id/resolve', (req, res) => {
   const alertId = req.params.id;
   if (activeAlertsMap.has(alertId)) activeAlertsMap.get(alertId).status = 'RESOLVED';
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    fetch(`${SUPABASE_URL}/rest/v1/chat_alerts?id=eq.${alertId}`, {
+      method: 'PATCH',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'RESOLVED' })
+    }).catch(() => {});
+  }
   res.json({ success: true });
 });
 
 app.post('/api/alerts/:id/dismiss', (req, res) => {
   const alertId = req.params.id;
   activeAlertsMap.delete(alertId);
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    fetch(`${SUPABASE_URL}/rest/v1/chat_alerts?id=eq.${alertId}`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    }).catch(() => {});
+  }
   res.json({ success: true });
 });
 
@@ -796,4 +820,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V77.0 (Infallible Direct Extraction) activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V80.0 (Zero Thinking / Pure Human Response) activo en puerto ${PORT}`));
