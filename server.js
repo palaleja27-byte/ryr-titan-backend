@@ -16,9 +16,8 @@ const OPENAI_API_KEY = cleanEnv(process.env.OPENAI_API_KEY);
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 
-// CONFIGURACIÓN GLOBAL DEL ADMINISTRADOR
 let globalSystemSettings = {
-  invasiveModalEnabled: true // El admin puede apagarlo o encenderlo en tiempo real
+  invasiveModalEnabled: true
 };
 
 const liveTelemetryMap = new Map();
@@ -69,10 +68,10 @@ function sanitizeAiOutput(rawText, clientName, bioData, fullTranscript, prompt) 
       return `💼 Profesión de ${safeClient}: Menciona estar activa laboralmente.`;
     }
     if (/(donde vive|de donde|pais)/i.test(pLower)) {
-      return `📍 Ubicación de ${safeClient}: Es de ${bioData?.country || 'United States'}.`;
+      return `📍 Ubicación de ${safeClient}: Es de ${bioData?.country || 'Ubicación en perfil'}.`;
     }
 
-    text = `💡 Información sobre ${safeClient}:\nReside en ${bioData?.country || 'United States'}, tiene ${bioData?.birthDate || '64 años'}.`;
+    text = `💡 Información sobre ${safeClient}:\nReside en ${bioData?.country || 'Ubicación en perfil'}, tiene ${bioData?.birthDate || 'Edad en perfil'}.`;
   }
 
   return text;
@@ -104,11 +103,11 @@ async function getWorkingGroqModel(apiKey) {
 
 // 2. MOTOR DE IA COGNITIVO
 async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName, bioData) {
-  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Jaye, 64';
-  const realCountry = bioData?.country || 'United States';
-  const realBirthDate = bioData?.birthDate || 'Feb 15, 1962 (64 años)';
-  const realMarital = bioData?.maritalStatus || 'Divorced / Viuda';
-  const realInterests = bioData?.interests || 'Traveling, Hockey';
+  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'la clienta';
+  const safeProfile = profileName || 'HORACIO';
+  const realCountry = bioData?.country || 'Ubicación en perfil';
+  const realBirthDate = bioData?.birthDate || 'Edad en perfil';
+  const realMarital = bioData?.maritalStatus || 'En perfil';
 
   const pLower = (prompt || '').toLowerCase().trim();
   const mdLower = (fullTranscript || '').toLowerCase();
@@ -134,14 +133,6 @@ async function generateMasterAiResponse(prompt, fullTranscript, clientName, prof
     if (/(estado civil|casada|soltera|divorciada|viuda|pareja)/i.test(pLower)) {
       return `💍 Estado Civil de ${safeClient}: Figura como ${realMarital}.`;
     }
-    if (/(profesion|profesión|trabajo|trabaja|job|work|ocupacion|ocupación)/i.test(pLower)) {
-      if (/(pacientes|patients|hospital|nurse|salud)/i.test(mdLower)) {
-        return `💼 Profesión de ${safeClient}: Trabaja en el área de salud / atención médica con pacientes.`;
-      } else if (/(retirado|retired|jubilada)/i.test(mdLower)) {
-        return `💼 Profesión de ${safeClient}: Está retirada / jubilada.`;
-      }
-      return `💼 Profesión de ${safeClient}: Menciona estar activa laboralmente.`;
-    }
   }
 
   if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
@@ -150,19 +141,18 @@ async function generateMasterAiResponse(prompt, fullTranscript, clientName, prof
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 12000);
 
-      const systemPrompt = `Eres el Asistente de IA de RYR TITAN. Redactas mensajes en modo /human para la clienta ${safeClient}.
+      const systemPrompt = `Eres el Asistente de IA de RYR TITAN. Redactas respuestas o mensajes en modo /human para la clienta ${safeClient} con el perfil ${safeProfile}.
 DATOS:
 - Nombre: ${safeClient}
 - Ubicación: ${realCountry}
 - Edad: ${realBirthDate}
-- Intereses: ${realInterests}
 
-REGLAS OBLIGATORIAS:
+REGLAS:
 1. Responde DIRECTAMENTE con la estrategia y la sugerencia de mensaje.
-2. PROHIBIDO pensar en voz alta en inglés o escribir "Here is a thinking process" o "Check against constraints".
+2. PROHIBIDO pensar en voz alta en inglés ("Here is a thinking process").
 3. Formato:
    💡 Estrategia para ${safeClient}: [1-2 oraciones]
-   💬 Opción en Inglés (Copiar y Enviar): "[Mensaje seductor listo]"
+   💬 Opción en Inglés (Copiar y Enviar): "[Mensaje listo]"
    💬 Traducción al Español: "[Traducción]"
 4. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros en persona ni viajes.`;
 
@@ -207,18 +197,17 @@ Conviene responder con un tono dulce y cercano, validando lo que siente y hacien
 "Pensar en ti y en tu dulce sonrisa me da mucha calidez al corazón. ¿Cómo va tu día, mi amor?"`;
 }
 
-// 3. ENDPOINTS DE AJUSTES GLOBALES DEL SISTEMA (ADMINISTRADOR)
+// 3. ENDPOINTS DE AJUSTES GLOBALES (ADMINISTRADOR)
 app.get('/api/settings', (req, res) => {
   res.json({ success: true, settings: globalSystemSettings });
 });
 
 app.post('/api/settings/toggle-modal', (req, res) => {
   globalSystemSettings.invasiveModalEnabled = !globalSystemSettings.invasiveModalEnabled;
-  console.log(`[CONFIG ADMIN] Modal Invasivo cambiado a: ${globalSystemSettings.invasiveModalEnabled ? 'ON' : 'OFF'}`);
   res.json({ success: true, settings: globalSystemSettings });
 });
 
-// 4. ENDPOINTS DE CONSULTA Y EXPEDIENTES
+// 4. CONSULTA Y EXPEDIENTES
 app.post('/api/intelligence/query', async (req, res) => {
   try {
     const { query, clientId, clientName, profileName, liveMarkdown, bioData } = req.body;
@@ -255,7 +244,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
   const queryName = String(req.query.name || '').trim();
   let chatMd = '';
-  let clientName = queryName || 'Jaye, 64';
+  let clientName = queryName || 'Clienta';
 
   if (SUPABASE_URL && SUPABASE_KEY && clientId !== 'N/A') {
     try {
@@ -276,9 +265,9 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(australia)/i.test(textLower) ? 'Australia' : 'United States'),
-      birthDate: /(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : '64 años',
-      maritalStatus: 'Divorced / Viuda',
+      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(australia)/i.test(textLower) ? 'Australia' : (/(uruguay)/i.test(textLower) ? 'Uruguay' : 'United States')),
+      birthDate: /(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : 'Edad en perfil',
+      maritalStatus: 'Divorced / Soltera',
       summary: `Expediente de ${clientName} verificado en Supabase.`
     };
     return res.json({ success: true, dossier, hasData: true });
@@ -287,7 +276,179 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null, hasData: false });
 });
 
-// 5. TELEMETRÍA
+// 5. MOTOR HEURÍSTICO DE ANÁLISIS DE PATRONES
+function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown) {
+  const textLower = (markdown || '').toLowerCase();
+  const findings = [];
+  let qualityScore = 100;
+  let riskLevel = 'BAJO';
+
+  const tmRegex = /(?:when we meet|when i visit|come visit|meet in person|see you in person|book a flight|buy a ticket|flying to you|fly to you|stay at a hotel|pack your bags|plane ticket|flight ticket|live together soon|cuando nos veamos|cuando nos conozcamos en persona|cuando viaje|ven a verme|viajar a verte|comprar el pasaje|boleto de avión|hotel juntos|nos vemos en persona)/i;
+  if (tmRegex.test(textLower)) {
+    findings.push({
+      type: 'CRITICAL',
+      title: '🚨 INFRACCIÓN: TRAVEL MISLEADING (TM)',
+      description: 'Insinuación de encuentro personal o viaje físico detectada en el diálogo.'
+    });
+    qualityScore -= 45;
+    riskLevel = 'CRÍTICO';
+  }
+
+  if (/(?:si me quisieras|si me amaras|envíame un regalo|mandame un regalo|dame un regalo|cómprame un regalo|send me a gift|need coins)/i.test(textLower)) {
+    findings.push({
+      type: 'CRITICAL',
+      title: '🛑 Coacción por Regalos',
+      description: 'Petición directa de regalos condicionando el afecto.'
+    });
+    qualityScore -= 30;
+    if (riskLevel !== 'CRÍTICO') riskLevel = 'ALTO';
+  }
+
+  qualityScore = Math.max(0, qualityScore);
+
+  return {
+    score: qualityScore,
+    riskLevel: riskLevel,
+    diagnosis: riskLevel === 'CRÍTICO' ? 'ALTO RIESGO: Infracciones graves detectadas.' : 'Conversación fluida y respetuosa.',
+    recommendation: riskLevel === 'CRÍTICO' ? 'Corregir al operador de inmediato sobre Travel Misleading.' : 'Mantener el ritmo de conversación.',
+    findings: findings
+  };
+}
+
+app.post('/api/chats/audit-deep', async (req, res) => {
+  const { operator, profile, clientName, clientId, markdown, messages } = req.body;
+  if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
+
+  const cleanClientId = String(clientId).trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Cliente').trim();
+  const auditKey = `${profile}_${cleanClientId}`;
+  
+  syncedClientsRegistry.add(cleanClientId.toLowerCase());
+  syncedClientsRegistry.add(safeClientName.toLowerCase());
+
+  const aiReport = runDeepAiPatternAnalysis(operator, profile, safeClientName, cleanClientId, markdown);
+
+  aiReport.findings.forEach((finding, index) => {
+    if (finding.type === 'CRITICAL' || finding.type === 'WARNING') {
+      const alertId = `${auditKey}_${index}_${Date.now()}`;
+      const alertEntry = {
+        id: alertId,
+        auditId: auditKey,
+        operatorName: operator || 'Desconocido',
+        profileName: profile,
+        clientName: safeClientName,
+        clientId: cleanClientId,
+        category: finding.title,
+        severity: finding.type === 'CRITICAL' ? 'CRÍTICA' : 'ALTA',
+        snippet: finding.description,
+        markdown: markdown,
+        status: 'PENDING',
+        timestamp: Date.now()
+      };
+      activeAlertsMap.set(alertId, alertEntry);
+
+      if (SUPABASE_URL && SUPABASE_KEY) {
+        fetch(`${SUPABASE_URL}/rest/v1/chat_alerts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
+          body: JSON.stringify(alertEntry)
+        }).catch(() => {});
+      }
+    }
+  });
+
+  const auditPayload = {
+    id: auditKey,
+    operator_name: operator || 'Desconocido',
+    profile_name: profile,
+    client_name: safeClientName,
+    client_id: cleanClientId,
+    total_messages: Array.isArray(messages) ? messages.length : 0,
+    flags: aiReport.findings.map(f => f.title),
+    has_breach: aiReport.riskLevel === 'CRÍTICO' || aiReport.riskLevel === 'ALTO',
+    markdown: markdown,
+    updated_at: new Date().toISOString()
+  };
+
+  recentChatAuditsRAM.set(auditKey, { ...auditPayload, operator, profile, clientName: safeClientName, clientId: cleanClientId, timestamp: Date.now() });
+
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    fetch(`${SUPABASE_URL}/rest/v1/chat_audits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify(auditPayload)
+    }).catch(() => {});
+  }
+
+  res.json({ success: true, clientId: cleanClientId, clientName: safeClientName, aiReport });
+});
+
+app.post('/api/chats/analyze-single', (req, res) => {
+  const { operator, profile, clientName, clientId, markdown } = req.body;
+  const aiReport = runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown);
+  res.json({ success: true, aiReport });
+});
+
+app.get('/api/alerts/live', (req, res) => {
+  const alertsList = Array.from(activeAlertsMap.values()).filter(a => a.status === 'PENDING').sort((a, b) => b.timestamp - a.timestamp);
+  res.json({ success: true, alerts: alertsList });
+});
+
+app.post('/api/alerts/:id/resolve', (req, res) => {
+  const alertId = req.params.id;
+  if (activeAlertsMap.has(alertId)) activeAlertsMap.get(alertId).status = 'RESOLVED';
+  res.json({ success: true });
+});
+
+app.post('/api/alerts/:id/dismiss', (req, res) => {
+  const alertId = req.params.id;
+  activeAlertsMap.delete(alertId);
+  res.json({ success: true });
+});
+
+app.post('/api/fines/register', async (req, res) => {
+  const { operator, shift, profile, clientName, clientId, reason } = req.body;
+  if (!operator) return res.status(400).json({ error: 'Operador requerido' });
+
+  const fineId = `FINE_${operator}_${clientId}_${Date.now()}`;
+  const finePayload = {
+    id: fineId,
+    operator_name: operator,
+    shift: shift || 'Mañana',
+    profile_name: profile || 'HORACIO',
+    client_name: clientName || 'Cliente',
+    client_id: clientId || 'N/A',
+    amount: 10000,
+    reason: reason || 'SLA 2 Minutos Excedido',
+    created_at: new Date().toISOString()
+  };
+
+  operatorFinesRAM.set(fineId, finePayload);
+
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    fetch(`${SUPABASE_URL}/rest/v1/operator_fines`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      body: JSON.stringify(finePayload)
+    }).catch(() => {});
+  }
+
+  res.json({ success: true, fine: finePayload });
+});
+
+app.get('/api/fines', async (req, res) => {
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/operator_fines?select=*&order=created_at.desc&limit=100`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      });
+      const data = await resp.json();
+      if (Array.isArray(data)) return res.json({ success: true, fines: data });
+    } catch (e) {}
+  }
+  res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() });
+});
+
 app.post('/api/telemetry', (req, res) => {
   const {
     operator, shift, profile, profileId,
@@ -370,42 +531,24 @@ app.get('/api/telemetry/live', (req, res) => {
   res.json({ success: true, operators: Array.from(operatorsMap.values()), settings: globalSystemSettings });
 });
 
-// 6. DEMÁS ENDPOINTS (AUDITORÍA, MULTAS, ALERTAS)
-app.post('/api/chats/audit-deep', async (req, res) => {
-  const { operator, profile, clientName, clientId, markdown, messages } = req.body;
-  if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
-
-  const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Cliente').trim();
-  const auditKey = `${profile}_${cleanClientId}`;
-  
-  syncedClientsRegistry.add(cleanClientId.toLowerCase());
-  syncedClientsRegistry.add(safeClientName.toLowerCase());
-
-  const auditPayload = {
-    id: auditKey,
-    operator_name: operator || 'Desconocido',
-    profile_name: profile,
-    client_name: safeClientName,
-    client_id: cleanClientId,
-    total_messages: Array.isArray(messages) ? messages.length : 0,
-    flags: ['✅ Conversación Guardada'],
-    has_breach: false,
-    markdown: markdown,
-    updated_at: new Date().toISOString()
-  };
-
-  recentChatAuditsRAM.set(auditKey, { ...auditPayload, operator, profile, clientName: safeClientName, clientId: cleanClientId, timestamp: Date.now() });
-
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(`${SUPABASE_URL}/rest/v1/chat_audits`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
-      body: JSON.stringify(auditPayload)
-    }).catch(() => {});
+app.get('/api/chats/synced-ids', async (req, res) => {
+  const profile = req.query.profile;
+  const syncedSet = new Set(syncedClientsRegistry);
+  if (SUPABASE_URL && SUPABASE_KEY && profile) {
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?profile_name=eq.${profile}&select=client_id,client_name`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      });
+      const data = await resp.json();
+      if (Array.isArray(data)) {
+        data.forEach(d => {
+          if (d.client_id) syncedSet.add(String(d.client_id).trim().toLowerCase());
+          if (d.client_name) syncedSet.add(String(d.client_name).trim().toLowerCase());
+        });
+      }
+    } catch (e) {}
   }
-
-  res.json({ success: true, clientId: cleanClientId, clientName: safeClientName });
+  res.json({ success: true, syncedIds: Array.from(syncedSet) });
 });
 
 app.get('/api/chats/audits', async (req, res) => {
@@ -423,36 +566,18 @@ app.get('/api/chats/audits', async (req, res) => {
   res.json({ success: true, audits: Array.from(recentChatAuditsRAM.values()) });
 });
 
-app.get('/api/fines', async (req, res) => {
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/operator_fines?select=*&order=created_at.desc&limit=100`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-      });
-      const data = await resp.json();
-      if (Array.isArray(data)) return res.json({ success: true, fines: data });
-    } catch (e) {}
-  }
-  res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() });
-});
-
-app.get('/api/alerts/live', (req, res) => {
-  const alertsList = Array.from(activeAlertsMap.values()).filter(a => a.status === 'PENDING').sort((a, b) => b.timestamp - a.timestamp);
-  res.json({ success: true, alerts: alertsList });
-});
-
 app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicBannedWords) }));
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 7. DASHBOARD EMBEBIDO CON INTERRUPTOR DEL MODAL INVASIVO
+// DASHBOARD CON BOTÓN "ANALIZAR CONVERSACIÓN" EN CADA CHAT
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
   <title>RYR TITAN APEX - SUPERVISIÓN LIVE</title>
   <style>
-    :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; --accent-gold: #f59e0b; }
+    :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; --accent-gold: #f59e0b; --accent-purple: #8b5cf6; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: var(--bg-main); color: #fff; font-family: system-ui, sans-serif; padding: 12px; }
     header { display: flex; justify-content: space-between; align-items: center; background: #0b132b; border: 1px solid #1e293b; border-left: 4px solid var(--accent-cyan); border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; }
@@ -510,7 +635,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <div id="modal-chats" class="modal-overlay">
     <div class="modal-content">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:var(--accent-cyan);">📄 HISTORIAL DE CHATS</span>
+        <span style="font-weight:bold; color:var(--accent-cyan);">📄 AUDITORÍA HISTÓRICA DE DIÁLOGOS</span>
         <button class="btn-action" onclick="closeModals()">✕</button>
       </div>
       <div id="chat-audits-list" style="overflow-y:auto; flex:1;"></div>
@@ -656,11 +781,55 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         <div style="background:#060913; border:1px solid #1e293b; border-radius:6px; padding:12px; margin-bottom:10px;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
             <span style="font-weight:bold; color:var(--accent-cyan);">👤 Op: \${a.operator} | 🎯 Perfil: \${a.profile} | 💬 Cliente: \${a.clientName} (ID: \${a.clientId})</span>
-            <a href="data:text/markdown;charset=utf-8,\${encodeURIComponent(a.markdown)}" download="chat_\${a.profile}_\${a.clientId}.md" class="btn-action" style="text-decoration:none;">📥 Descargar .MD</a>
+            <div style="display:flex; gap:6px;">
+              <button class="btn-action" style="background:#1e1b4b; border-color:#8b5cf6; color:#c4b5fd;" onclick="runAiAnalysisByIndex(\${index})">🔍 Analizar Conversación</button>
+              <a href="data:text/markdown;charset=utf-8,\${encodeURIComponent(a.markdown)}" download="chat_\${a.profile}_\${a.clientId}.md" class="btn-action" style="text-decoration:none;">📥 Descargar .MD</a>
+            </div>
           </div>
-          <div class="chat-transcript">\${a.markdown}</div>
+          <div id="ai-box-\${index}"></div>
+          <div class="chat-transcript" id="transcript-\${index}">\${a.markdown}</div>
         </div>
       \`).join('');
+    }
+
+    async function runAiAnalysisByIndex(index) {
+      const audit = globalAuditsList[index];
+      if (!audit) return;
+
+      const box = document.getElementById('ai-box-' + index);
+      box.innerHTML = '<p style="color:#c4b5fd; font-size:12px; margin:8px 0;">🤖 Analizando diálogo con IA...</p>';
+
+      try {
+        const res = await fetch(\`\${API_URL}/api/chats/analyze-single\`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            operator: audit.operator,
+            profile: audit.profile,
+            clientName: audit.clientName,
+            clientId: audit.clientId,
+            markdown: audit.markdown
+          })
+        });
+        const data = await res.json();
+        const r = data.aiReport;
+        const isGood = r.score >= 70;
+
+        box.innerHTML = \`
+          <div style="background:#0b132b; border:1px solid #8b5cf6; border-radius:8px; padding:12px; margin-top:8px;">
+            <div style="font-weight:bold; font-size:13px; color:\${isGood ? '#34d399' : '#f87171'}; margin-bottom:4px;">🎯 Puntaje: \${r.score}/100 [Riesgo: \${r.riskLevel}]</div>
+            <div style="font-size:11px; margin-bottom:4px;"><b>🧠 Diagnóstico:</b> \${r.diagnosis}</div>
+            <div style="font-size:11px; color:#38bdf8; margin-bottom:6px;"><b>📋 Recomendación:</b> \${r.recommendation}</div>
+            \${r.findings.map(f => \`
+              <div style="background:rgba(239,68,68,0.15); border-left:3px solid #ef4444; padding:6px; border-radius:4px; font-size:11px; margin-bottom:4px; color:#fca5a5;">
+                <b>\${f.title}:</b> \${f.description}
+              </div>
+            \`).join('')}
+          </div>
+        \`;
+      } catch (err) {
+        box.innerHTML = '<p style="color:#ef4444;">Error al procesar el análisis de IA.</p>';
+      }
     }
 
     async function openBannedWordsModal() {
@@ -697,4 +866,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V80.0 (Invasive Modal Admin Toggle) activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V85.0 (Full Analysis & Two-Way Sync) activo en puerto ${PORT}`));
