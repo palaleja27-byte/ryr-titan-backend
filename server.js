@@ -16,6 +16,11 @@ const OPENAI_API_KEY = cleanEnv(process.env.OPENAI_API_KEY);
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 
+// CONFIGURACIÓN GLOBAL DEL ADMINISTRADOR
+let globalSystemSettings = {
+  invasiveModalEnabled: true // El admin puede apagarlo o encenderlo en tiempo real
+};
+
 const liveTelemetryMap = new Map();
 const recentChatAuditsRAM = new Map();
 const activeAlertsMap = new Map();
@@ -202,7 +207,18 @@ Conviene responder con un tono dulce y cercano, validando lo que siente y hacien
 "Pensar en ti y en tu dulce sonrisa me da mucha calidez al corazón. ¿Cómo va tu día, mi amor?"`;
 }
 
-// 3. ENDPOINTS DE CONSULTA Y EXPEDIENTES
+// 3. ENDPOINTS DE AJUSTES GLOBALES DEL SISTEMA (ADMINISTRADOR)
+app.get('/api/settings', (req, res) => {
+  res.json({ success: true, settings: globalSystemSettings });
+});
+
+app.post('/api/settings/toggle-modal', (req, res) => {
+  globalSystemSettings.invasiveModalEnabled = !globalSystemSettings.invasiveModalEnabled;
+  console.log(`[CONFIG ADMIN] Modal Invasivo cambiado a: ${globalSystemSettings.invasiveModalEnabled ? 'ON' : 'OFF'}`);
+  res.json({ success: true, settings: globalSystemSettings });
+});
+
+// 4. ENDPOINTS DE CONSULTA Y EXPEDIENTES
 app.post('/api/intelligence/query', async (req, res) => {
   try {
     const { query, clientId, clientName, profileName, liveMarkdown, bioData } = req.body;
@@ -261,7 +277,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const dossier = {
       clientName: clientName,
       location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(australia)/i.test(textLower) ? 'Australia' : 'United States'),
-      birthDate: /(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : 'Feb 15, 1962 (64 años)',
+      birthDate: /(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : '64 años',
       maritalStatus: 'Divorced / Viuda',
       summary: `Expediente de ${clientName} verificado en Supabase.`
     };
@@ -271,7 +287,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null, hasData: false });
 });
 
-// 4. TELEMETRÍA Y TRANSMISIÓN COMPLETA AL MONITOR (INCLUYE SEGUIMIENTO Y MONOPOLIO)
+// 5. TELEMETRÍA
 app.post('/api/telemetry', (req, res) => {
   const {
     operator, shift, profile, profileId,
@@ -304,10 +320,9 @@ app.post('/api/telemetry', (req, res) => {
     lastSeen: Date.now()
   });
 
-  res.json({ success: true });
+  res.json({ success: true, settings: globalSystemSettings });
 });
 
-// 5. CONSOLIDADO EN VIVO PARA EL MONITOR (ENVÍA SEGUIMIENTO Y MONOPOLIO)
 app.get('/api/telemetry/live', (req, res) => {
   const now = Date.now();
   const operatorsMap = new Map();
@@ -352,7 +367,7 @@ app.get('/api/telemetry/live', (req, res) => {
     }
   }
 
-  res.json({ success: true, operators: Array.from(operatorsMap.values()) });
+  res.json({ success: true, operators: Array.from(operatorsMap.values()), settings: globalSystemSettings });
 });
 
 // 6. DEMÁS ENDPOINTS (AUDITORÍA, MULTAS, ALERTAS)
@@ -430,7 +445,7 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 7. DASHBOARD EMBEBIDO CON SEGUIMIENTO Y ALERTA DE MONOPOLIO VISUAL
+// 7. DASHBOARD EMBEBIDO CON INTERRUPTOR DEL MODAL INVASIVO
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -441,21 +456,23 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: var(--bg-main); color: #fff; font-family: system-ui, sans-serif; padding: 12px; }
     header { display: flex; justify-content: space-between; align-items: center; background: #0b132b; border: 1px solid #1e293b; border-left: 4px solid var(--accent-cyan); border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; }
-    .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 11px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; }
+    .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 11px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; transition: 0.2s; }
     .btn-action:hover { border-color: var(--accent-green); color: var(--accent-green); }
     .btn-fines { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(245, 158, 11, 0.15); }
+    .btn-toggle-on { border-color: #ef4444; color: #f87171; background: rgba(239, 68, 68, 0.15); }
+    .btn-toggle-off { border-color: #64748b; color: #94a3b8; background: #1e293b; }
+
     .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
-    .operator-card { background: var(--bg-card); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; transition: 0.2s; }
+    .operator-card { background: var(--bg-card); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; }
     
     .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
-    .profile-live-box.monopoly-alert { border-color: #f59e0b !important; background: rgba(245, 158, 11, 0.08) !important; animation: pulseAmber 1.2s infinite; }
+    .profile-live-box.monopoly-alert { border-color: #f59e0b !important; background: rgba(245, 158, 11, 0.08) !important; }
 
     .live-timers-container { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
     .live-chat-timer-badge { font-size: 10px; font-weight: bold; font-family: monospace; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
     .timer-ok { background: #064e3b; color: #34d399; border: 1px solid #10b981; }
-    .timer-expired { background: #450a0a; color: #f87171; border: 1px solid #ef4444; animation: pulseRed 1s infinite; }
+    .timer-expired { background: #450a0a; color: #f87171; border: 1px solid #ef4444; }
 
-    /* SEGUIMIENTO EN VIVO */
     .prospect-pill { font-size: 10px; font-weight: bold; font-family: monospace; padding: 3px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; }
     .prospect-progress { background: #1c2541; border: 1px solid #f59e0b; color: #fde68a; }
     .prospect-done { background: #064e3b; border: 1px solid #10b981; color: #34d399; }
@@ -465,14 +482,13 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); z-index: 99999; justify-content: center; align-items: center; }
     .modal-content { background: #0e1526; border: 1px solid var(--accent-cyan); border-radius: 10px; width: 940px; max-width: 95%; max-height: 88vh; padding: 20px; display: flex; flex-direction: column; gap: 12px; color: #fff; }
     .chat-transcript { background: #0b132b; border: 1px solid #1e293b; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 250px; overflow-y: auto; line-height: 1.6; color: #cbd5e1; }
-    @keyframes pulseRed { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
-    @keyframes pulseAmber { 0% { box-shadow: 0 0 4px #f59e0b; } 50% { box-shadow: 0 0 14px #f59e0b; } 100% { box-shadow: 0 0 4px #f59e0b; } }
   </style>
 </head>
 <body>
   <header>
-    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & CONTROL DE TRÁFICO</div>
+    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE</div>
     <div style="display:flex; gap:8px;">
+      <button id="btn-toggle-modal" class="btn-action btn-toggle-on" onclick="toggleInvasiveModal()">🚨 Modal Invasivo: ON</button>
       <button class="btn-action btn-fines" onclick="openFinesModal()">💰 Multas (<span id="total-fines-count">0</span>)</button>
       <button class="btn-action" onclick="openChatAuditsModal()">📄 Historial de Chats (MD)</button>
       <button class="btn-action" onclick="openBannedWordsModal()">🛡️ Palabras Prohibidas</button>
@@ -517,11 +533,34 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   <script>
     const API_URL = window.location.origin;
+    let globalAuditsList = [];
+
+    async function toggleInvasiveModal() {
+      const res = await fetch(\`\${API_URL}/api/settings/toggle-modal\`, { method: 'POST' });
+      const data = await res.json();
+      updateToggleBtn(data.settings.invasiveModalEnabled);
+    }
+
+    function updateToggleBtn(isEnabled) {
+      const btn = document.getElementById('btn-toggle-modal');
+      if (isEnabled) {
+        btn.className = 'btn-action btn-toggle-on';
+        btn.innerText = '🚨 Modal Invasivo: ON';
+      } else {
+        btn.className = 'btn-action btn-toggle-off';
+        btn.innerText = '⚪ Modal Invasivo: OFF';
+      }
+    }
 
     async function fetchLive() {
       try {
         const res = await fetch(\`\${API_URL}/api/telemetry/live\`);
         const data = await res.json();
+        
+        if (data.settings) {
+          updateToggleBtn(data.settings.invasiveModalEnabled);
+        }
+
         document.getElementById('operators-grid').innerHTML = (data.operators || []).map(op => \`
           <div class="operator-card">
             <div style="display:flex; justify-content:space-between; font-weight:bold; border-bottom:1px solid #1e293b; padding-bottom:6px; margin-bottom:8px;">
@@ -550,21 +589,18 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
                     <span style="font-size:11px; color:#38bdf8;">✉️ \${p.pendingReadLetters} cartas</span>
                   </div>
 
-                  <!-- SEGUIMIENTO EN VIVO -->
                   <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
                     <span class="prospect-pill \${prog.isCompleted ? 'prospect-done' : 'prospect-progress'}">
                       🎯 Seguimiento: \${prog.isCompleted ? 'OK' : pTimeStr} [\${prog.count}/\${prog.quota}]
                     </span>
                   </div>
 
-                  <!-- ALERTA DE MONOPOLIO / DESATENCIÓN -->
                   \${monopoly.hasMonopoly ? \`
                     <div class="monopoly-banner">
                       ⚠️ DESATENCIÓN: Hablando solo con "\${monopoly.focusedClient}" (\${monopoly.consecutiveSent} msgs) mientras tiene \${monopoly.unattendedCount} clientas esperando respuesta.
                     </div>
                   \` : ''}
 
-                  <!-- SEGUNDEROS DE CHATS -->
                   \${timersHtml ? \`<div class="live-timers-container">\${timersHtml}</div>\` : \`<div style="font-size:10px; color:#10b981; margin-top:4px;">⏱️ Todos los chats al día</div>\`}
                 </div>
               \`;
@@ -597,6 +633,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           <div>
             <div style="font-weight:bold; color:#fde68a;">👤 \${f.operator_name} [\${f.shift}] - 🎯 \${f.profile_name}</div>
             <div style="font-size:11px; color:#94a3b8;">Cliente: \${f.client_name} | Motivo: \${f.reason}</div>
+            <div style="font-size:9px; color:#64748b;">\${new Date(f.created_at).toLocaleString()}</div>
           </div>
           <div style="font-size:14px; font-weight:900; color:#ef4444;">-\$\${Number(f.amount).toLocaleString('es-CO')} COP</div>
         </div>
@@ -607,11 +644,23 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       document.getElementById('modal-chats').style.display = 'flex';
       const res = await fetch(\`\${API_URL}/api/chats/audits\`);
       const data = await res.json();
-      document.getElementById('chat-audits-list').innerHTML = (data.audits || []).map(a => \`
-        <div style="background:#060913; border:1px solid #1e293b; border-radius:6px; padding:10px; margin-bottom:8px;">
-          <div style="font-weight:bold; color:#00ffcc; margin-bottom:4px;">👤 Op: \${a.operator} | 🎯 Perfil: \${a.profile} | 💬 Cliente: \${a.clientName} (ID: \${a.clientId})</div>
+      globalAuditsList = data.audits || [];
+      const container = document.getElementById('chat-audits-list');
+      
+      if (globalAuditsList.length === 0) {
+        container.innerHTML = '<p style="color:#94a3b8;">No hay conversaciones en Supabase aún. Presiona ⚡ en Talkytimes.</p>';
+        return;
+      }
+
+      container.innerHTML = globalAuditsList.map((a, index) => \`
+        <div style="background:#060913; border:1px solid #1e293b; border-radius:6px; padding:12px; margin-bottom:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <span style="font-weight:bold; color:var(--accent-cyan);">👤 Op: \${a.operator} | 🎯 Perfil: \${a.profile} | 💬 Cliente: \${a.clientName} (ID: \${a.clientId})</span>
+            <a href="data:text/markdown;charset=utf-8,\${encodeURIComponent(a.markdown)}" download="chat_\${a.profile}_\${a.clientId}.md" class="btn-action" style="text-decoration:none;">📥 Descargar .MD</a>
+          </div>
           <div class="chat-transcript">\${a.markdown}</div>
-        </div>\`).join('');
+        </div>
+      \`).join('');
     }
 
     async function openBannedWordsModal() {
@@ -648,4 +697,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V79.0 (Full Prospecting & Monopoly Monitor) activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V80.0 (Invasive Modal Admin Toggle) activo en puerto ${PORT}`));
