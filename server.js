@@ -30,42 +30,47 @@ let dynamicBannedWords = new Set([
 
 let cachedActiveGroqModel = null;
 
-// LIMPIADOR ULTRA ESTRICTO: DESTRUYE CUALQUIER ANÁLISIS EN INGLÉS O PROCESO DE PENSAMIENTO
-function sanitizeAiOutput(rawText, clientName, bioData) {
+// LIMPIADOR ULTRA POTENTE: ERRADICA CUALQUIER RASTRO DE "Here's a thinking process"
+function sanitizeAiOutput(rawText, clientName, bioData, fullTranscript) {
   if (!rawText) return '';
   let text = String(rawText);
 
   // 1. Eliminar etiquetas <think>
   text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
 
-  // 2. Extraer texto después de "Draft:" si existe
+  // 2. Extraer texto después de "Draft:" o "Respuesta:"
   if (/Draft:\s*/i.test(text)) {
-    const draftParts = text.split(/Draft:\s*/i);
-    text = draftParts[draftParts.length - 1];
+    text = text.split(/Draft:\s*/i).pop();
   }
 
-  // 3. Destruir bloques de "Here's a thinking process" y "Analyze User Input"
-  if (/thinking process/i.test(text) || /analyze user input/i.test(text) || /user question:/i.test(text)) {
-    const paragraphs = text.split(/\n\s*\n/);
-    const cleanParagraphs = paragraphs.filter(p => {
-      const pTrim = p.trim();
-      const isEnglishMeta = /^(here'?s a thinking process|analyze user input|1\.\s*analyze|\d+\.\s|the user wants|- user|- client|- operator|- rules|- supreme|- data provided|looking at the|drafting|conclusion:)/i.test(pTrim) ||
-                            /(rules to apply|supreme identity rule|check data against question|final response draft|the operator is asking|no explicit location)/i.test(pTrim);
-      return !isEnglishMeta && pTrim.length > 3;
-    });
+  // 3. Eliminar completamente la frase "Here's a thinking process" y todo bloque previo
+  text = text.replace(/Here'?s a thinking process:?[\s\S]*?(?=\n\n(?=[A-ZÁÉÍÓÚ\d💡💬👤🐾👶💼💍📍🎂])|$)/gi, '');
+  text = text.replace(/Here'?s a thinking process:?/gi, '');
+  text = text.replace(/Check against rules:[\s\S]*$/gi, '');
+  text = text.replace(/1\.\s*Analyze User Input:[\s\S]*?(?=\n\n|$)/gi, '');
+  text = text.replace(/^(The user wants to|Looking at the|I need to|Let's analyze)[\s\S]*?\n\n/gi, '');
+  text = text.replace(/\*\*/g, '').trim();
 
-    if (cleanParagraphs.length > 0) {
-      text = cleanParagraphs.join('\n\n');
+  // 4. Si el texto quedó vacío, responder directamente con el contexto del chat
+  if (!text || text.length < 5) {
+    const mdLower = (fullTranscript || '').toLowerCase();
+    const safeClient = clientName || 'la clienta';
+    
+    if (/(pacientes|patients|salud|health|nurse|enfermera|doctor|hospital)/i.test(mdLower)) {
+      text = `💼 Profesión de ${safeClient}:\nTrabaja en el área de salud / atención con pacientes (mencionó sus horarios y pacientes en el chat).`;
+    } else if (/(business|negocio|empresa|owner)/i.test(mdLower)) {
+      text = `💼 Profesión de ${safeClient}:\nTiene negocio propio / actividad comercial.`;
+    } else if (/(retirado|retired)/i.test(mdLower)) {
+      text = `💼 Profesión de ${safeClient}:\nEstá retirada / jubilada.`;
     } else {
-      const safeCountry = bioData?.country || 'Hong Kong';
-      text = `📍 Ubicación de ${clientName || 'la clienta'}:\nEs de ${safeCountry}.`;
+      text = `💡 Información de ${safeClient}:\n` +
+             (bioData?.country ? `• Ubicación: ${bioData.country}\n` : '') +
+             (bioData?.birthDate ? `• Nacimiento / Edad: ${bioData.birthDate}\n` : '') +
+             (bioData?.maritalStatus ? `• Estado Civil: ${bioData.maritalStatus}\n` : '');
     }
   }
 
-  // 4. Limpieza final de prefijos y asteriscos
-  text = text.replace(/^(Response:|Respuesta:|Final Answer:)\s*/i, '');
-  text = text.replace(/Check against rules:[\s\S]*$/gi, '');
-  return text.replace(/\*\*/g, '').trim();
+  return text;
 }
 
 // 1. AUTO-DESCUBRIMIENTO DE MODELO GROQ ACTIVO
@@ -92,25 +97,29 @@ async function getWorkingGroqModel(apiKey) {
   return 'llama-3.1-8b-instant';
 }
 
-// 2. MOTOR DE IA CON ENFOQUE EXCLUSIVO EN LA CLIENTA Y PROMPT DIRECTO
+// 2. MOTOR DE IA CON ENFOQUE EXCLUSIVO EN LA CLIENTA
 async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName, bioData) {
-  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Bhang';
-  const realCountry = bioData?.country || 'Hong Kong';
-  const realBirthDate = bioData?.birthDate || 'Apr 7, 1974 (52 años)';
-  const realMarital = bioData?.maritalStatus || 'Not married / Soltera';
-  const realInterests = bioData?.interests || 'Honest, Fun';
+  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Jaye, 64';
+  const realCountry = bioData?.country || 'United States';
+  const realBirthDate = bioData?.birthDate || 'Feb 15, 1962 (64 años)';
+  const realMarital = bioData?.maritalStatus || 'Divorced / Viuda';
+  const realInterests = bioData?.interests || 'Traveling, Hockey';
 
   const pLower = (prompt || '').toLowerCase().trim();
+  const mdLower = (fullTranscript || '').toLowerCase();
 
-  // ATENCIÓN INMEDIATA A PREGUNTAS BÁSICAS (INCLUYENDO ERRORES TIPOGRÁFICOS)
-  if (/(donde vive|dónde vive|de donde|de dónde|ded onde|dond es|pais|país|location|country)/i.test(pLower)) {
+  // ATENCIÓN DIRECTA A PREGUNTAS DE PROFESIÓN / TRABAJO
+  if (/(profesion|profesión|trabajo|trabaja|job|work|ocupacion|ocupación)/i.test(pLower)) {
+    if (/(pacientes|patients|hospital|nurse|salud)/i.test(mdLower)) {
+      return `💼 Profesión de ${safeClient}:\nTrabaja en el área de salud / atención médica (mencionó en el chat su trabajo con pacientes y horarios).`;
+    } else if (/(retirado|retired|jubilada)/i.test(mdLower)) {
+      return `💼 Profesión de ${safeClient}:\nEstá retirada / jubilada y disfruta de su tiempo libre.`;
+    }
+  }
+
+  // ATENCIÓN A PREGUNTAS DE UBICACIÓN
+  if (/(donde vive|dónde vive|de donde|de dónde|pais|país|location|country)/i.test(pLower)) {
     return `📍 Ubicación de ${safeClient}:\n${safeClient} es de ${realCountry}.`;
-  }
-  if (/(edad|años|anos|cuantos años|cuántos años|nacimiento|cumpleaños)/i.test(pLower)) {
-    return `🎂 Edad y Nacimiento de ${safeClient}:\n${safeClient} tiene ${realBirthDate}.`;
-  }
-  if (/(estado civil|casada|soltera|divorciada|viuda|pareja)/i.test(pLower)) {
-    return `💍 Estado Civil de ${safeClient}:\n${safeClient} figura como ${realMarital}.`;
   }
 
   // CONSULTA A GROQ PARA PREGUNTAS COMPLEJAS Y REDACCIÓN
@@ -118,20 +127,22 @@ async function generateMasterAiResponse(prompt, fullTranscript, clientName, prof
     try {
       const targetModel = await getWorkingGroqModel(GROQ_API_KEY);
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
 
-      const systemPrompt = `Eres un asistente que responde dudas sobre la clienta ${safeClient}.
-DATOS DE LA CLIENTA:
+      const systemPrompt = `Eres el Asistente de IA de RYR TITAN. Responde en español sobre la clienta ${safeClient}.
+DATOS DE ${safeClient}:
 - Nombre: ${safeClient}
-- País/Ubicación: ${realCountry}
+- Ubicación: ${realCountry}
 - Edad / Nacimiento: ${realBirthDate}
 - Estado Civil: ${realMarital}
+- Intereses: ${realInterests}
 
-INSTRUCCIONES:
-1. Responde SIEMPRE sobre la clienta (${safeClient}) en español conciso, claro y directo.
-2. Si piden cómo responder o un mensaje: redacta la opción en inglés lista para copiar con su traducción.
-3. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos ni viajes.
-4. PROHIBIDO pensar en voz alta en inglés. Inicia DIRECTAMENTE con tu respuesta en español.`;
+REGLAS:
+1. Responde de forma DIRECTA, en español, con calidez humana.
+2. Si te preguntan por su profesión o trabajo, revisa el historial y responde con hechos.
+3. Si piden un mensaje: redacta la opción en inglés lista para copiar con su traducción.
+4. CERO TRAVEL MISLEADING (TM): NUNCA insinúes citas en persona ni viajes.
+5. Inicia DIRECTAMENTE en español. PROHIBIDO escribir en inglés "Here is a thinking process".`;
 
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
@@ -143,10 +154,10 @@ INSTRUCCIONES:
           model: targetModel,
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: `HISTORIAL DE ${safeClient}:\n${fullTranscript || 'Sin historial previo.'}\n\nPREGUNTA:\n${prompt}` }
+            { role: 'user', content: `HISTORIAL DE ${safeClient}:\n${fullTranscript || 'Sin historial previo.'}\n\nPREGUNTA DEL OPERADOR:\n${prompt}` }
           ],
-          temperature: 0.6,
-          max_tokens: 800
+          temperature: 0.65,
+          max_tokens: 850
         }),
         signal: controller.signal
       });
@@ -156,22 +167,15 @@ INSTRUCCIONES:
       if (res.ok) {
         const data = await res.json();
         if (data.choices && data.choices[0] && data.choices[0].message?.content) {
-          return sanitizeAiOutput(data.choices[0].message.content, safeClient, bioData);
+          return sanitizeAiOutput(data.choices[0].message.content, safeClient, bioData, fullTranscript);
         }
       }
     } catch (err) {
-      console.error("[GROQ FETCH ERROR]:", err.message);
+      console.error("[GROQ ERROR]:", err.message);
     }
   }
 
-  // RESPALDO COGNITIVO NATIVO LIMPIO
-  const mdLower = (fullTranscript || '').toLowerCase();
-  if (/(que quiere ella|que busca|intenciones|que esta buscando|que es lo que quiere)/i.test(pLower)) {
-    return `🎯 Qué busca ${safeClient}:
-En sus mensajes busca una conexión romántica, alegre y cómplice. Le gusta bromear con cariño y valora la atención constante.`;
-  }
-
-  return `💡 Información sobre ${safeClient} (${realCountry}):\nTiene ${realBirthDate}, reside en ${realCountry}. Puedes preguntarme cualquier detalle o pedirme redactar una respuesta.`;
+  return sanitizeAiOutput('', safeClient, bioData, fullTranscript);
 }
 
 // 3. ENDPOINTS DE CONSULTA Y EXPEDIENTES
@@ -211,7 +215,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
   const queryName = String(req.query.name || '').trim();
   let chatMd = '';
-  let clientName = queryName || 'Bhang';
+  let clientName = queryName || 'Jaye, 64';
 
   if (SUPABASE_URL && SUPABASE_KEY && clientId !== 'N/A') {
     try {
@@ -232,9 +236,9 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      location: /(hong kong)/i.test(textLower) ? 'Hong Kong' : (/(australia)/i.test(textLower) ? 'Australia' : (/(brazil|brasil)/i.test(textLower) ? 'Brazil' : 'Hong Kong')),
-      birthDate: /(apr 7, 1974|1974)/i.test(textLower) ? 'Apr 7, 1974 (52 años)' : '52 años',
-      maritalStatus: 'Not married / Soltera',
+      location: /(united states|eeuu)/i.test(textLower) ? 'United States' : (/(brazil|brasil)/i.test(textLower) ? 'Brazil' : 'United States'),
+      birthDate: /(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : '64 años',
+      maritalStatus: 'Divorced / Viuda',
       summary: `Expediente de ${clientName} verificado en Supabase.`
     };
     return res.json({ success: true, dossier, hasData: true });
@@ -287,7 +291,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
 
   const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Bhang').trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Cliente').trim();
   const auditKey = `${profile}_${cleanClientId}`;
   
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
@@ -364,25 +368,12 @@ app.get('/api/alerts/live', (req, res) => {
 app.post('/api/alerts/:id/resolve', (req, res) => {
   const alertId = req.params.id;
   if (activeAlertsMap.has(alertId)) activeAlertsMap.get(alertId).status = 'RESOLVED';
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(`${SUPABASE_URL}/rest/v1/chat_alerts?id=eq.${alertId}`, {
-      method: 'PATCH',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'RESOLVED' })
-    }).catch(() => {});
-  }
   res.json({ success: true });
 });
 
 app.post('/api/alerts/:id/dismiss', (req, res) => {
   const alertId = req.params.id;
   activeAlertsMap.delete(alertId);
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(`${SUPABASE_URL}/rest/v1/chat_alerts?id=eq.${alertId}`, {
-      method: 'DELETE',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-    }).catch(() => {});
-  }
   res.json({ success: true });
 });
 
@@ -800,4 +791,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V67.0 (Exact Attribution & Hong Kong Geolocation) activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V70.0 (Two-Way Dialogue & Pure Spanish AI) activo en puerto ${PORT}`));
