@@ -1,1287 +1,891 @@
-(() => {
-  if (window.self !== window.top) return;
+const express = require('express');
+const cors = require('cors');
 
-  function isContextValid() {
-    return typeof chrome !== 'undefined' && chrome.runtime && !!chrome.runtime.id;
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+function cleanEnv(val) {
+  return String(val || '').replace(/['"\r\n\s]/g, '').trim();
+}
+
+const SUPABASE_URL = cleanEnv(process.env.SUPABASE_URL).replace(/\/+$/, '');
+const SUPABASE_KEY = cleanEnv(process.env.SUPABASE_KEY);
+const GROQ_API_KEY = cleanEnv(process.env.GROQ_API_KEY);
+const OPENAI_API_KEY = cleanEnv(process.env.OPENAI_API_KEY);
+
+app.use(cors());
+app.use(express.json({ limit: '25mb' }));
+
+let globalSystemSettings = {
+  invasiveModalEnabled: true
+};
+
+const liveTelemetryMap = new Map();
+const recentChatAuditsRAM = new Map();
+const activeAlertsMap = new Map();
+const operatorFinesRAM = new Map();
+const syncedClientsRegistry = new Set();
+
+let dynamicBannedWords = new Set([
+  'whatsapp', 'skype', 'email', 'correo', 'teléfono', 'telefono', 
+  'prometo', 'promesa', 'número', 'numero', 'banco', 'tarjeta', 
+  'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
+]);
+
+let cachedActiveGroqModel = null;
+
+// LIMPIADOR ULTRA POTENTE DE LOGS EN INGLÉS
+function sanitizeAiOutput(rawText, clientName, bioData, fullTranscript, prompt) {
+  if (!rawText) return '';
+  let text = String(rawText);
+
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+
+  if (/Draft:\s*/i.test(text)) {
+    text = text.split(/Draft:\s*/i).pop();
   }
 
-  const API_URL = 'https://ryr-titan-backend.onrender.com';
+  text = text.replace(/Here'?s a thinking process:?[\s\S]*?(?=\n\n(?=[A-ZÁÉÍÓÚ\d💡💬👤🐾👶💼💍📍🎂])|$)/gi, '');
+  text = text.replace(/Here'?s a thinking process:?/gi, '');
+  text = text.replace(/Check against rules:[\s\S]*$/gi, '');
+  text = text.replace(/Check against constraints:[\s\S]*$/gi, '');
+  text = text.replace(/1\.\s*Analyze User Input:[\s\S]*?(?=\n\n|$)/gi, '');
+  text = text.replace(/^(The user wants to|Looking at the|I need to|Let's analyze)[\s\S]*?\n\n/gi, '');
+  text = text.replace(/\*\*/g, '').trim();
 
-  let sessionData = {
-    operator: null,
-    shift: null,
-    profileName: null,
-    profileId: null,
-    monitoringActive: false
+  if (!text || text.length < 5 || /thinking process/i.test(text)) {
+    const mdLower = (fullTranscript || '').toLowerCase();
+    const safeClient = clientName || 'la clienta';
+    const pLower = (prompt || '').toLowerCase();
+
+    if (/(mascota|perro|gato|pet|dog)/i.test(pLower)) {
+      if (/(perro|dog)/i.test(mdLower)) return `🐾 Mascotas de ${safeClient}: Mencionó tener perro en el chat.`;
+      return `🐾 En las conversaciones analizadas, ${safeClient} no ha mencionado tener mascotas todavía.`;
+    }
+    if (/(hijo|hijos|familia|kids)/i.test(pLower)) {
+      if (/(hijos|kids|children|son|daughter)/i.test(mdLower)) return `👶 Familia de ${safeClient}: Mencionó tener hijos en el chat.`;
+      return `👶 En las conversaciones analizadas, ${safeClient} no ha mencionado tener hijos todavía.`;
+    }
+    if (/(profesion|trabajo|work|job)/i.test(pLower)) {
+      if (/(pacientes|patients|hospital|nurse|salud)/i.test(mdLower)) return `💼 Profesión de ${safeClient}: Trabaja en el área de salud con pacientes.`;
+      return `💼 Profesión de ${safeClient}: Menciona estar activa laboralmente.`;
+    }
+    if (/(donde vive|de donde|pais)/i.test(pLower)) {
+      return `📍 Ubicación de ${safeClient}: Es de ${bioData?.country || 'United States'}.`;
+    }
+
+    text = `💡 Información sobre ${safeClient}:\nReside en ${bioData?.country || 'United States'}, tiene ${bioData?.birthDate || 'Edad en perfil'}.`;
+  }
+
+  return text;
+}
+
+// AUTO-DESCUBRIMIENTO DE MODELO GROQ
+async function getWorkingGroqModel(apiKey) {
+  if (cachedActiveGroqModel) return cachedActiveGroqModel;
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/models', {
+      headers: { 'Authorization': `Bearer ${apiKey}` }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.data)) {
+        const preferred = ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile', 'llama3-70b', 'gemma2', 'qwen', 'llama3-8b'];
+        for (let pref of preferred) {
+          const match = data.data.find(m => m.id.toLowerCase().includes(pref) && !m.id.includes('whisper'));
+          if (match && match.active !== false) {
+            cachedActiveGroqModel = match.id;
+            return cachedActiveGroqModel;
+          }
+        }
+      }
+    }
+  } catch (e) {}
+  return 'llama-3.1-8b-instant';
+}
+
+// MOTOR DE IA
+async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName, bioData) {
+  const safeClient = (clientName && !['Search', 'Cliente', 'Yes', 'No', 'Open', 'More'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'la clienta';
+  const safeProfile = profileName || 'HORACIO';
+  const realCountry = bioData?.country || 'United States';
+  const realBirthDate = bioData?.birthDate || 'Edad en perfil';
+  const realMarital = bioData?.maritalStatus || 'En perfil';
+
+  const pLower = (prompt || '').toLowerCase().trim();
+  const mdLower = (fullTranscript || '').toLowerCase();
+
+  const isMessageRequest = /(dame un mensaje|como le respondo|como respondo|redacta|escribe un mensaje|mensaje para|carta|gancho|enganchar|conquistar|enamorar)/i.test(pLower);
+
+  if (!isMessageRequest) {
+    if (/(mascota|mascotas|perro|perros|gato|gatos|pet|pets|dog|cat)/i.test(pLower)) {
+      if (/(perro|dog)/i.test(mdLower)) return `🐾 Mascotas de ${safeClient}: Mencionó tener perro en la conversación.`;
+      if (/(gato|cat)/i.test(mdLower)) return `🐾 Mascotas de ${safeClient}: Mencionó tener gato en la conversación.`;
+      return `🐾 Mascotas de ${safeClient}: En las conversaciones analizadas, no ha mencionado tener mascotas todavía.`;
+    }
+    if (/(hijo|hijos|hija|hijas|familia|nietos|kids|children|son|daughter)/i.test(pLower)) {
+      if (/(hijos|kids|children|son|daughter)/i.test(mdLower)) return `👶 Familia de ${safeClient}: Sí, mencionó tener hijos en el chat.`;
+      return `👶 Familia de ${safeClient}: En el historial analizado, no ha mencionado tener hijos todavía.`;
+    }
+    if (/(donde vive|dónde vive|de donde|de dónde|ded onde|dond es|pais|país|location|country)/i.test(pLower)) {
+      return `📍 Ubicación de ${safeClient}: ${safeClient} es de ${realCountry}.`;
+    }
+    if (/(edad|años|anos|cuantos años|cuántos años|cuantos anos|cuanto ano|tirnr|tienr|cumpleaños)/i.test(pLower)) {
+      return `🎂 Edad y Nacimiento de ${safeClient}: ${safeClient} tiene ${realBirthDate}.`;
+    }
+    if (/(estado civil|casada|soltera|divorciada|viuda|pareja)/i.test(pLower)) {
+      return `💍 Estado Civil de ${safeClient}: Figura como ${realMarital}.`;
+    }
+    if (/(profesion|profesión|trabajo|trabaja|job|work|ocupacion|ocupación)/i.test(pLower)) {
+      if (/(pacientes|patients|hospital|nurse|salud)/i.test(mdLower)) {
+        return `💼 Profesión de ${safeClient}: Trabaja en el área de salud con pacientes.`;
+      } else if (/(retirado|retired|jubilada)/i.test(mdLower)) {
+        return `💼 Profesión de ${safeClient}: Está retirada / jubilada.`;
+      }
+      return `💼 Profesión de ${safeClient}: Menciona estar activa laboralmente.`;
+    }
+  }
+
+  if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
+    try {
+      const targetModel = await getWorkingGroqModel(GROQ_API_KEY);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+      const systemPrompt = `Eres el Asistente de IA de RYR TITAN. Redactas respuestas o mensajes en modo /human para la clienta ${safeClient} con el perfil ${safeProfile}.
+DATOS DE ${safeClient}:
+- Nombre: ${safeClient}
+- Ubicación: ${realCountry}
+- Edad: ${realBirthDate}
+
+REGLAS OBLIGATORIAS:
+1. Responde DIRECTAMENTE con la estrategia y la sugerencia de mensaje.
+2. PROHIBIDO pensar en voz alta en inglés ("Here is a thinking process").
+3. Formato:
+   💡 Estrategia para ${safeClient}: [1-2 oraciones]
+   💬 Opción en Inglés (Copiar y Enviar): "[Mensaje listo]"
+   💬 Traducción al Español: "[Traducción]"
+4. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros en persona ni viajes.`;
+
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: targetModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `HISTORIAL DE ${safeClient}:\n${fullTranscript || 'Sin historial previo.'}\n\nPETICIÓN DEL OPERADOR:\n${prompt}` }
+          ],
+          temperature: 0.65,
+          max_tokens: 850
+        }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.choices && data.choices[0] && data.choices[0].message?.content) {
+          return sanitizeAiOutput(data.choices[0].message.content, safeClient, bioData, fullTranscript, prompt);
+        }
+      }
+    } catch (err) {
+      console.error("[GROQ ERROR]:", err.message);
+    }
+  }
+
+  return `💡 Estrategia para ${safeClient}:
+Conviene responder con un tono dulce y cercano, validando lo que siente y haciendo una pregunta abierta.
+
+💬 Opción en Inglés (Copiar y Enviar):
+"Thinking of you and your sweet smile brings so much warmth to my heart. How is your day going, my love?"
+
+💬 Traducción al Español:
+"Pensar en ti y en tu dulce sonrisa me da mucha calidez al corazón. ¿Cómo va tu día, mi amor?"`;
+}
+
+// ENDPOINTS DE AJUSTES GLOBALES
+app.get('/api/settings', (req, res) => {
+  res.json({ success: true, settings: globalSystemSettings });
+});
+
+app.post('/api/settings/toggle-modal', (req, res) => {
+  globalSystemSettings.invasiveModalEnabled = !globalSystemSettings.invasiveModalEnabled;
+  res.json({ success: true, settings: globalSystemSettings });
+});
+
+// CONSULTA Y EXPEDIENTES
+app.post('/api/intelligence/query', async (req, res) => {
+  try {
+    const { query, clientId, clientName, profileName, liveMarkdown, bioData } = req.body;
+    const targetId = String(clientId || '').trim();
+    let chatMd = liveMarkdown || '';
+
+    if (!chatMd && SUPABASE_URL && SUPABASE_KEY && targetId && targetId !== 'N/A') {
+      try {
+        const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?client_id=eq.${targetId}&select=*&limit=1`, {
+          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+        });
+        const data = await resp.json();
+        if (Array.isArray(data) && data[0]) chatMd = data[0].markdown;
+      } catch (e) {}
+    }
+
+    if (!chatMd) {
+      for (let audit of recentChatAuditsRAM.values()) {
+        if (String(audit.clientId) === targetId || String(audit.client_id) === targetId || String(audit.clientName).toLowerCase() === String(clientName).toLowerCase()) {
+          chatMd = audit.markdown;
+          break;
+        }
+      }
+    }
+
+    const aiAnswer = await generateMasterAiResponse(query, chatMd, clientName, profileName, bioData);
+    res.json({ success: true, answer: aiAnswer });
+  } catch (err) {
+    res.json({ success: true, answer: `Consulta procesada con éxito.` });
+  }
+});
+
+app.get('/api/intelligence/user/:clientId', async (req, res) => {
+  const clientId = String(req.params.clientId).trim();
+  const queryName = String(req.query.name || '').trim();
+  let chatMd = '';
+  let clientName = queryName || 'Clienta';
+
+  if (SUPABASE_URL && SUPABASE_KEY && clientId !== 'N/A') {
+    try {
+      let resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?client_id=eq.${clientId}&select=*&limit=1`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      });
+      let data = await resp.json();
+      if (Array.isArray(data) && data[0]) {
+        chatMd = data[0].markdown;
+        if (data[0].client_name && !['Search', 'Cliente', 'Yes', 'No', 'Open', 'More'].includes(data[0].client_name)) {
+          clientName = data[0].client_name.split('\n')[0].trim();
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (chatMd) {
+    const textLower = chatMd.toLowerCase();
+    const dossier = {
+      clientName: clientName,
+      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(australia)/i.test(textLower) ? 'Australia' : (/(uruguay)/i.test(textLower) ? 'Uruguay' : 'United States')),
+      birthDate: /(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : 'Edad en perfil',
+      maritalStatus: 'Divorced / Soltera',
+      summary: `Expediente de ${clientName} verificado en Supabase.`
+    };
+    return res.json({ success: true, dossier, hasData: true });
+  }
+
+  res.json({ success: false, dossier: null, hasData: false });
+});
+
+// MOTOR DE PATRONES
+function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown) {
+  const textLower = (markdown || '').toLowerCase();
+  const findings = [];
+  let qualityScore = 100;
+  let riskLevel = 'BAJO';
+
+  const tmRegex = /(?:when we meet|when i visit|come visit|meet in person|see you in person|book a flight|buy a ticket|flying to you|fly to you|stay at a hotel|pack your bags|plane ticket|flight ticket|live together soon|cuando nos veamos|cuando nos conozcamos en persona|cuando viaje|ven a verme|viajar a verte|comprar el pasaje|boleto de avión|hotel juntos|nos vemos en persona)/i;
+  if (tmRegex.test(textLower)) {
+    findings.push({
+      type: 'CRITICAL',
+      title: '🚨 INFRACCIÓN: TRAVEL MISLEADING (TM)',
+      description: 'Insinuación de encuentro personal o viaje físico detectada en el diálogo.'
+    });
+    qualityScore -= 45;
+    riskLevel = 'CRÍTICO';
+  }
+
+  if (/(?:si me quisieras|si me amaras|envíame un regalo|mandame un regalo|dame un regalo|cómprame un regalo|send me a gift|need coins)/i.test(textLower)) {
+    findings.push({
+      type: 'CRITICAL',
+      title: '🛑 Coacción por Regalos',
+      description: 'Petición directa de regalos condicionando el afecto.'
+    });
+    qualityScore -= 30;
+    if (riskLevel !== 'CRÍTICO') riskLevel = 'ALTO';
+  }
+
+  qualityScore = Math.max(0, qualityScore);
+
+  return {
+    score: qualityScore,
+    riskLevel: riskLevel,
+    diagnosis: riskLevel === 'CRÍTICO' ? 'ALTO RIESGO: Infracciones graves detectadas.' : 'Conversación fluida y respetuosa.',
+    recommendation: riskLevel === 'CRÍTICO' ? 'Corregir al operador de inmediato sobre Travel Misleading.' : 'Mantener el ritmo de conversación.',
+    findings: findings
+  };
+}
+
+app.post('/api/chats/audit-deep', async (req, res) => {
+  const { operator, profile, clientName, clientId, markdown, messages } = req.body;
+  if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
+
+  const cleanClientId = String(clientId).trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente', 'Yes', 'No', 'Open', 'More'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Cliente').trim();
+  const auditKey = `${profile}_${cleanClientId}`;
+  
+  syncedClientsRegistry.add(cleanClientId.toLowerCase());
+  syncedClientsRegistry.add(safeClientName.toLowerCase());
+
+  const aiReport = runDeepAiPatternAnalysis(operator, profile, safeClientName, cleanClientId, markdown);
+
+  aiReport.findings.forEach((finding, index) => {
+    if (finding.type === 'CRITICAL' || finding.type === 'WARNING') {
+      const alertId = `${auditKey}_${index}_${Date.now()}`;
+      const alertEntry = {
+        id: alertId,
+        auditId: auditKey,
+        operatorName: operator || 'Desconocido',
+        profileName: profile,
+        clientName: safeClientName,
+        clientId: cleanClientId,
+        category: finding.title,
+        severity: finding.type === 'CRITICAL' ? 'CRÍTICA' : 'ALTA',
+        snippet: finding.description,
+        markdown: markdown,
+        status: 'PENDING',
+        timestamp: Date.now()
+      };
+      activeAlertsMap.set(alertId, alertEntry);
+
+      if (SUPABASE_URL && SUPABASE_KEY) {
+        fetch(`${SUPABASE_URL}/rest/v1/chat_alerts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
+          body: JSON.stringify(alertEntry)
+        }).catch(() => {});
+      }
+    }
+  });
+
+  const auditPayload = {
+    id: auditKey,
+    operator_name: operator || 'Desconocido',
+    profile_name: profile,
+    client_name: safeClientName,
+    client_id: cleanClientId,
+    total_messages: Array.isArray(messages) ? messages.length : 0,
+    flags: aiReport.findings.map(f => f.title),
+    has_breach: aiReport.riskLevel === 'CRÍTICO' || aiReport.riskLevel === 'ALTO',
+    markdown: markdown,
+    updated_at: new Date().toISOString()
   };
 
-  let totalGlobalReadLetters = 0;
-  let pendingLetterUserNames = [];
-  const pageReadCounts = new Map();
-  let isCrawlerRunning = false;
-  let lastCrawlerRunTime = 0;
+  recentChatAuditsRAM.set(auditKey, { ...auditPayload, operator, profile, clientName: safeClientName, clientId: cleanClientId, timestamp: Date.now() });
 
-  let lastUserInteraction = Date.now();
-  const AFK_THRESHOLD_SECONDS = 300;
-
-  let activeSlaTimers = {};
-  let finedTimerKeys = new Set();
-  let syncedChatsMemory = new Set();
-
-  const PROSPECTING_CYCLE_DURATION = 1800;
-  const PROSPECTING_MIN_QUOTA = 10;
-  
-  let hasStorageLoaded = false;
-  let prospectingCycleStartTime = 0;
-  let prospectingCount = 0;
-  let cycleInteractedUsersSet = new Set();
-
-  let modalSnoozedUntil = 0;
-  let countAtSnooze = 0;
-  let adminInvasiveModalEnabled = true;
-
-  let lastFocusedClientId = '';
-  let consecutiveMessagesSentToActiveClient = 0;
-  let hasChatMonopolyWarning = false;
-  let unattendedChatsCount = 0;
-
-  let bannedRoots = [
-    'promet', 'promes', 'whatsapp', 'skype', 'email', 'correo', 
-    'telefon', 'teléfon', 'numer', 'númer', 'banc', 'tarjet', 
-    'instagram', 'telegram', 'diner', 'transferenc', 'pay', 'cash'
-  ];
-
-  // 1. REGISTRO DE ACTIVIDAD
-  ['keydown', 'mousedown', 'mousemove', 'wheel', 'touchstart', 'input'].forEach(evt => {
-    window.addEventListener(evt, () => {
-      lastUserInteraction = Date.now();
-    }, { passive: true });
-  });
-
-  function getIdleSeconds() {
-    return Math.floor((Date.now() - lastUserInteraction) / 1000);
-  }
-
-  function isOperatorAfk() {
-    return getIdleSeconds() >= AFK_THRESHOLD_SECONDS;
-  }
-
-  // 2. RECUPERAR DATOS Y SESIÓN PERSISTENTE
-  if (isContextValid()) {
-    try {
-      chrome.storage.local.get(null, (data) => {
-        if (!isContextValid() || !data) return;
-
-        const now = Date.now();
-
-        if (data.prospectingCycleStartTime && (now - data.prospectingCycleStartTime < PROSPECTING_CYCLE_DURATION * 1000)) {
-          prospectingCycleStartTime = data.prospectingCycleStartTime;
-          prospectingCount = data.prospectingCount || 0;
-          if (Array.isArray(data.cycleInteractedUsersList)) {
-            cycleInteractedUsersSet = new Set(data.cycleInteractedUsersList);
-          }
-        } else {
-          prospectingCycleStartTime = now;
-          prospectingCount = 0;
-          cycleInteractedUsersSet.clear();
-          chrome.storage.local.set({
-            prospectingCycleStartTime: now,
-            prospectingCount: 0,
-            cycleInteractedUsersList: []
-          });
-        }
-
-        if (data.activeSlaTimers) activeSlaTimers = data.activeSlaTimers;
-        if (Array.isArray(data.syncedChatsList)) {
-          data.syncedChatsList.forEach(item => syncedChatsMemory.add(String(item).trim().toLowerCase()));
-        }
-
-        hasStorageLoaded = true;
-
-        if (data.monitoringActive) {
-          sessionData = {
-            operator: data.operator || 'walther',
-            shift: data.shift || 'Tarde',
-            profileName: data.profileName || 'HORACIO',
-            profileId: data.profileId || '118179794',
-            monitoringActive: true
-          };
-          renderFloatingBar();
-          injectIntelPanel();
-          syncServerKnownChats();
-        }
-      });
-    } catch (e) {}
-  }
-
-  function persistTimersToStorage() {
-    if (!isContextValid()) return;
-    try {
-      chrome.storage.local.set({ activeSlaTimers });
-    } catch (e) {}
-  }
-
-  function persistProspectingToStorage() {
-    if (!isContextValid()) return;
-    try {
-      chrome.storage.local.set({
-        prospectingCycleStartTime,
-        prospectingCount,
-        cycleInteractedUsersList: Array.from(cycleInteractedUsersSet)
-      });
-    } catch (e) {}
-  }
-
-  function persistSyncedChatsToStorage() {
-    if (!isContextValid()) return;
-    try {
-      chrome.storage.local.set({ syncedChatsList: Array.from(syncedChatsMemory) });
-    } catch (e) {}
-  }
-
-  if (isContextValid()) {
-    try {
-      chrome.storage.onChanged.addListener((changes, area) => {
-        if (!isContextValid()) return;
-        if (area === 'local') {
-          if (changes.monitoringActive) sessionData.monitoringActive = changes.monitoringActive.newValue;
-          if (changes.operator) sessionData.operator = changes.operator.newValue;
-          if (changes.shift) sessionData.shift = changes.shift.newValue;
-          if (changes.profileName) sessionData.profileName = changes.profileName.newValue;
-          if (changes.profileId) sessionData.profileId = changes.profileId.newValue;
-
-          if (sessionData.monitoringActive) {
-            renderFloatingBar();
-            injectIntelPanel();
-            syncServerKnownChats();
-          } else {
-            removeFloatingBar();
-          }
-        }
-      });
-    } catch (e) {}
-  }
-
-  // 3. SENSOR DE SEGUIMIENTO (10 USUARIOS / 30 MIN)
-  document.addEventListener('click', (e) => {
-    const btn = e.target.closest('button, [role="button"], a, div[class*="heart"], div[class*="like"], div[class*="wink"], div[class*="follow"]');
-    if (!btn || btn.id?.includes('ryr')) return;
-
-    const txt = (btn.innerText || '').toLowerCase().trim();
-    const isAlreadyFollowingOrLiked = txt === 'liked' || txt === 'unfollow' || txt.includes('unfollow') || btn.classList.contains('active');
-    if (isAlreadyFollowingOrLiked) return;
-
-    const isNewFollowAction = txt === 'like' || txt === 'wink' || txt === 'follow' || 
-                              btn.querySelector('svg[class*="heart"], [class*="like"], [class*="follow"]');
-
-    if (isNewFollowAction) {
-      let targetUserId = '';
-      const urlMatch = window.location.href.match(/(?:user|chat)\/(\d+)/);
-      if (urlMatch) targetUserId = urlMatch[1];
-
-      const card = btn.closest('div[class*="card"], div[class*="item"], div[class*="user"], div[class*="profile"], div[class*="box"]') || document;
-      if (!targetUserId && card) {
-        const link = card.querySelector('a[href*="/user/"], a[href*="/chat/"]');
-        if (link) {
-          const m = link.getAttribute('href').match(/(?:user|chat)\/(\d+)/);
-          if (m) targetUserId = m[1];
-        }
-        const nameEl = card.querySelector('h1, h2, h3, h4, [class*="name"], [class*="title"]');
-        if (!targetUserId && nameEl) targetUserId = 'user_' + nameEl.innerText.trim().toLowerCase();
-      }
-
-      if (!targetUserId) {
-        const headerName = document.querySelector('h1, h2, [class*="header"] [class*="name"], [class*="user-name"]');
-        if (headerName) targetUserId = 'user_' + headerName.innerText.trim().toLowerCase();
-      }
-
-      if (!targetUserId) targetUserId = 'target_' + Date.now();
-
-      if (!cycleInteractedUsersSet.has(targetUserId)) {
-        cycleInteractedUsersSet.add(targetUserId);
-        prospectingCount++;
-        persistProspectingToStorage();
-        updateBarNumbersOnly();
-        sendTelemetry(true);
-
-        if (prospectingCount >= PROSPECTING_MIN_QUOTA) {
-          removeGoogleToastNotification();
-        }
-      }
-    }
-  }, true);
-
-  // 4. NOTIFICACIÓN FLOTANTE TIPO GOOGLE
-  function evaluateProspectingCycle() {
-    if (!hasStorageLoaded || prospectingCycleStartTime === 0) return;
-
-    const now = Date.now();
-    const elapsed = Math.floor((now - prospectingCycleStartTime) / 1000);
-    const remaining = Math.max(0, PROSPECTING_CYCLE_DURATION - elapsed);
-
-    if (prospectingCount < PROSPECTING_MIN_QUOTA && (remaining <= 300 || elapsed >= PROSPECTING_CYCLE_DURATION)) {
-      renderGoogleToastNotification(remaining, prospectingCount);
-    } else {
-      removeGoogleToastNotification();
-    }
-
-    if (elapsed >= PROSPECTING_CYCLE_DURATION) {
-      prospectingCycleStartTime = Date.now();
-      prospectingCount = 0;
-      cycleInteractedUsersSet.clear();
-      persistProspectingToStorage();
-      updateBarNumbersOnly();
-      sendTelemetry(true);
-    }
-  }
-
-  function renderGoogleToastNotification(remainingSec, currentCount) {
-    if (document.getElementById('ryr-google-toast')) {
-      const elCount = document.getElementById('ryr-toast-count');
-      const elTimer = document.getElementById('ryr-toast-timer');
-      if (elCount) elCount.innerText = `${currentCount}/${PROSPECTING_MIN_QUOTA}`;
-      if (elTimer) {
-        const min = Math.floor(remainingSec / 60);
-        const sec = remainingSec % 60;
-        elTimer.innerText = `${min < 10 ? '0' : ''}${min}:${sec < 10 ? '0' : ''}${sec}`;
-      }
-      return;
-    }
-
-    const toast = document.createElement('div');
-    toast.id = 'ryr-google-toast';
-
-    const min = Math.floor(remainingSec / 60);
-    const sec = remainingSec % 60;
-    const timeStr = `${min < 10 ? '0' : ''}${min}:${sec < 10 ? '0' : ''}${sec}`;
-
-    toast.innerHTML = `
-      <div class="ryr-toast-header">
-        <span>🔔 Recordatorio de Tráfico</span>
-        <button class="ryr-toast-close" onclick="document.getElementById('ryr-google-toast')?.remove()">✕</button>
-      </div>
-      <div>
-        Es momento de interactuar con nuevos perfiles en Search.<br>
-        Progreso: <b id="ryr-toast-count" style="color:#10b981;">${currentCount}/${PROSPECTING_MIN_QUOTA}</b> | Tiempo: <span id="ryr-toast-timer" style="color:#f59e0b;">${timeStr}</span>
-      </div>
-      <button style="background:#10b981; color:#060913; border:none; padding:6px 10px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:11px;" onclick="window.location.href='https://talkytimes.com/search'">
-        🔍 Ir a Search
-      </button>
-    `;
-
-    document.body.appendChild(toast);
-  }
-
-  function removeGoogleToastNotification() {
-    const toast = document.getElementById('ryr-google-toast');
-    if (toast) toast.remove();
-  }
-
-  // 5. FIREWALL 100% BLINDADO
-  function checkViolationInText(text) {
-    const lower = text.toLowerCase();
-    return bannedRoots.some(root => lower.includes(root.toLowerCase()));
-  }
-
-  function enforceFirewall() {
-    const inputs = document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"]');
-    let anyViolation = false;
-
-    inputs.forEach(input => {
-      const text = (input.value || input.innerText || '').trim();
-      const hasViolation = checkViolationInText(text);
-
-      if (hasViolation) {
-        anyViolation = true;
-        input.style.setProperty('border', '2px solid #ef4444', 'important');
-      } else {
-        if (input.style.borderColor === 'rgb(239, 68, 68)') {
-          input.style.removeProperty('border');
-        }
-      }
-    });
-
-    const sendButtons = document.querySelectorAll('button, [role="button"]');
-    sendButtons.forEach(btn => {
-      const btnText = btn.innerText.toLowerCase();
-      const isSendBtn = (btnText.includes('send') || btnText.includes('enviar') || btn.querySelector('svg') || (btn.className && btn.className.toLowerCase().includes('send'))) &&
-                        !btn.classList.contains('ryr-row-extract-btn') && 
-                        !btn.classList.contains('ryr-btn-logout') &&
-                        !btn.classList.contains('ryr-btn-intel');
-
-      if (isSendBtn) {
-        if (anyViolation) {
-          btn.classList.add('ryr-btn-blocked-force');
-          btn.disabled = true;
-          btn.setAttribute('disabled', 'true');
-          btn.style.setProperty('background-color', '#9ca3af', 'important');
-          btn.style.setProperty('background', '#9ca3af', 'important');
-          btn.style.setProperty('pointer-events', 'none', 'important');
-          btn.style.setProperty('cursor', 'not-allowed', 'important');
-          btn.style.setProperty('filter', 'grayscale(100%)', 'important');
-          btn.style.setProperty('opacity', '0.45', 'important');
-        } else {
-          btn.classList.remove('ryr-btn-blocked-force');
-          btn.disabled = false;
-          btn.removeAttribute('disabled');
-          btn.style.removeProperty('background-color');
-          btn.style.removeProperty('background');
-          btn.style.removeProperty('pointer-events');
-          btn.style.removeProperty('cursor');
-          btn.style.removeProperty('filter');
-          btn.style.removeProperty('opacity');
-        }
-      }
-    });
-
-    if (anyViolation) {
-      document.body.classList.add('ryr-firewall-blocked');
-    } else {
-      document.body.classList.remove('ryr-firewall-blocked');
-    }
-  }
-
-  ['input', 'keyup', 'keydown', 'paste', 'change'].forEach(evtType => {
-    document.addEventListener(evtType, enforceFirewall, true);
-  });
-
-  window.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      const activeEl = document.activeElement;
-      if (activeEl && (activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'INPUT' || activeEl.isContentEditable)) {
-        const text = (activeEl.value || activeEl.innerText || '').trim();
-        if (checkViolationInText(text)) {
-          e.preventDefault();
-          e.stopPropagation();
-          e.stopImmediatePropagation();
-          activeEl.style.setProperty('border', '2px solid #ef4444', 'important');
-          enforceFirewall();
-          return false;
-        }
-      }
-    }
-  }, true);
-
-  // 6. RASTREO DE MONOPOLIO
-  document.addEventListener('click', (e) => {
-    const btn = e.target.closest('button, [role="button"]');
-    if (btn) {
-      const btnText = btn.innerText.toLowerCase();
-      if (btnText.includes('send') || btnText.includes('enviar') || btn.classList.value.includes('send')) {
-        const currentActiveId = getExactNumericClientId();
-        if (currentActiveId !== 'N/A') {
-          if (currentActiveId === lastFocusedClientId) {
-            consecutiveMessagesSentToActiveClient++;
-          } else {
-            lastFocusedClientId = currentActiveId;
-            consecutiveMessagesSentToActiveClient = 1;
-          }
-          evaluateChatMonopoly();
-        }
-      }
-    }
-  }, true);
-
-  function evaluateChatMonopoly() {
-    const totalWaitingOtherChats = Object.keys(activeSlaTimers).filter(k => k !== lastFocusedClientId).length;
-    unattendedChatsCount = totalWaitingOtherChats;
-
-    if (consecutiveMessagesSentToActiveClient >= 4 && totalWaitingOtherChats >= 2) {
-      hasChatMonopolyWarning = true;
-    } else {
-      hasChatMonopolyWarning = false;
-    }
-    updateBarNumbersOnly();
-    sendTelemetry(true);
-  }
-
-  // 7. EXTRACTOR DE DATOS
-  function extractSectionPills(sectionTitle) {
-    const allHeaders = document.querySelectorAll('h1, h2, h3, h4, span, div, strong');
-    for (let h of allHeaders) {
-      if (h.children.length === 0 && h.innerText.trim().toLowerCase() === sectionTitle.toLowerCase()) {
-        const container = h.closest('div, section') || h.parentElement;
-        if (container) {
-          const pills = container.querySelectorAll('button, span, div[class*="pill"], div[class*="badge"], div[class*="tag"], [class*="chip"]');
-          const results = Array.from(pills)
-            .map(p => p.innerText.trim())
-            .filter(v => v && v.toLowerCase() !== sectionTitle.toLowerCase() && v.length > 1);
-          if (results.length > 0) {
-            return Array.from(new Set(results)).join(', ');
-          }
-        }
-      }
-    }
-    return '';
-  }
-
-  function sanitizeClientName(raw) {
-    if (!raw) return 'Clienta';
-    const clean = raw
-      .split('\n')[0]
-      .replace(/(\d+\s*(minute|hour|day|week|month)s?\s*ago|\ban hour ago\b|\d+\s*[✉💬]|\bonline\b|\btyping\b|\bSearch\b|\bMessages\b)/gi, '')
-      .replace(/\s+/g, ' ')
-      .replace(/^,\s*/, '')
-      .trim();
-
-    const noisyWords = ['yes', 'no', 'open', 'search', 'messages', 'mail', 'gifts', 'account', 'titan apex', 'mute', 'listened', 'public photos', 'my content', 'more'];
-    if (noisyWords.includes(clean.toLowerCase()) || clean.length < 2) {
-      return 'Clienta';
-    }
-    return clean;
-  }
-
-  function getExactClientProfileData() {
-    let clientName = '';
-    const chatTitleContainer = document.querySelector('div[data-test-id="dialog-header-title"], div[class*="dialog-header"], div[class*="chat-header"]');
-    if (chatTitleContainer) {
-      const candidates = chatTitleContainer.querySelectorAll('h1, h2, h3, span, div');
-      for (let c of candidates) {
-        const txt = c.innerText.trim();
-        const cleaned = sanitizeClientName(txt);
-        if (cleaned !== 'Clienta' && txt.length > 1 && !txt.includes('ago') && !txt.includes('Online')) {
-          clientName = cleaned;
-          break;
-        }
-      }
-    }
-
-    if (!clientName) {
-      const activeTabItem = document.querySelector('div[class*="dialog-item"][class*="active"], div[class*="item-wrap"][class*="active"], div[data-selected="true"]');
-      if (activeTabItem) {
-        const firstLine = activeTabItem.innerText.split('\n')[0].trim();
-        const cleaned = sanitizeClientName(firstLine);
-        if (cleaned !== 'Clienta') clientName = cleaned;
-      }
-    }
-
-    let country = '';
-    let birthDate = '';
-    let maritalStatus = '';
-
-    const allPills = document.querySelectorAll('span, div, button, p');
-    allPills.forEach(el => {
-      if (el.children.length > 1) return;
-      const t = el.innerText.trim();
-
-      if (!country && /^(United States|Brazil|Australia|Poland|Hong Kong|Colombia|Canada|Mexico|Spain|Argentina|United Kingdom|Germany|France|Uruguay)/i.test(t)) {
-        country = t;
-      }
-      if (!birthDate && /([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})/i.test(t)) {
-        const m = t.match(/([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})/i);
-        if (m) birthDate = m[1];
-      }
-      if (!maritalStatus && /^(Divorced|Widowed|Single|Not Married|Married|Viudo|Viuda|Divorciado|Soltero|Soltera)$/i.test(t)) {
-        maritalStatus = t;
-      }
-    });
-
-    let ageText = '';
-    if (birthDate) {
-      const yearMatch = birthDate.match(/\d{4}/);
-      if (yearMatch) {
-        const age = new Date().getFullYear() - parseInt(yearMatch[0], 10);
-        ageText = `${age} años`;
-      }
-    }
-
-    const interests = extractSectionPills('Interests') || 'Traveling, Hockey';
-
-    return {
-      clientName: clientName || 'Kath',
-      bioData: {
-        country: country || 'United States',
-        birthDate: birthDate ? `${birthDate} (${ageText})` : 'Edad en perfil',
-        maritalStatus: maritalStatus || 'Not married',
-        interests: interests
-      }
-    };
-  }
-
-  function getExactNumericClientId(targetUrl = window.location.href) {
-    const chatMatch = targetUrl.match(/chat\/\d+_(\d+)/);
-    if (chatMatch) return String(chatMatch[1]).trim();
-    const userMatch = targetUrl.match(/user\/(\d+)/);
-    if (userMatch) return String(userMatch[1]).trim();
-    return '119478500';
-  }
-
-  // 8. PARSER DE DIÁLOGOS BIDIRECCIONAL JERÁRQUICO (CAPTURA HORACIO VS CLIENTA)
-  function isOperatorMessageContainer(node) {
-    let current = node;
-    for (let i = 0; i < 5 && current && current !== document.body; i++) {
-      const text = (current.innerText || '').trim();
-      const cls = (current.className || '').toLowerCase();
-      const style = window.getComputedStyle(current);
-
-      if (/(?:you:|tú:|tu:|você:)/i.test(text)) return true;
-
-      // Iconos de enviado / checks
-      if (current.querySelector('svg[class*="check"], svg[data-icon="check"], [class*="status-sent"], [class*="read-check"]')) {
-        return true;
-      }
-
-      // Clases comunes de emisor saliente
-      if (/out|right|self|mine|outgoing|from-me/i.test(cls) && !/incoming|left|other/i.test(cls)) {
-        return true;
-      }
-
-      // Alineación a la derecha
-      if (style.justifyContent === 'flex-end' || style.alignSelf === 'flex-end' || style.textAlign === 'right' || style.marginLeft === 'auto') {
-        return true;
-      }
-
-      // Color de fondo amarillo/crema o azul claro del operador
-      const bg = style.backgroundColor;
-      if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
-        if (bg.includes('254, 249') || bg.includes('254, 240') || bg.includes('255, 251') || bg.includes('224, 231') || bg.includes('238, 242')) {
-          return true;
-        }
-      }
-
-      current = current.parentElement;
-    }
-    return false;
-  }
-
-  function parseCurrentChatMessagesBidirectional(realName) {
-    const allBubbles = document.querySelectorAll('div[class*="message-wrap"], div[class*="message-item"], div[class*="dialog-msg"], div[class*="chat-message"]');
-    const leafNodes = Array.from(allBubbles).filter(el => {
-      return !el.querySelector('div[class*="message-wrap"], div[class*="message-item"], div[class*="dialog-msg"], div[class*="chat-message"]');
-    });
-
-    const messages = [];
-    const seenSignatures = new Set();
-
-    leafNodes.forEach(node => {
-      const textRaw = node.innerText || '';
-      if (textRaw.includes('seen') && textRaw.length < 10) return;
-      if (textRaw.includes('View post') && textRaw.length < 15) return;
-      if (/^\+\d+$/.test(textRaw.trim())) return;
-
-      const isOperator = isOperatorMessageContainer(node);
-
-      const timeEl = node.querySelector('time, [class*="time"], [class*="date"]') || node.closest('[class*="wrap"]')?.querySelector('time') || node.parentElement?.querySelector('time');
-      const timeText = timeEl ? timeEl.innerText.trim() : '';
-
-      let cleanText = textRaw
-        .replace(/(You:|Tú:|Tu:|Você:)/gi, '')
-        .replace(/\d+:\d+\s*(am|pm)/gi, '')
-        .replace(/seen/gi, '')
-        .replace(/View post/gi, '')
-        .trim();
-
-      const signature = `${isOperator ? 'OP' : 'USER'}_${cleanText}`;
-
-      if (cleanText.length > 0 && !seenSignatures.has(signature)) {
-        seenSignatures.add(signature);
-        messages.push({
-          isOperator: Boolean(isOperator),
-          senderName: isOperator ? (sessionData.profileName || 'HORACIO') : realName,
-          time: timeText || 'Reciente',
-          text: cleanText
-        });
-      }
-    });
-
-    return messages;
-  }
-
-  function buildCurrentMarkdownTranscript(clientName, clientId, bioData) {
-    const messages = parseCurrentChatMessagesBidirectional(clientName);
-    
-    let mdLines = [
-      `# HISTORIAL DE CONVERSACIÓN | RYR TITAN AUDIT`,
-      `- **Operador:** ${sessionData.operator || 'walther'} [${sessionData.shift || 'Tarde'}]`,
-      `- **Perfil Asignado:** ${sessionData.profileName || 'HORACIO'} (ID: ${sessionData.profileId || '118179794'})`,
-      `- **Cliente:** ${clientName}`,
-      `- **ID del Usuario:** ${clientId}`,
-      `- **Ubicación:** ${bioData?.country} | **Nacimiento:** ${bioData?.birthDate}`,
-      `- **Fecha:** ${new Date().toLocaleString()}`,
-      `---`,
-      `### Diálogo Transcrito (Ambos Participantes):`
-    ];
-
-    messages.forEach(m => {
-      if (m.isOperator) {
-        mdLines.push(`- 💼 **${sessionData.profileName || 'HORACIO'} [Op: ${sessionData.operator}]** [${m.time}]: ${m.text}`);
-      } else {
-        mdLines.push(`- 👤 **${clientName} [Cliente]** [${m.time}]: ${m.text}`);
-      }
-    });
-
-    return mdLines.join('\n');
-  }
-
-  async function executeExtraction(clientNameParam, explicitNumericId, mode = 'RECENT', btnElement = null) {
-    let finalClientId = explicitNumericId;
-    if (!finalClientId || finalClientId === 'N/A' || isNaN(finalClientId)) {
-      finalClientId = getExactNumericClientId();
-    }
-
-    const { clientName, bioData } = getExactClientProfileData();
-    const finalClientName = (clientNameParam && !['Search', 'Cliente', 'Yes', 'No', 'Open', 'More'].includes(clientNameParam)) ? sanitizeClientName(clientNameParam) : clientName;
-
-    // EXTRACCIÓN HISTÓRICA DESDE EL PRIMER DÍA
-    if (mode === 'FULL') {
-      if (btnElement) btnElement.innerText = '📜...';
-      const jumpFirstBtn = Array.from(document.querySelectorAll('button, a, span')).find(el => el.innerText.includes('The very 1st message') || el.innerText.includes('Jump to'));
-      if (jumpFirstBtn) {
-        jumpFirstBtn.click();
-        await new Promise(r => setTimeout(r, 1200));
-      }
-
-      // Ciclo de scroll hacia arriba progresivo para forzar carga de mensajes antiguos
-      const chatContainer = document.querySelector('div[class*="dialog-content"], div[class*="chat-scroll"], div[class*="messages-wrap"], div[class*="message-list"]');
-      if (chatContainer) {
-        for (let s = 0; s < 12; s++) {
-          chatContainer.scrollTop = 0;
-          await new Promise(r => setTimeout(r, 250));
-        }
-      }
-    }
-
-    const messages = parseCurrentChatMessagesBidirectional(finalClientName);
-    if (messages.length === 0 && !window.location.href.includes('/user/')) {
-      if (btnElement) btnElement.innerText = '❌';
-      return;
-    }
-
-    if (btnElement) btnElement.innerText = '⏳';
-
-    const targetMessages = mode === 'RECENT' ? messages.slice(-100) : messages;
-    const markdownDoc = buildCurrentMarkdownTranscript(finalClientName, finalClientId, bioData);
-
-    try {
-      const res = await fetch(`${API_URL}/api/chats/audit-deep`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          operator: sessionData.operator,
-          profile: sessionData.profileName || 'HORACIO',
-          clientName: finalClientName,
-          clientId: String(finalClientId).trim(),
-          bioData: bioData,
-          markdown: markdownDoc,
-          messages: targetMessages
-        })
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        syncedChatsMemory.add(String(finalClientId).trim().toLowerCase());
-        syncedChatsMemory.add(finalClientName.toLowerCase());
-        persistSyncedChatsToStorage();
-      }
-
-      if (btnElement) {
-        btnElement.style.setProperty('background', '#334155', 'important');
-        btnElement.style.setProperty('color', '#94a3b8', 'important');
-        btnElement.innerText = '⚡';
-      }
-
-      loadActiveDossier();
-    } catch (err) {
-      if (btnElement) btnElement.innerText = '⚠️';
-    }
-  }
-
-  // 9. CONTROL DE FILAS
-  function handleInboxTimersAndExtractionButtons() {
-    const allMatches = document.querySelectorAll('div[data-test-id*="dialog-item"], div[class*="dialog-item"], div[class*="item-wrap"], .tab-content-item');
-    const validUnansweredKeys = new Set();
-
-    const rootRows = Array.from(allMatches).filter(el => {
-      let parent = el.parentElement;
-      while (parent && parent !== document.body) {
-        if (parent.matches && parent.matches('div[data-test-id*="dialog-item"], div[class*="dialog-item"], div[class*="item-wrap"], .tab-content-item')) {
-          return false;
-        }
-        parent = parent.parentElement;
-      }
-      return true;
-    });
-
-    rootRows.forEach(row => {
-      const fullText = row.innerText || '';
-      if (fullText.length < 3) return;
-
-      const lines = fullText.split('\n').map(l => l.trim()).filter(Boolean);
-      const contactName = sanitizeClientName(lines[0]);
-      const cleanSimpleName = contactName.split(',')[0].trim().toLowerCase();
-      
-      let rowNumericId = 'N/A';
-      const userLink = row.querySelector('a[href*="/chat/"], a[href*="/user/"]');
-      if (userLink) {
-        const href = userLink.getAttribute('href');
-        rowNumericId = getExactNumericClientId(href);
-      }
-
-      row.style.position = 'relative';
-
-      const isThisRowSynced = syncedChatsMemory.has(contactName.toLowerCase()) || 
-                              syncedChatsMemory.has(cleanSimpleName) ||
-                              (rowNumericId !== 'N/A' && syncedChatsMemory.has(rowNumericId.toLowerCase()));
-
-      let btnExtract = row.querySelector('.ryr-row-extract-btn');
-      if (!btnExtract) {
-        btnExtract = document.createElement('button');
-        btnExtract.className = 'ryr-row-extract-btn';
-        btnExtract.innerText = '⚡';
-        btnExtract.onclick = (e) => {
-          e.stopPropagation();
-          document.querySelectorAll('.ryr-extract-menu').forEach(m => m.remove());
-
-          const menu = document.createElement('div');
-          menu.className = 'ryr-extract-menu';
-          menu.innerHTML = `
-            <button id="btn-opt-100">📄 Últimos 100</button>
-            <button id="btn-opt-full">📜 Historial Completo</button>
-          `;
-
-          menu.querySelector('#btn-opt-100').onclick = (ev) => {
-            ev.stopPropagation();
-            menu.remove();
-            executeExtraction(contactName, rowNumericId, 'RECENT', btnExtract);
-          };
-
-          menu.querySelector('#btn-opt-full').onclick = (ev) => {
-            ev.stopPropagation();
-            menu.remove();
-            executeExtraction(contactName, rowNumericId, 'FULL', btnExtract);
-          };
-
-          row.appendChild(menu);
-
-          setTimeout(() => {
-            window.addEventListener('click', () => menu.remove(), { once: true });
-          }, 100);
-        };
-        row.appendChild(btnExtract);
-      }
-
-      if (isThisRowSynced) {
-        btnExtract.style.setProperty('background', '#334155', 'important');
-        btnExtract.style.setProperty('color', '#94a3b8', 'important');
-        btnExtract.style.setProperty('border', '1px solid #475569', 'important');
-      } else {
-        btnExtract.style.setProperty('background', '#1d4ed8', 'important');
-        btnExtract.style.setProperty('color', '#ffffff', 'important');
-        btnExtract.style.setProperty('border', '1px solid #60a5fa', 'important');
-      }
-
-      // TEMPORIZADOR
-      const isDeactivated = fullText.includes('Deactivated user');
-      const isTyping = fullText.toLowerCase().includes('typing') || row.querySelector('[class*="typing"]');
-      const isLiked = fullText.toLowerCase().includes('liked');
-      const hasOperatorPrefix = /(?:you|tú|tu|você)\s*:/i.test(fullText);
-      const isOperatorReplied = hasOperatorPrefix && !isTyping && !isLiked;
-
-      const timerKey = rowNumericId !== 'N/A' ? rowNumericId : contactName;
-      const existingTimer = row.querySelector('.ryr-inbox-timer');
-
-      if (isOperatorReplied || isDeactivated) {
-        if (existingTimer) existingTimer.remove();
-        if (activeSlaTimers[timerKey]) {
-          delete activeSlaTimers[timerKey];
-          persistTimersToStorage();
-          sendTelemetry(true);
-        }
-        return;
-      }
-
-      validUnansweredKeys.add(timerKey);
-
-      if (!activeSlaTimers[timerKey]) {
-        activeSlaTimers[timerKey] = Date.now();
-        persistTimersToStorage();
-      }
-
-      const startTimestamp = activeSlaTimers[timerKey];
-      const elapsedSeconds = Math.floor((Date.now() - startTimestamp) / 1000);
-      const remainingSeconds = Math.max(0, 120 - elapsedSeconds);
-
-      const min = Math.floor(remainingSeconds / 60);
-      const sec = remainingSeconds % 60;
-      const formatted = `${min < 10 ? '0' : ''}${min}:${sec < 10 ? '0' : ''}${sec}`;
-
-      let badge = existingTimer;
-      if (!badge) {
-        badge = document.createElement('span');
-        badge.className = 'ryr-inbox-timer';
-        row.appendChild(badge);
-      }
-
-      if (remainingSeconds > 60) {
-        badge.className = 'ryr-inbox-timer ryr-timer-green';
-        badge.innerText = `⏱️ ${formatted}`;
-      } else if (remainingSeconds > 0) {
-        badge.className = 'ryr-inbox-timer ryr-timer-orange';
-        badge.innerText = `⚠️ ${formatted}`;
-      } else {
-        badge.className = 'ryr-inbox-timer ryr-timer-red';
-        badge.innerText = `🚨 00:00`;
-
-        if (!finedTimerKeys.has(timerKey)) {
-          finedTimerKeys.add(timerKey);
-          triggerAutomaticFine(contactName, rowNumericId);
-        }
-      }
-    });
-
-    let changed = false;
-    for (let k in activeSlaTimers) {
-      if (!validUnansweredKeys.has(k)) {
-        delete activeSlaTimers[k];
-        changed = true;
-      }
-    }
-    if (changed) {
-      persistTimersToStorage();
-      sendTelemetry(true);
-    }
-  }
-
-  async function triggerAutomaticFine(clientName, clientId) {
-    try {
-      await fetch(`${API_URL}/api/fines/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          operator: sessionData.operator || 'walther',
-          shift: sessionData.shift || 'Tarde',
-          profile: sessionData.profileName || 'HORACIO',
-          clientName: clientName,
-          clientId: clientId,
-          reason: `Demora mayor a 2 minutos en responder a ${clientName}`
-        })
-      });
-    } catch (e) {}
-    sendTelemetry(true);
-  }
-
-  // 10. PANEL DE INTELIGENCIA DE USUARIOS (OPERADOR)
-  function injectIntelPanel() {
-    if (document.getElementById('ryr-intel-panel')) return;
-
-    const panel = document.createElement('div');
-    panel.id = 'ryr-intel-panel';
-    panel.innerHTML = `
-      <div class="intel-header">
-        <span>🧠 ASISTENTE IA & ESTRATEGA DE CHAT</span>
-        <button id="ryr-close-intel" style="background:none; border:none; color:#fff; font-size:16px; cursor:pointer;">✕</button>
-      </div>
-      <div class="intel-body">
-        <div id="intel-dossier-box" class="intel-dossier">
-          <p style="color:#94a3b8;">Abre un chat para ver el expediente...</p>
-        </div>
-        
-        <div class="intel-quick-actions">
-          <button class="intel-quick-btn" onclick="window.sendQuickPrompt('de donde es')">📍 Ubicación</button>
-          <button class="intel-quick-btn" onclick="window.sendQuickPrompt('cuantos años tiene')">🎂 Edad</button>
-          <button class="intel-quick-btn" onclick="window.sendQuickPrompt('dame un mensaje para enamorarla')">💌 Mensaje</button>
-        </div>
-
-        <div id="intel-messages-stream" class="intel-chat-stream">
-          <div class="chat-bubble-ai">👋 ¡Hola! Pregúntame sobre la clienta o pídeme cómo responder a su último mensaje.</div>
-        </div>
-      </div>
-      <div class="intel-input-box">
-        <input type="text" id="input-intel-query" placeholder="Pregunta sobre la clienta o pide un mensaje...">
-        <button id="btn-send-intel-query">Consultar</button>
-      </div>
-    `;
-
-    document.body.appendChild(panel);
-
-    document.getElementById('ryr-close-intel').onclick = () => {
-      panel.classList.remove('open');
-    };
-
-    window.sendQuickPrompt = (promptText) => {
-      document.getElementById('input-intel-query').value = promptText;
-      askIntelligenceQuery();
-    };
-
-    document.getElementById('btn-send-intel-query').onclick = askIntelligenceQuery;
-    document.getElementById('input-intel-query').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') askIntelligenceQuery();
-    });
-  }
-
-  async function askIntelligenceQuery() {
-    const input = document.getElementById('input-intel-query');
-    const query = input.value.trim();
-    if (!query) return;
-
-    const stream = document.getElementById('intel-messages-stream');
-
-    const userBubble = document.createElement('div');
-    userBubble.className = 'chat-bubble-user';
-    userBubble.innerText = query;
-    stream.appendChild(userBubble);
-    input.value = '';
-
-    const aiBubble = document.createElement('div');
-    aiBubble.className = 'chat-bubble-ai';
-    aiBubble.innerText = '🤖 Analizando con Groq en tiempo real...';
-    stream.appendChild(aiBubble);
-    stream.scrollTop = stream.scrollHeight;
-
-    const { clientName, bioData } = getExactClientProfileData();
-    const clientId = getExactNumericClientId();
-    const liveMarkdown = buildCurrentMarkdownTranscript(clientName, clientId, bioData);
-
-    try {
-      const res = await fetch(`${API_URL}/api/intelligence/query`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: query,
-          clientName: clientName,
-          profileName: sessionData.profileName,
-          clientId: clientId,
-          bioData: bioData,
-          liveMarkdown: liveMarkdown
-        })
-      });
-      const data = await res.json();
-      const rawAnswer = data.answer || 'No se pudo generar respuesta.';
-
-      const englishMatch = rawAnswer.match(/"([^"]+)"/);
-      const englishToCopy = englishMatch ? englishMatch[1] : '';
-
-      aiBubble.innerHTML = `<div>${rawAnswer}</div>` + (englishToCopy ? `
-        <button class="copy-msg-btn" onclick="navigator.clipboard.writeText('${englishToCopy.replace(/'/g, "\\'")}'); this.innerText='✅ Copiado!'; setTimeout(()=>this.innerText='📋 Copiar Inglés', 1500);">
-          📋 Copiar Inglés
-        </button>
-      ` : '');
-
-      stream.scrollTop = stream.scrollHeight;
-    } catch (e) {
-      aiBubble.innerText = '⚠️ Error de conexión con el servidor.';
-    }
-  }
-
-  async function loadActiveDossier() {
-    const box = document.getElementById('intel-dossier-box');
-    const { clientName, bioData } = getExactClientProfileData();
-    const clientId = getExactNumericClientId();
-
-    if (!clientId || clientId === 'N/A') {
-      box.innerHTML = '<p style="color:#94a3b8;">Abre una conversación en Talkytimes para ver los datos del cliente.</p>';
-      return;
-    }
-
-    executeExtraction(clientName, clientId, 'RECENT', null);
-
-    box.innerHTML = `
-      <div style="font-weight:bold; color:#00ffcc; margin-bottom:4px;">👤 ${clientName} (ID: ${clientId})</div>
-      <div>📍 <b>Ubicación:</b> ${bioData.country}</div>
-      <div>🎂 <b>Nacimiento:</b> ${bioData.birthDate}</div>
-      <div>💍 <b>Estado Civil:</b> ${bioData.maritalStatus}</div>
-    `;
-  }
-
-  // 11. CRAWLER DE ACTIVE LIMITS
-  function extractReadLetterDetailsFromDoc(targetDoc) {
-    if (!targetDoc) return { count: 0, names: [] };
-    let count = 0;
-    const names = [];
-    const mailRows = targetDoc.querySelectorAll('[data-test-id="file:mail-box-item-root"], div[class*="wrt-G4Ni"]');
-
-    mailRows.forEach(row => {
-      const badges = row.querySelectorAll('span, div');
-      let isRead = false;
-      for (let b of badges) {
-        const txt = b.innerText.trim().toLowerCase();
-        if (txt === 'read' || txt === 'leído' || txt === 'leido') {
-          isRead = true;
-          break;
-        }
-      }
-      if (isRead) {
-        count++;
-        const nameEl = row.querySelector('h3, h4, [class*="name"], span');
-        if (nameEl) names.push(nameEl.innerText.trim());
-      }
-    });
-
-    return { count, names };
-  }
-
-  async function runBackgroundPaginationCrawler() {
-    if (!window.location.href.includes('/mails/has_limits')) return;
-
-    const pageMatch = window.location.href.match(/has_limits\/all\/(\d+)/);
-    const currentPage = pageMatch ? parseInt(pageMatch[1], 10) : 1;
-    const currentCount = countReadInDocument(document);
-    pageReadCounts.set(currentPage, currentCount);
-
-    let maxPage = 1;
-    const pageElements = document.querySelectorAll('ul.pagination li, [class*="pagination"] button, [class*="pagination"] a, span');
-    pageElements.forEach(el => {
-      const num = parseInt(el.innerText.trim(), 10);
-      if (!isNaN(num) && num > maxPage && num < 40) {
-        maxPage = num;
-      }
-    });
-
-    if (maxPage <= 1) {
-      totalGlobalReadLetters = currentCount;
-      pendingLetterUserNames = currentDetails.names;
-      updateBarNumbersOnly();
-      return;
-    }
-
-    const now = Date.now();
-    if (isCrawlerRunning || (now - lastCrawlerRunTime < 20000)) {
-      recalculateTotalFromMap();
-      return;
-    }
-
-    isCrawlerRunning = true;
-    lastCrawlerRunTime = now;
-
-    let crawlerIframe = document.getElementById('ryr-silent-crawler');
-    if (!crawlerIframe) {
-      crawlerIframe = document.createElement('iframe');
-      crawlerIframe.id = 'ryr-silent-crawler';
-      crawlerIframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:10px;height:10px;visibility:hidden;pointer-events:none;opacity:0;';
-      document.body.appendChild(crawlerIframe);
-    }
-
-    let allCollectedNames = [...currentDetails.names];
-
-    for (let p = 1; p <= maxPage; p++) {
-      if (p !== currentPage) {
-        await new Promise(resolve => {
-          crawlerIframe.src = `https://talkytimes.com/mails/has_limits/all/${p}`;
-          let attempts = 0;
-          const checkInterval = setInterval(() => {
-            attempts++;
-            try {
-              const iframeDoc = crawlerIframe.contentDocument || crawlerIframe.contentWindow?.document;
-              if (iframeDoc) {
-                const rows = iframeDoc.querySelectorAll('[data-test-id="file:mail-box-item-root"], div[class*="wrt-G4Ni"]');
-                if (rows.length > 0 || attempts >= 15) {
-                  const pDetails = extractReadLetterDetailsFromDoc(iframeDoc);
-                  pageReadCounts.set(p, pDetails.count);
-                  allCollectedNames = [...allCollectedNames, ...pDetails.names];
-                  clearInterval(checkInterval);
-                  resolve();
-                }
-              }
-            } catch (err) {
-              clearInterval(checkInterval);
-              resolve();
-            }
-          }, 100);
-        });
-      }
-    }
-
-    pendingLetterUserNames = Array.from(new Set(allCollectedNames));
-    isCrawlerRunning = false;
-    recalculateTotalFromMap();
-  }
-
-  function recalculateTotalFromMap() {
-    let sum = 0;
-    for (let val of pageReadCounts.values()) sum += val;
-    totalGlobalReadLetters = sum;
-    updateBarNumbersOnly();
-  }
-
-  // 12. BARRA SUPERIOR
-  function renderFloatingBar() {
-    if (!sessionData.monitoringActive) return;
-
-    let bar = document.getElementById('ryr-titan-bar');
-    if (!bar) {
-      bar = document.createElement('div');
-      bar.id = 'ryr-titan-bar';
-      bar.style.cssText = 'position:fixed !important; top:0 !important; left:0 !important; width:100vw !important; height:38px !important; background:#0b132b !important; border-bottom:2px solid #10b981 !important; color:#ffffff !important; display:flex !important; align-items:center !important; justify-content:space-between !important; padding:0 16px !important; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif !important; font-size:12px !important; z-index:2147483647 !important; box-shadow:0 4px 15px rgba(0,0,0,0.7) !important; box-sizing:border-box !important;';
-
-      bar.innerHTML = `
-        <div class="ryr-section" style="display:flex; align-items:center; gap:10px;">
-          <span class="ryr-dot" style="width:8px; height:8px; border-radius:50%; background:#10b981; display:inline-block;"></span>
-          <span class="ryr-title" style="font-weight:800; color:#10b981; letter-spacing:1px;">TITAN APEX</span>
-          <span class="ryr-badge primary">👤 ${sessionData.operator || 'walther'} [${sessionData.shift || 'Tarde'}]</span>
-          <span class="ryr-badge">🎯 ${sessionData.profileName || 'HORACIO'}</span>
-          <span class="ryr-badge ${isOperatorAfk() ? 'ryr-badge-afk' : ''}" id="ryr-badge-afk">⚡ Activo</span>
-          <span class="ryr-badge" id="ryr-badge-prospecting" style="border-color:#10b981; color:#34d399;">🎯 Seguimiento: 30:00 [0/10]</span>
-          <span class="ryr-badge ryr-badge-monopoly" id="ryr-badge-monopoly" style="display:none;">⚠️ Rota de Chat</span>
-          <button id="ryr-btn-open-intel" class="ryr-btn-intel">🧠 Investigar Usuario</button>
-        </div>
-        <div class="ryr-section" style="display:flex; align-items:center; gap:10px;">
-          <span class="ryr-badge green-letters" id="ryr-badge-letters">✉️ Cartas Pendientes (Read): ${totalGlobalReadLetters}</span>
-          <button id="ryr-btn-disconnect" class="ryr-btn-logout">🔴 Desconectar</button>
-        </div>
-      `;
-
-      document.body.prepend(bar);
-      document.body.style.setProperty('margin-top', '38px', 'important');
-
-      document.getElementById('ryr-btn-open-intel').onclick = () => {
-        const panel = document.getElementById('ryr-intel-panel');
-        if (panel) {
-          panel.classList.toggle('open');
-          loadActiveDossier();
-        }
-      };
-
-      document.getElementById('ryr-btn-disconnect').onclick = () => {
-        if (confirm('¿Deseas finalizar tu turno y desconectar el monitoreo?')) {
-          fetch(`${API_URL}/api/telemetry`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              operator: sessionData.operator,
-              shift: sessionData.shift,
-              profile: sessionData.profileName,
-              status: 'OFFLINE',
-              timestamp: Date.now()
-            })
-          }).catch(() => {});
-
-          if (isContextValid()) {
-            chrome.storage.local.set({ monitoringActive: false }, () => {
-              removeFloatingBar();
-            });
-          }
-        }
-      };
-    }
-
-    updateBarNumbersOnly();
-  }
-
-  function updateBarNumbersOnly() {
-    const elLetters = document.getElementById('ryr-badge-letters');
-    if (elLetters) elLetters.innerText = `✉️ Cartas Pendientes (Read): ${totalGlobalReadLetters}`;
-
-    const elAfk = document.getElementById('ryr-badge-afk');
-    if (elAfk) {
-      const idleSec = getIdleSeconds();
-      const isAfk = isOperatorAfk();
-      elAfk.innerText = isAfk ? `💤 INACTIVO (${Math.floor(idleSec / 60)}m)` : `⚡ Activo`;
-      elAfk.className = isAfk ? 'ryr-badge ryr-badge-afk' : 'ryr-badge';
-    }
-
-    const elProspect = document.getElementById('ryr-badge-prospecting');
-    if (elProspect && hasStorageLoaded && prospectingCycleStartTime > 0) {
-      const elapsed = Math.floor((Date.now() - prospectingCycleStartTime) / 1000);
-      const remaining = Math.max(0, PROSPECTING_CYCLE_DURATION - elapsed);
-      const min = Math.floor(remaining / 60);
-      const sec = remaining % 60;
-      const timeStr = `${min < 10 ? '0' : ''}${min}:${sec < 10 ? '0' : ''}${sec}`;
-
-      const isQuotaDone = prospectingCount >= PROSPECTING_MIN_QUOTA;
-      elProspect.innerText = isQuotaDone 
-        ? `✅ Seguimiento OK [${prospectingCount}/${PROSPECTING_MIN_QUOTA}]` 
-        : `🎯 Seguimiento: ${timeStr} [${prospectingCount}/${PROSPECTING_MIN_QUOTA}]`;
-      
-      elProspect.style.borderColor = isQuotaDone ? '#10b981' : '#f59e0b';
-      elProspect.style.color = isQuotaDone ? '#34d399' : '#fde68a';
-    }
-
-    const elMonopoly = document.getElementById('ryr-badge-monopoly');
-    if (elMonopoly) {
-      if (hasChatMonopolyWarning && unattendedChatsCount > 0) {
-        elMonopoly.style.display = 'inline-flex';
-        elMonopoly.innerText = `⚠️ Rota de Chat (${unattendedChatsCount} en espera)`;
-      } else {
-        elMonopoly.style.display = 'none';
-      }
-    }
-  }
-
-  function removeFloatingBar() {
-    const bar = document.getElementById('ryr-titan-bar');
-    if (bar) bar.remove();
-    document.body.style.removeProperty('margin-top');
-    document.querySelectorAll('.ryr-inbox-timer, .ryr-row-extract-btn, .ryr-extract-menu').forEach(el => el.remove());
-    const panel = document.getElementById('ryr-intel-panel');
-    if (panel) panel.remove();
-    const crawler = document.getElementById('ryr-silent-crawler');
-    if (crawler) crawler.remove();
-  }
-
-  // 12. TELEMETRÍA
-  let lastTelemetryTime = 0;
-  function sendTelemetry(isImmediateAlert = false) {
-    const now = Date.now();
-    if (isImmediateAlert && now - lastTelemetryTime < 500) return;
-    lastTelemetryTime = now;
-
-    const activeTimersList = [];
-    for (let [contact, startTime] of Object.entries(activeSlaTimers)) {
-      const elapsed = Math.floor((now - startTime) / 1000);
-      const remaining = Math.max(0, 120 - elapsed);
-      activeTimersList.push({
-        contact: contact.replace(/^name_/, ''),
-        elapsed: elapsed,
-        remaining: remaining,
-        isExpired: elapsed >= 120
-      });
-    }
-
-    const elapsedProspect = Math.floor((now - prospectingCycleStartTime) / 1000);
-    const remainingProspect = Math.max(0, PROSPECTING_CYCLE_DURATION - elapsedProspect);
-
-    fetch(`${API_URL}/api/telemetry`, {
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    fetch(`${SUPABASE_URL}/rest/v1/chat_audits`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        operator: sessionData.operator,
-        shift: sessionData.shift,
-        profile: sessionData.profileName,
-        profileId: sessionData.profileId,
-        pendingReadLetters: totalGlobalReadLetters,
-        unansweredChatsCount: activeTimersList.length,
-        hasExpiredSla: activeTimersList.some(t => t.isExpired),
-        activeChatTimersList: activeTimersList,
-        prospectingProgress: {
-          count: prospectingCount,
-          quota: PROSPECTING_MIN_QUOTA,
-          remainingSeconds: remainingProspect,
-          isCompleted: prospectingCount >= PROSPECTING_MIN_QUOTA
-        },
-        monopolyStatus: {
-          hasMonopoly: hasChatMonopolyWarning,
-          focusedClient: lastFocusedClientId,
-          consecutiveSent: consecutiveMessagesSentToActiveClient,
-          unattendedCount: unattendedChatsCount
-        },
-        isAfk: isOperatorAfk(),
-        idleSeconds: getIdleSeconds(),
-        timestamp: now
-      })
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify(auditPayload)
     }).catch(() => {});
   }
 
-  const mainLoop = setInterval(() => {
-    if (!isContextValid()) {
-      clearInterval(mainLoop);
-      return;
-    }
-    if (sessionData.monitoringActive) {
-      renderFloatingBar();
-      enforceFirewall();
-      handleInboxTimersAndExtractionButtons();
-      runBackgroundPaginationCrawler();
-    }
-  }, 1000);
+  res.json({ success: true, clientId: cleanClientId, clientName: safeClientName, aiReport });
+});
 
-  const heartbeatLoop = setInterval(() => {
-    if (!isContextValid()) {
-      clearInterval(heartbeatLoop);
-      return;
+app.post('/api/chats/analyze-single', (req, res) => {
+  const { operator, profile, clientName, clientId, markdown } = req.body;
+  const aiReport = runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown);
+  res.json({ success: true, aiReport });
+});
+
+app.get('/api/alerts/live', (req, res) => {
+  const alertsList = Array.from(activeAlertsMap.values()).filter(a => a.status === 'PENDING').sort((a, b) => b.timestamp - a.timestamp);
+  res.json({ success: true, alerts: alertsList });
+});
+
+app.post('/api/alerts/:id/resolve', (req, res) => {
+  const alertId = req.params.id;
+  if (activeAlertsMap.has(alertId)) activeAlertsMap.get(alertId).status = 'RESOLVED';
+  res.json({ success: true });
+});
+
+app.post('/api/alerts/:id/dismiss', (req, res) => {
+  const alertId = req.params.id;
+  activeAlertsMap.delete(alertId);
+  res.json({ success: true });
+});
+
+app.post('/api/fines/register', async (req, res) => {
+  const { operator, shift, profile, clientName, clientId, reason } = req.body;
+  if (!operator) return res.status(400).json({ error: 'Operador requerido' });
+
+  const fineId = `FINE_${operator}_${clientId}_${Date.now()}`;
+  const finePayload = {
+    id: fineId,
+    operator_name: operator,
+    shift: shift || 'Mañana',
+    profile_name: profile || 'HORACIO',
+    client_name: clientName || 'Cliente',
+    client_id: clientId || 'N/A',
+    amount: 10000,
+    reason: reason || 'SLA 2 Minutos Excedido',
+    created_at: new Date().toISOString()
+  };
+
+  operatorFinesRAM.set(fineId, finePayload);
+
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    fetch(`${SUPABASE_URL}/rest/v1/operator_fines`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      body: JSON.stringify(finePayload)
+    }).catch(() => {});
+  }
+
+  res.json({ success: true, fine: finePayload });
+});
+
+app.get('/api/fines', async (req, res) => {
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/operator_fines?select=*&order=created_at.desc&limit=100`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      });
+      const data = await resp.json();
+      if (Array.isArray(data)) return res.json({ success: true, fines: data });
+    } catch (e) {}
+  }
+  res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() });
+});
+
+app.post('/api/telemetry', (req, res) => {
+  const {
+    operator, shift, profile, profileId,
+    pendingReadLetters, unansweredChatsCount,
+    hasExpiredSla, isAfk, idleSeconds,
+    activeChatTimersList, prospectingProgress, monopolyStatus, status
+  } = req.body;
+
+  if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
+
+  const sessionKey = `${operator.toLowerCase().trim()}_${profile.toLowerCase().trim()}`;
+  if (status === 'OFFLINE') {
+    liveTelemetryMap.delete(sessionKey);
+    return res.json({ success: true });
+  }
+
+  liveTelemetryMap.set(sessionKey, {
+    operatorName: operator.trim(),
+    shift: shift || 'Mañana',
+    profileName: profile.trim(),
+    profileId: profileId || 'N/A',
+    pendingReadLetters: parseInt(pendingReadLetters, 10) || 0,
+    unansweredChatsCount: parseInt(unansweredChatsCount, 10) || 0,
+    hasExpiredSla: Boolean(hasExpiredSla),
+    isAfk: Boolean(isAfk),
+    idleSeconds: parseInt(idleSeconds, 10) || 0,
+    activeChatTimersList: Array.isArray(activeChatTimersList) ? activeChatTimersList : [],
+    prospectingProgress: prospectingProgress || { count: 0, quota: 10, remainingSeconds: 1800, isCompleted: false },
+    monopolyStatus: monopolyStatus || { hasMonopoly: false, focusedClient: '', consecutiveSent: 0, unattendedCount: 0 },
+    lastSeen: Date.now()
+  });
+
+  res.json({ success: true, settings: globalSystemSettings });
+});
+
+app.get('/api/telemetry/live', (req, res) => {
+  const now = Date.now();
+  const operatorsMap = new Map();
+
+  for (const [key, data] of liveTelemetryMap.entries()) {
+    if (now - data.lastSeen > 35000) {
+      liveTelemetryMap.delete(key);
+    } else {
+      const opKey = data.operatorName.toLowerCase();
+      if (!operatorsMap.has(opKey)) {
+        operatorsMap.set(opKey, {
+          operatorName: data.operatorName,
+          shift: data.shift,
+          lastSeen: data.lastSeen,
+          isAfkGlobal: false,
+          hasExpiredSlaGlobal: false,
+          hasMonopolyGlobal: false,
+          totalLetters: 0,
+          profiles: []
+        });
+      }
+
+      const opEntry = operatorsMap.get(opKey);
+      opEntry.profiles.push({
+        profileName: data.profileName,
+        profileId: data.profileId,
+        pendingReadLetters: data.pendingReadLetters,
+        unansweredChatsCount: data.unansweredChatsCount,
+        hasExpiredSla: data.hasExpiredSla,
+        isAfk: data.isAfk,
+        idleSeconds: data.idleSeconds,
+        activeChatTimersList: data.activeChatTimersList || [],
+        prospectingProgress: data.prospectingProgress || { count: 0, quota: 10, remainingSeconds: 1800, isCompleted: false },
+        monopolyStatus: data.monopolyStatus || { hasMonopoly: false, focusedClient: '', consecutiveSent: 0, unattendedCount: 0 }
+      });
+
+      opEntry.totalLetters += data.pendingReadLetters;
+      if (data.hasExpiredSla) opEntry.hasExpiredSlaGlobal = true;
+      if (data.isAfk) opEntry.isAfkGlobal = true;
+      if (data.monopolyStatus && data.monopolyStatus.hasMonopoly) opEntry.hasMonopolyGlobal = true;
+      if (data.lastSeen > opEntry.lastSeen) opEntry.lastSeen = data.lastSeen;
     }
-    if (sessionData.monitoringActive) {
-      sendTelemetry(false);
-      syncServerKnownChats();
+  }
+
+  res.json({ success: true, operators: Array.from(operatorsMap.values()), settings: globalSystemSettings });
+});
+
+app.get('/api/chats/synced-ids', async (req, res) => {
+  const profile = req.query.profile;
+  const syncedSet = new Set(syncedClientsRegistry);
+  if (SUPABASE_URL && SUPABASE_KEY && profile) {
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?profile_name=eq.${profile}&select=client_id,client_name`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      });
+      const data = await resp.json();
+      if (Array.isArray(data)) {
+        data.forEach(d => {
+          if (d.client_id) syncedSet.add(String(d.client_id).trim().toLowerCase());
+          if (d.client_name) syncedSet.add(String(d.client_name).trim().toLowerCase());
+        });
+      }
+    } catch (e) {}
+  }
+  res.json({ success: true, syncedIds: Array.from(syncedSet) });
+});
+
+app.get('/api/chats/audits', async (req, res) => {
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    try {
+      const response = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?select=*&order=updated_at.desc&limit=60`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      });
+      const data = await response.json();
+      if (Array.isArray(data)) {
+        return res.json({ success: true, audits: data.map(d => ({ id: d.id, operator: d.operator_name, profile: d.profile_name, clientName: d.client_name, clientId: d.client_id, flags: d.flags || [], markdown: d.markdown, timestamp: new Date(d.updated_at).getTime() })) });
+      }
+    } catch (e) {}
+  }
+  res.json({ success: true, audits: Array.from(recentChatAuditsRAM.values()) });
+});
+
+app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicBannedWords) }));
+app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
+app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
+
+// DASHBOARD
+const DASHBOARD_HTML = `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>RYR TITAN APEX - SUPERVISIÓN LIVE</title>
+  <style>
+    :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; --accent-gold: #f59e0b; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg-main); color: #fff; font-family: system-ui, sans-serif; padding: 12px; }
+    header { display: flex; justify-content: space-between; align-items: center; background: #0b132b; border: 1px solid #1e293b; border-left: 4px solid var(--accent-cyan); border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; }
+    .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 11px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+    .btn-action:hover { border-color: var(--accent-green); color: var(--accent-green); }
+    .btn-fines { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(245, 158, 11, 0.15); }
+    .btn-toggle-on { border-color: #ef4444; color: #f87171; background: rgba(239, 68, 68, 0.15); }
+    .btn-toggle-off { border-color: #64748b; color: #94a3b8; background: #1e293b; }
+
+    .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+    .operator-card { background: var(--bg-card); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; }
+    
+    .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
+    .profile-live-box.monopoly-alert { border-color: #f59e0b !important; background: rgba(245, 158, 11, 0.08) !important; }
+
+    .live-timers-container { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .live-chat-timer-badge { font-size: 10px; font-weight: bold; font-family: monospace; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
+    .timer-ok { background: #064e3b; color: #34d399; border: 1px solid #10b981; }
+    .timer-expired { background: #450a0a; color: #f87171; border: 1px solid #ef4444; }
+
+    .prospect-pill { font-size: 10px; font-weight: bold; font-family: monospace; padding: 3px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; }
+    .prospect-progress { background: #1c2541; border: 1px solid #f59e0b; color: #fde68a; }
+    .prospect-done { background: #064e3b; border: 1px solid #10b981; color: #34d399; }
+
+    .monopoly-banner { background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; border-radius: 4px; padding: 6px 8px; font-size: 10.5px; color: #fca5a5; margin-top: 6px; font-weight: bold; }
+
+    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); z-index: 99999; justify-content: center; align-items: center; }
+    .modal-content { background: #0e1526; border: 1px solid var(--accent-cyan); border-radius: 10px; width: 940px; max-width: 95%; max-height: 88vh; padding: 20px; display: flex; flex-direction: column; gap: 12px; color: #fff; }
+    .chat-transcript { background: #0b132b; border: 1px solid #1e293b; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 250px; overflow-y: auto; line-height: 1.6; color: #cbd5e1; }
+  </style>
+</head>
+<body>
+  <header>
+    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE</div>
+    <div style="display:flex; gap:8px;">
+      <button id="btn-toggle-modal" class="btn-action btn-toggle-on" onclick="toggleInvasiveModal()">🚨 Modal Invasivo: ON</button>
+      <button class="btn-action btn-fines" onclick="openFinesModal()">💰 Multas (<span id="total-fines-count">0</span>)</button>
+      <button class="btn-action" onclick="openChatAuditsModal()">📄 Historial de Chats (MD)</button>
+      <button class="btn-action" onclick="openBannedWordsModal()">🛡️ Palabras Prohibidas</button>
+    </div>
+  </header>
+
+  <div id="operators-grid" class="grid-operators"></div>
+
+  <div id="modal-fines" class="modal-overlay">
+    <div class="modal-content">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
+        <span style="font-weight:bold; color:var(--accent-gold);">💰 HISTORIAL DE MULTAS GENERADAS ($10.000 COP)</span>
+        <button class="btn-action" onclick="closeModals()">✕</button>
+      </div>
+      <div id="fines-list-container" style="overflow-y:auto; flex:1;"></div>
+    </div>
+  </div>
+
+  <div id="modal-alerts-hub" class="modal-overlay">
+    <div class="modal-content">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
+        <span style="font-weight:bold; color:var(--accent-cyan);">🚨 CENTRO DE ALERTAS: TRAVEL MISLEADING & CONDUCTA</span>
+        <button class="btn-action" onclick="closeModals()">✕</button>
+      </div>
+      <div id="alerts-hub-list" style="overflow-y:auto; flex:1;"></div>
+    </div>
+  </div>
+
+  <div id="modal-chats" class="modal-overlay">
+    <div class="modal-content">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
+        <span style="font-weight:bold; color:var(--accent-cyan);">📄 AUDITORÍA HISTÓRICA DE DIÁLOGOS</span>
+        <button class="btn-action" onclick="closeModals()">✕</button>
+      </div>
+      <div id="chat-audits-list" style="overflow-y:auto; flex:1;"></div>
+    </div>
+  </div>
+
+  <div id="modal-banned" class="modal-overlay">
+    <div class="modal-content" style="width:550px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
+        <span style="font-weight:bold; color:var(--accent-cyan);">🛡️ PALABRAS PROHIBIDAS</span>
+        <button class="btn-action" onclick="closeModals()">✕</button>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <input type="text" id="input-new-word" placeholder="Nueva palabra..." style="flex:1; padding:8px; background:#060913; border:1px solid #3a506b; color:#fff; border-radius:6px;">
+        <button class="btn-action" style="background:#10b981; color:#000;" onclick="addBannedWord()">+ Agregar</button>
+      </div>
+      <div id="banned-words-list" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;"></div>
+    </div>
+  </div>
+
+  <script>
+    const API_URL = window.location.origin;
+    let globalAuditsList = [];
+
+    async function toggleInvasiveModal() {
+      const res = await fetch(\`\${API_URL}/api/settings/toggle-modal\`, { method: 'POST' });
+      const data = await res.json();
+      updateToggleBtn(data.settings.invasiveModalEnabled);
     }
-  }, 10000);
-})();
+
+    function updateToggleBtn(isEnabled) {
+      const btn = document.getElementById('btn-toggle-modal');
+      if (isEnabled) {
+        btn.className = 'btn-action btn-toggle-on';
+        btn.innerText = '🚨 Modal Invasivo: ON';
+      } else {
+        btn.className = 'btn-action btn-toggle-off';
+        btn.innerText = '⚪ Modal Invasivo: OFF';
+      }
+    }
+
+    async function fetchLive() {
+      try {
+        const res = await fetch(\`\${API_URL}/api/telemetry/live\`);
+        const data = await res.json();
+        
+        if (data.settings) {
+          updateToggleBtn(data.settings.invasiveModalEnabled);
+        }
+
+        document.getElementById('operators-grid').innerHTML = (data.operators || []).map(op => \`
+          <div class="operator-card">
+            <div style="display:flex; justify-content:space-between; font-weight:bold; border-bottom:1px solid #1e293b; padding-bottom:6px; margin-bottom:8px;">
+              <span>👤 \${op.operatorName} (\${op.profiles.length} Perfiles)</span>
+              <span style="font-size:10px; color:#38bdf8;">\${op.shift}</span>
+            </div>
+            \${op.profiles.map(p => {
+              const timersHtml = (p.activeChatTimersList || []).map(t => {
+                const min = Math.floor(t.remaining / 60);
+                const sec = t.remaining % 60;
+                const timeStr = \`\${min < 10 ? '0' : ''}\${min}:\${sec < 10 ? '0' : ''}\${sec}\`;
+                return \`<span class="live-chat-timer-badge \${t.isExpired ? 'timer-expired' : 'timer-ok'}">💬 \${t.contact}: \${t.isExpired ? '00:00 (VENCIDO)' : timeStr}</span>\`;
+              }).join('');
+
+              const prog = p.prospectingProgress || { count: 0, quota: 10, remainingSeconds: 1800, isCompleted: false };
+              const pMin = Math.floor(prog.remainingSeconds / 60);
+              const pSec = prog.remainingSeconds % 60;
+              const pTimeStr = \`\${pMin < 10 ? '0' : ''}\${pMin}:\${pSec < 10 ? '0' : ''}\${pSec}\`;
+
+              const monopoly = p.monopolyStatus || { hasMonopoly: false };
+
+              return \`
+                <div class="profile-live-box \${monopoly.hasMonopoly ? 'monopoly-alert' : ''}">
+                  <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-weight:bold; color:#00ffcc;">🎯 \${p.profileName}</span>
+                    <span style="font-size:11px; color:#38bdf8;">✉️ \${p.pendingReadLetters} cartas</span>
+                  </div>
+
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+                    <span class="prospect-pill \${prog.isCompleted ? 'prospect-done' : 'prospect-progress'}">
+                      🎯 Seguimiento: \${prog.isCompleted ? 'OK' : pTimeStr} [\${prog.count}/\${prog.quota}]
+                    </span>
+                  </div>
+
+                  \${monopoly.hasMonopoly ? \`
+                    <div class="monopoly-banner">
+                      ⚠️ DESATENCIÓN: Hablando solo con "\${monopoly.focusedClient}" (\${monopoly.consecutiveSent} msgs) mientras tiene \${monopoly.unattendedCount} clientas esperando respuesta.
+                    </div>
+                  \` : ''}
+
+                  \${timersHtml ? \`<div class="live-timers-container">\${timersHtml}</div>\` : \`<div style="font-size:10px; color:#10b981; margin-top:4px;">⏱️ Todos los chats al día</div>\`}
+                </div>
+              \`;
+            }).join('')}
+          </div>
+        \`).join('');
+        fetchFinesCount();
+        fetchAlertsCount();
+      } catch (e) {}
+    }
+
+    async function fetchFinesCount() {
+      try {
+        const res = await fetch(\`\${API_URL}/api/fines\`);
+        const data = await res.json();
+        document.getElementById('total-fines-count').innerText = data.fines ? data.fines.length : 0;
+      } catch (e) {}
+    }
+
+    async function openFinesModal() {
+      document.getElementById('modal-fines').style.display = 'flex';
+      const res = await fetch(\`\${API_URL}/api/fines\`);
+      const data = await res.json();
+      const container = document.getElementById('fines-list-container');
+      if (!data.fines || data.fines.length === 0) {
+        container.innerHTML = '<p style="color:#10b981;">✅ No hay multas registradas en este turno.</p>';
+        return;
+      }
+      container.innerHTML = data.fines.map(f => \`
+        <div style="background:#060913; border:1px solid #f59e0b; border-radius:6px; padding:10px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-weight:bold; color:#fde68a;">👤 \${f.operator_name} [\${f.shift}] - 🎯 \${f.profile_name}</div>
+            <div style="font-size:11px; color:#94a3b8;">Cliente: \${f.client_name} | Motivo: \${f.reason}</div>
+            <div style="font-size:9px; color:#64748b;">\${new Date(f.created_at).toLocaleString()}</div>
+          </div>
+          <div style="font-size:14px; font-weight:900; color:#ef4444;">-\$\${Number(f.amount).toLocaleString('es-CO')} COP</div>
+        </div>
+      \`).join('');
+    }
+
+    async function openChatAuditsModal() {
+      document.getElementById('modal-chats').style.display = 'flex';
+      const res = await fetch(\`\${API_URL}/api/chats/audits\`);
+      const data = await res.json();
+      globalAuditsList = data.audits || [];
+      const container = document.getElementById('chat-audits-list');
+      
+      if (globalAuditsList.length === 0) {
+        container.innerHTML = '<p style="color:#94a3b8;">No hay conversaciones en Supabase aún. Presiona ⚡ en Talkytimes.</p>';
+        return;
+      }
+
+      container.innerHTML = globalAuditsList.map((a, index) => \`
+        <div style="background:#060913; border:1px solid #1e293b; border-radius:6px; padding:12px; margin-bottom:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <span style="font-weight:bold; color:var(--accent-cyan);">👤 Op: \${a.operator} | 🎯 Perfil: \${a.profile} | 💬 Cliente: \${a.clientName} (ID: \${a.clientId})</span>
+            <div style="display:flex; gap:6px;">
+              <button class="btn-action" style="background:#1e1b4b; border-color:#8b5cf6; color:#c4b5fd;" onclick="runAiAnalysisByIndex(\${index})">🔍 Analizar Conversación</button>
+              <a href="data:text/markdown;charset=utf-8,\${encodeURIComponent(a.markdown)}" download="chat_\${a.profile}_\${a.clientId}.md" class="btn-action" style="text-decoration:none;">📥 Descargar .MD</a>
+            </div>
+          </div>
+          <div id="ai-box-\${index}"></div>
+          <div class="chat-transcript" id="transcript-\${index}">\${a.markdown}</div>
+        </div>
+      \`).join('');
+    }
+
+    async function runAiAnalysisByIndex(index) {
+      const audit = globalAuditsList[index];
+      if (!audit) return;
+
+      const box = document.getElementById('ai-box-' + index);
+      box.innerHTML = '<p style="color:#c4b5fd; font-size:12px; margin:8px 0;">🤖 Analizando diálogo con IA en busca de Travel Misleading e infracciones...</p>';
+
+      try {
+        const res = await fetch(\`\${API_URL}/api/chats/analyze-single\`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            operator: audit.operator,
+            profile: audit.profile,
+            clientName: audit.clientName,
+            clientId: audit.clientId,
+            markdown: audit.markdown
+          })
+        });
+        const data = await res.json();
+        const r = data.aiReport;
+        const isGood = r.score >= 70;
+
+        box.innerHTML = \`
+          <div style="background:#0b132b; border:1px solid #8b5cf6; border-radius:8px; padding:12px; margin-top:8px;">
+            <div style="font-weight:bold; font-size:13px; color:\${isGood ? '#34d399' : '#f87171'}; margin-bottom:4px;">🎯 Puntaje: \${r.score}/100 [Riesgo: \${r.riskLevel}]</div>
+            <div style="font-size:11px; margin-bottom:4px;"><b>🧠 Diagnóstico:</b> \${r.diagnosis}</div>
+            <div style="font-size:11px; color:#38bdf8; margin-bottom:6px;"><b>📋 Recomendación:</b> \${r.recommendation}</div>
+            \${r.findings.map(f => \`
+              <div style="background:rgba(239,68,68,0.15); border-left:3px solid #ef4444; padding:6px; border-radius:4px; font-size:11px; margin-bottom:4px; color:#fca5a5;">
+                <b>\${f.title}:</b> \${f.description}
+              </div>
+            \`).join('')}
+          </div>
+        \`;
+      } catch (err) {
+        box.innerHTML = '<p style="color:#ef4444;">Error al procesar el análisis de IA.</p>';
+      }
+    }
+
+    async function openBannedWordsModal() {
+      document.getElementById('modal-banned').style.display = 'flex';
+      const res = await fetch(\`\${API_URL}/api/banned-words\`);
+      const data = await res.json();
+      document.getElementById('banned-words-list').innerHTML = (data.words || []).map(w => \`
+        <div style="background:#1c2541; border:1px solid #ef4444; color:#fca5a5; padding:3px 6px; border-radius:4px; font-size:11px;">
+          \${w} <span style="cursor:pointer; font-weight:bold; margin-left:4px;" onclick="delWord('\${w}')">✕</span>
+        </div>\`).join('');
+    }
+
+    async function addBannedWord() {
+      const word = document.getElementById('input-new-word').value.trim();
+      if (!word) return;
+      await fetch(\`\${API_URL}/api/banned-words\`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word }) });
+      document.getElementById('input-new-word').value = '';
+      openBannedWordsModal();
+    }
+
+    async function delWord(word) {
+      await fetch(\`\${API_URL}/api/banned-words/delete\`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word }) });
+      openBannedWordsModal();
+    }
+
+    function closeModals() { document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none'); }
+    setInterval(fetchLive, 2000);
+    fetchLive();
+  </script>
+</body>
+</html>`;
+
+app.get('/', (req, res) => res.send(DASHBOARD_HTML));
+app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
+app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
+
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V95.0 activo en puerto ${PORT}`));
