@@ -34,7 +34,7 @@ let dynamicBannedWords = new Set([
 
 let cachedActiveGroqModel = null;
 
-// LIMPIADOR ULTRA POTENTE DE LOGS EN INGLÉS
+// LIMPIADOR ULTRA POTENTE: EXTRAE ÚNICAMENTE LA RESPUESTA LIMPIA
 function sanitizeAiOutput(rawText, clientName, bioData, fullTranscript, prompt) {
   if (!rawText) return '';
   let text = String(rawText);
@@ -80,7 +80,7 @@ function sanitizeAiOutput(rawText, clientName, bioData, fullTranscript, prompt) 
   return text;
 }
 
-// AUTO-DESCUBRIMIENTO DE MODELO GROQ
+// 1. AUTO-DESCUBRIMIENTO DE MODELO GROQ ACTIVO
 async function getWorkingGroqModel(apiKey) {
   if (cachedActiveGroqModel) return cachedActiveGroqModel;
   try {
@@ -104,7 +104,7 @@ async function getWorkingGroqModel(apiKey) {
   return 'llama-3.1-8b-instant';
 }
 
-// MOTOR DE IA
+// 2. MOTOR DE IA CON ENFOQUE EXCLUSIVO EN LA CLIENTA
 async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName, bioData) {
   const safeClient = (clientName && !['Search', 'Cliente', 'Yes', 'No', 'Open', 'More'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'la clienta';
   const safeProfile = profileName || 'HORACIO';
@@ -153,7 +153,7 @@ async function generateMasterAiResponse(prompt, fullTranscript, clientName, prof
       const timeoutId = setTimeout(() => controller.abort(), 12000);
 
       const systemPrompt = `Eres el Asistente de IA de RYR TITAN. Redactas respuestas o mensajes en modo /human para la clienta ${safeClient} con el perfil ${safeProfile}.
-DATOS DE ${safeClient}:
+DATOS:
 - Nombre: ${safeClient}
 - Ubicación: ${realCountry}
 - Edad: ${realBirthDate}
@@ -208,17 +208,173 @@ Conviene responder con un tono dulce y cercano, validando lo que siente y hacien
 "Pensar en ti y en tu dulce sonrisa me da mucha calidez al corazón. ¿Cómo va tu día, mi amor?"`;
 }
 
-// ENDPOINTS DE AJUSTES GLOBALES
-app.get('/api/settings', (req, res) => {
-  res.json({ success: true, settings: globalSystemSettings });
+// 3. FUSIÓN INCREMENTAL DE MARKDOWN (COMBINA DÍA 1 CON MENSAJES NUEVOS DE HOY SIN DUPLICAR)
+function mergeMarkdownHistories(existingMarkdown, newMarkdown, profile, clientName, clientId, bioData) {
+  if (!existingMarkdown || existingMarkdown.length < 20) return newMarkdown;
+
+  const extractMessageLines = (md) => {
+    return (md || '').split('\n').filter(l => l.startsWith('- 💼') || l.startsWith('- 👤'));
+  };
+
+  const existingLines = extractMessageLines(existingMarkdown);
+  const newLines = extractMessageLines(newMarkdown);
+
+  const seenSignatures = new Set();
+  const mergedDialogue = [];
+
+  const addLineIfUnique = (line) => {
+    const cleanSignature = line.replace(/\[\d+:\d+\s*(?:am|pm)?\]/gi, '').trim().toLowerCase();
+    if (!seenSignatures.has(cleanSignature)) {
+      seenSignatures.add(cleanSignature);
+      mergedDialogue.push(line);
+    }
+  };
+
+  // Agregar primero el historial antiguo de días previos
+  existingLines.forEach(addLineIfUnique);
+
+  // Agregar los mensajes nuevos del turno de hoy al final
+  newLines.forEach(addLineIfUnique);
+
+  // Reconstruir el documento consolidado
+  let mdLines = [
+    `# HISTORIAL DE CONVERSACIÓN | RYR TITAN AUDIT`,
+    `- **Operador:** ${profile}`,
+    `- **Perfil Asignado:** ${profile}`,
+    `- **Cliente:** ${clientName}`,
+    `- **ID del Usuario:** ${clientId}`,
+    `- **Ubicación:** ${bioData?.country || 'United States'} | **Nacimiento:** ${bioData?.birthDate || 'Edad en perfil'}`,
+    `- **Fecha de Actualización:** ${new Date().toLocaleString()}`,
+    `---`,
+    `### Diálogo Transcrito (Ambos Participantes):`
+  ];
+
+  return [...mdLines, ...mergedDialogue].join('\n');
+}
+
+// 4. AUDITORÍA HEURÍSTICA Y GUARDADO CON FUSIÓN INCREMENTAL
+function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown) {
+  const textLower = (markdown || '').toLowerCase();
+  const findings = [];
+  let qualityScore = 100;
+  let riskLevel = 'BAJO';
+
+  const tmRegex = /(?:when we meet|when i visit|come visit|meet in person|see you in person|book a flight|buy a ticket|flying to you|fly to you|stay at a hotel|pack your bags|plane ticket|flight ticket|live together soon|cuando nos veamos|cuando nos conozcamos en persona|cuando viaje|ven a verme|viajar a verte|comprar el pasaje|boleto de avión|hotel juntos|nos vemos en persona)/i;
+  if (tmRegex.test(textLower)) {
+    findings.push({
+      type: 'CRITICAL',
+      title: '🚨 INFRACCIÓN: TRAVEL MISLEADING (TM)',
+      description: 'Insinuación de encuentro personal o viaje físico detectada en el diálogo.'
+    });
+    qualityScore -= 45;
+    riskLevel = 'CRÍTICO';
+  }
+
+  if (/(?:si me quisieras|si me amaras|envíame un regalo|mandame un regalo|dame un regalo|cómprame un regalo|send me a gift|need coins)/i.test(textLower)) {
+    findings.push({
+      type: 'CRITICAL',
+      title: '🛑 Coacción por Regalos',
+      description: 'Petición directa de regalos condicionando el afecto.'
+    });
+    qualityScore -= 30;
+    if (riskLevel !== 'CRÍTICO') riskLevel = 'ALTO';
+  }
+
+  qualityScore = Math.max(0, qualityScore);
+
+  return {
+    score: qualityScore,
+    riskLevel: riskLevel,
+    diagnosis: riskLevel === 'CRÍTICO' ? 'ALTO RIESGO: Infracciones graves detectadas.' : 'Conversación fluida y respetuosa.',
+    recommendation: riskLevel === 'CRÍTICO' ? 'Corregir al operador de inmediato sobre Travel Misleading.' : 'Mantener el ritmo de conversación.',
+    findings: findings
+  };
+}
+
+app.post('/api/chats/audit-deep', async (req, res) => {
+  const { operator, profile, clientName, clientId, bioData, markdown, messages } = req.body;
+  if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
+
+  const cleanClientId = String(clientId).trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente', 'Yes', 'No', 'Open', 'More'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Cliente').trim();
+  const auditKey = `${profile}_${cleanClientId}`;
+  
+  syncedClientsRegistry.add(cleanClientId.toLowerCase());
+  syncedClientsRegistry.add(safeClientName.toLowerCase());
+
+  let finalMarkdown = markdown;
+
+  // Consultar si ya había historial previo en Supabase para fusionarlo
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?id=eq.${auditKey}&select=markdown&limit=1`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      });
+      const data = await resp.json();
+      if (Array.isArray(data) && data[0] && data[0].markdown) {
+        finalMarkdown = mergeMarkdownHistories(data[0].markdown, markdown, profile, safeClientName, cleanClientId, bioData);
+      }
+    } catch (e) {}
+  }
+
+  const aiReport = runDeepAiPatternAnalysis(operator, profile, safeClientName, cleanClientId, finalMarkdown);
+
+  aiReport.findings.forEach((finding, index) => {
+    if (finding.type === 'CRITICAL' || finding.type === 'WARNING') {
+      const alertId = `${auditKey}_${index}_${Date.now()}`;
+      const alertEntry = {
+        id: alertId,
+        auditId: auditKey,
+        operatorName: operator || 'Desconocido',
+        profileName: profile,
+        clientName: safeClientName,
+        clientId: cleanClientId,
+        category: finding.title,
+        severity: finding.type === 'CRITICAL' ? 'CRÍTICA' : 'ALTA',
+        snippet: finding.description,
+        markdown: finalMarkdown,
+        status: 'PENDING',
+        timestamp: Date.now()
+      };
+      activeAlertsMap.set(alertId, alertEntry);
+
+      if (SUPABASE_URL && SUPABASE_KEY) {
+        fetch(`${SUPABASE_URL}/rest/v1/chat_alerts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
+          body: JSON.stringify(alertEntry)
+        }).catch(() => {});
+      }
+    }
+  });
+
+  const auditPayload = {
+    id: auditKey,
+    operator_name: operator || 'Desconocido',
+    profile_name: profile,
+    client_name: safeClientName,
+    client_id: cleanClientId,
+    total_messages: Array.isArray(messages) ? messages.length : 0,
+    flags: aiReport.findings.map(f => f.title),
+    has_breach: aiReport.riskLevel === 'CRÍTICO' || aiReport.riskLevel === 'ALTO',
+    markdown: finalMarkdown,
+    updated_at: new Date().toISOString()
+  };
+
+  recentChatAuditsRAM.set(auditKey, { ...auditPayload, operator, profile, clientName: safeClientName, clientId: cleanClientId, timestamp: Date.now() });
+
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    fetch(`${SUPABASE_URL}/rest/v1/chat_audits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify(auditPayload)
+    }).catch(() => {});
+  }
+
+  res.json({ success: true, clientId: cleanClientId, clientName: safeClientName, aiReport });
 });
 
-app.post('/api/settings/toggle-modal', (req, res) => {
-  globalSystemSettings.invasiveModalEnabled = !globalSystemSettings.invasiveModalEnabled;
-  res.json({ success: true, settings: globalSystemSettings });
-});
-
-// CONSULTA Y EXPEDIENTES
+// 5. DEMÁS ENDPOINTS (INTELIGENCIA, TELEMETRÍA, MULTAS Y MONITOR)
 app.post('/api/intelligence/query', async (req, res) => {
   try {
     const { query, clientId, clientName, profileName, liveMarkdown, bioData } = req.body;
@@ -287,111 +443,10 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null, hasData: false });
 });
 
-// MOTOR DE PATRONES
-function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown) {
-  const textLower = (markdown || '').toLowerCase();
-  const findings = [];
-  let qualityScore = 100;
-  let riskLevel = 'BAJO';
-
-  const tmRegex = /(?:when we meet|when i visit|come visit|meet in person|see you in person|book a flight|buy a ticket|flying to you|fly to you|stay at a hotel|pack your bags|plane ticket|flight ticket|live together soon|cuando nos veamos|cuando nos conozcamos en persona|cuando viaje|ven a verme|viajar a verte|comprar el pasaje|boleto de avión|hotel juntos|nos vemos en persona)/i;
-  if (tmRegex.test(textLower)) {
-    findings.push({
-      type: 'CRITICAL',
-      title: '🚨 INFRACCIÓN: TRAVEL MISLEADING (TM)',
-      description: 'Insinuación de encuentro personal o viaje físico detectada en el diálogo.'
-    });
-    qualityScore -= 45;
-    riskLevel = 'CRÍTICO';
-  }
-
-  if (/(?:si me quisieras|si me amaras|envíame un regalo|mandame un regalo|dame un regalo|cómprame un regalo|send me a gift|need coins)/i.test(textLower)) {
-    findings.push({
-      type: 'CRITICAL',
-      title: '🛑 Coacción por Regalos',
-      description: 'Petición directa de regalos condicionando el afecto.'
-    });
-    qualityScore -= 30;
-    if (riskLevel !== 'CRÍTICO') riskLevel = 'ALTO';
-  }
-
-  qualityScore = Math.max(0, qualityScore);
-
-  return {
-    score: qualityScore,
-    riskLevel: riskLevel,
-    diagnosis: riskLevel === 'CRÍTICO' ? 'ALTO RIESGO: Infracciones graves detectadas.' : 'Conversación fluida y respetuosa.',
-    recommendation: riskLevel === 'CRÍTICO' ? 'Corregir al operador de inmediato sobre Travel Misleading.' : 'Mantener el ritmo de conversación.',
-    findings: findings
-  };
-}
-
-app.post('/api/chats/audit-deep', async (req, res) => {
-  const { operator, profile, clientName, clientId, markdown, messages } = req.body;
-  if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
-
-  const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente', 'Yes', 'No', 'Open', 'More'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Cliente').trim();
-  const auditKey = `${profile}_${cleanClientId}`;
-  
-  syncedClientsRegistry.add(cleanClientId.toLowerCase());
-  syncedClientsRegistry.add(safeClientName.toLowerCase());
-
-  const aiReport = runDeepAiPatternAnalysis(operator, profile, safeClientName, cleanClientId, markdown);
-
-  aiReport.findings.forEach((finding, index) => {
-    if (finding.type === 'CRITICAL' || finding.type === 'WARNING') {
-      const alertId = `${auditKey}_${index}_${Date.now()}`;
-      const alertEntry = {
-        id: alertId,
-        auditId: auditKey,
-        operatorName: operator || 'Desconocido',
-        profileName: profile,
-        clientName: safeClientName,
-        clientId: cleanClientId,
-        category: finding.title,
-        severity: finding.type === 'CRITICAL' ? 'CRÍTICA' : 'ALTA',
-        snippet: finding.description,
-        markdown: markdown,
-        status: 'PENDING',
-        timestamp: Date.now()
-      };
-      activeAlertsMap.set(alertId, alertEntry);
-
-      if (SUPABASE_URL && SUPABASE_KEY) {
-        fetch(`${SUPABASE_URL}/rest/v1/chat_alerts`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
-          body: JSON.stringify(alertEntry)
-        }).catch(() => {});
-      }
-    }
-  });
-
-  const auditPayload = {
-    id: auditKey,
-    operator_name: operator || 'Desconocido',
-    profile_name: profile,
-    client_name: safeClientName,
-    client_id: cleanClientId,
-    total_messages: Array.isArray(messages) ? messages.length : 0,
-    flags: aiReport.findings.map(f => f.title),
-    has_breach: aiReport.riskLevel === 'CRÍTICO' || aiReport.riskLevel === 'ALTO',
-    markdown: markdown,
-    updated_at: new Date().toISOString()
-  };
-
-  recentChatAuditsRAM.set(auditKey, { ...auditPayload, operator, profile, clientName: safeClientName, clientId: cleanClientId, timestamp: Date.now() });
-
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(`${SUPABASE_URL}/rest/v1/chat_audits`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
-      body: JSON.stringify(auditPayload)
-    }).catch(() => {});
-  }
-
-  res.json({ success: true, clientId: cleanClientId, clientName: safeClientName, aiReport });
+app.get('/api/settings', (req, res) => res.json({ success: true, settings: globalSystemSettings }));
+app.post('/api/settings/toggle-modal', (req, res) => {
+  globalSystemSettings.invasiveModalEnabled = !globalSystemSettings.invasiveModalEnabled;
+  res.json({ success: true, settings: globalSystemSettings });
 });
 
 app.post('/api/chats/analyze-single', (req, res) => {
@@ -787,6 +842,42 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       \`).join('');
     }
 
+    async function fetchAlertsCount() {
+      try {
+        const res = await fetch(\`\${API_URL}/api/alerts/live\`);
+        const data = await res.json();
+        document.getElementById('count-behavior-alerts').innerText = data.alerts ? data.alerts.length : 0;
+      } catch (e) {}
+    }
+
+    async function openAlertsCenterModal() {
+      document.getElementById('modal-alerts-hub').style.display = 'flex';
+      const res = await fetch(\`\${API_URL}/api/alerts/live\`);
+      const data = await res.json();
+      const container = document.getElementById('alerts-hub-list');
+      if (!data.alerts || data.alerts.length === 0) {
+        container.innerHTML = '<p style="color:#10b981;">✅ No hay alertas pendientes.</p>';
+        return;
+      }
+      container.innerHTML = data.alerts.map(a => \`
+        <div style="background:#060913; border:1px solid #ef4444; border-radius:8px; padding:12px; margin-bottom:8px;" id="alert-item-\${a.id}">
+          <div style="display:flex; justify-content:space-between; font-weight:bold; color:#f87171;">
+            <span>\${a.category}</span>
+            <span style="font-size:11px; color:#94a3b8;">👤 \${a.operatorName} | 🎯 \${a.profileName} | 💬 \${a.clientName} (ID: \${a.clientId})</span>
+          </div>
+          <div style="margin:6px 0; color:#fca5a5; font-size:12px; background:rgba(239,68,68,0.1); padding:6px; border-left:3px solid #ef4444;">⚠️ \${a.snippet}</div>
+          <div class="chat-transcript">\${a.markdown}</div>
+          <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+            <button class="btn-action" style="background:#064e3b; color:#34d399;" onclick="resolveAlert('\${a.id}')">✅ Atender</button>
+            <button class="btn-action" style="background:#450a0a; color:#f87171;" onclick="dismissAlert('\${a.id}')">🗑️ Borrar</button>
+          </div>
+        </div>
+      \`).join('');
+    }
+
+    async function resolveAlert(id) { await fetch(\`\${API_URL}/api/alerts/\${id}/resolve\`, { method: 'POST' }); document.getElementById('alert-item-' + id)?.remove(); fetchAlertsCount(); }
+    async function dismissAlert(id) { await fetch(\`\${API_URL}/api/alerts/\${id}/dismiss\`, { method: 'POST' }); document.getElementById('alert-item-' + id)?.remove(); fetchAlertsCount(); }
+
     async function openChatAuditsModal() {
       document.getElementById('modal-chats').style.display = 'flex';
       const res = await fetch(\`\${API_URL}/api/chats/audits\`);
@@ -819,7 +910,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       if (!audit) return;
 
       const box = document.getElementById('ai-box-' + index);
-      box.innerHTML = '<p style="color:#c4b5fd; font-size:12px; margin:8px 0;">🤖 Analizando diálogo con IA en busca de Travel Misleading e infracciones...</p>';
+      box.innerHTML = '<p style="color:#c4b5fd; font-size:12px; margin:8px 0;">🤖 Analizando diálogo con IA...</p>';
 
       try {
         const res = await fetch(\`\${API_URL}/api/chats/analyze-single\`, {
@@ -888,4 +979,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V95.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V98.0 activo en puerto ${PORT}`));
