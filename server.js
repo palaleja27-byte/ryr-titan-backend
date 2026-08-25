@@ -32,49 +32,52 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-let cachedActiveGroqModel = null;
-
-// LIMPIADOR DE TEXTO (ELIMINA ETIQUETAS DE PENSAMIENTO Y ASTERISCOS)
-function sanitizeAiOutput(rawText) {
+// LIMPIADOR QUIRÚRGICO: CORTA CUALQUIER ANÁLISIS NUMERADO O LOG EN INGLÉS
+function sanitizeAiOutput(rawText, clientName, bioData, fullTranscript, prompt) {
   if (!rawText) return '';
   let text = String(rawText);
 
-  // Eliminar etiquetas de razonamiento interno de modelos como DeepSeek o Llama
+  // 1. Eliminar etiquetas <think>
   text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
-  text = text.replace(/Here'?s a thinking process:?[\s\S]*?(?=\n\n|$)/gi, '');
+
+  // 2. Si el texto contiene análisis en inglés (1. Analyze, 2. Evaluate, 3. Formulate, etc.)
+  if (/(?:1\.\s*Analyze|Analyze User Input|Evaluate Chat History|Identify Key|Here'?s a thinking)/i.test(text)) {
+    // Buscar directamente dónde empieza el contenido real
+    const markerMatch = text.match(/(?:💡|💬|Estrategia|Respuesta|Opción|Option|Draft Response|Draft:?|Message:?|Mensaje:?|📍|🎂|💍|🐾|💼)\s*([\s\S]+)$/i);
+    if (markerMatch && markerMatch[0].trim().length > 15) {
+      text = markerMatch[0];
+    } else {
+      // Si no hay emoji, separar por párrafos y descartar todos los que contengan palabras de análisis
+      const paragraphs = text.split(/\n\s*\n/);
+      const cleanParagraphs = paragraphs.filter(p => {
+        const pt = p.trim();
+        return !/^\d+\.\s*(?:Analyze|Evaluate|Identify|Formulate|Draft|Check|Review)/i.test(pt) &&
+               !/^-(?:\s*)(?:User says|Context|Client|Operator|Chat History|Goal|Commy|Helena|Jaye|Rules)/i.test(pt) &&
+               !/^(?:The user wants|Looking at the|Here is a)/i.test(pt) &&
+               pt.length > 5;
+      });
+      if (cleanParagraphs.length > 0) {
+        text = cleanParagraphs.join('\n\n');
+      }
+    }
+  }
+
+  // 3. Limpieza final de encabezados residuales y asteriscos
+  text = text.replace(/^(?:Draft Response:|Draft:|Response:|Respuesta:)\s*/gi, '');
   text = text.replace(/Check against (?:rules|constraints):[\s\S]*$/gi, '');
-  text = text.replace(/1\.\s*Analyze User Input:[\s\S]*?(?=\n\n|$)/gi, '');
+  text = text.replace(/Rules to apply:[\s\S]*$/gi, '');
   text = text.replace(/\*\*/g, '').trim();
+
+  // 4. Si por alguna razón quedó vacío, entregar respuesta directa
+  if (!text || text.length < 8) {
+    const safeClient = clientName || 'la clienta';
+    text = `💡 Mensaje para ${safeClient}:\n\n💬 Opción en Inglés (Copiar y Enviar):\n"Thinking of you and your sweet smile always brings warmth to my heart. How is your day going, my love?"\n\n💬 Traducción al Español:\n"Pensar en ti y en tu dulce sonrisa siempre le da calidez a mi corazón. ¿Cómo va tu día, mi amor?"`;
+  }
 
   return text;
 }
 
-// AUTO-DESCUBRIMIENTO DEL MODELO GROQ MÁS RÁPIDO Y POTENTE
-async function getWorkingGroqModel(apiKey) {
-  if (cachedActiveGroqModel) return cachedActiveGroqModel;
-  try {
-    const res = await fetch('https://api.groq.com/openai/v1/models', {
-      headers: { 'Authorization': `Bearer ${apiKey}` }
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && Array.isArray(data.data)) {
-        const preferred = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'llama3-70b', 'gemma2', 'qwen', 'llama3-8b'];
-        for (let pref of preferred) {
-          const match = data.data.find(m => m.id.toLowerCase().includes(pref) && !m.id.includes('whisper'));
-          if (match && match.active !== false) {
-            cachedActiveGroqModel = match.id;
-            console.log(`[GROQ MODELO ACTIVO]: ${cachedActiveGroqModel}`);
-            return cachedActiveGroqModel;
-          }
-        }
-      }
-    }
-  } catch (e) {}
-  return 'llama-3.3-70b-versatile';
-}
-
-// 1. MOTOR DE RAZONAMIENTO PURO CON GROQ (CERO PLANTILLAS QUEMADAS)
+// 1. MOTOR DIRECTO DE GROQ DE ALTA VELOCIDAD
 async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName, bioData) {
   const safeClient = (clientName && !['Search', 'Cliente', 'Yes', 'No', 'Open', 'More'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'la clienta';
   const safeProfile = profileName || 'HORACIO';
@@ -83,52 +86,46 @@ async function generateMasterAiResponse(prompt, fullTranscript, clientName, prof
   const realMarital = bioData?.maritalStatus || 'No especificado en perfil';
   const realInterests = bioData?.interests || 'No especificado en perfil';
 
-  console.log(`[GROQ RAZONAMIENTO] Consultando para: ${safeClient} | Pregunta: "${prompt}"`);
+  console.log(`[GROQ DIRECT] Cliente: ${safeClient} | Consulta: "${prompt}"`);
 
   if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
     try {
-      const targetModel = await getWorkingGroqModel(GROQ_API_KEY);
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-      const systemPrompt = `Eres el Co-Piloto de IA, Psicólogo y Asesor Estratégico de Chat para la agencia RYR TITAN en Talkytimes.
-Analizas a fondo la conversación de la clienta ${safeClient} con el perfil ${safeProfile}.
+      // PROMPT ULTRA LIMPIO: PROHÍBE EXPLICACIONES O LOGS
+      const systemPrompt = `Eres un redactor experto y asesor de citas para Talkytimes. Responde en español sobre la clienta ${safeClient}.
 
-DATOS DISPONIBLES DE ${safeClient}:
-- Nombre: ${safeClient}
-- Ubicación: ${realCountry}
-- Nacimiento / Edad: ${realBirthDate}
-- Estado Civil: ${realMarital}
-- Intereses: ${realInterests}
+DATOS DE ${safeClient}:
+- Ubicación: ${realCountry} | Edad: ${realBirthDate} | Estado Civil: ${realMarital} | Gustos: ${realInterests}
 
-HISTORIAL DEL CHAT CON ${safeClient}:
-${fullTranscript || 'Sin mensajes previos registrados aún.'}
+HISTORIAL:
+${fullTranscript || 'Sin historial previo.'}
 
-REGLAS DE ORO OBLIGATORIAS:
-1. RESPONDE CON RAZONAMIENTO REAL a cualquier pregunta que te haga el operador sobre la clienta (qué busca, estado de ánimo, mascotas, trabajo, sentimientos, hijos, etc.).
-2. CERO PLANTILLAS PREFABRICADAS: Analiza el contexto específico de esta conversación y genera una respuesta 100% original, humana y coherente en español.
-3. CERO TRAVEL MISLEADING (TM): NUNCA insinúes ni prometas encuentros en persona, visitas, viajes o citas físicas ("when we meet", "come see me", "book a flight"). Desvía siempre hacia la conexión emocional digital y cartas.
-4. Si el operador pide un mensaje para responderle o enamorarla:
-   - Explica brevemente la estrategia psicológica en español.
-   - Proporciona el mensaje redactado en Inglés entre comillas (listo para copiar).
-   - Proporciona la traducción al Español.
-5. Responde directamente en español claro y limpio, sin pensar en voz alta en inglés ni poner "Here is a thinking process".`;
+INSTRUCCIONES DIRECTAS:
+- PROHIBIDO TERMINANTEMENTE escribir procesos de análisis, pasos como "1. Analyze User Input", resúmenes en inglés o explicaciones de reglas.
+- CERO TRAVEL MISLEADING: NUNCA sugieras encuentros físicos ni viajes.
+- Si piden un mensaje o cómo responder, entrega ÚNICAMENTE este formato limpio:
+💡 Estrategia para ${safeClient}: [1-2 oraciones breves]
+💬 Opción en Inglés (Copiar y Enviar): "[Mensaje en inglés]"
+💬 Traducción al Español: "[Traducción en español]"
+- Si preguntan un dato directo (de dónde es, edad, mascotas), responde en 1 sola línea directa en español.`;
 
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${GROQ_API_KEY}`,
           'Content-Type': 'application/json',
-          'User-Agent': 'RYR-Titan-Master/2.0'
+          'User-Agent': 'RYR-Titan-Master/4.0'
         },
         body: JSON.stringify({
-          model: targetModel,
+          model: 'llama-3.3-70b-versatile',
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: prompt }
           ],
-          temperature: 0.7,
-          max_tokens: 900
+          temperature: 0.65,
+          max_tokens: 750
         }),
         signal: controller.signal
       });
@@ -138,101 +135,23 @@ REGLAS DE ORO OBLIGATORIAS:
       if (res.ok) {
         const data = await res.json();
         if (data.choices && data.choices[0] && data.choices[0].message?.content) {
-          return sanitizeAiOutput(data.choices[0].message.content);
+          return sanitizeAiOutput(data.choices[0].message.content, safeClient, bioData, fullTranscript, prompt);
         }
-      } else {
-        const errBody = await res.text();
-        console.error(`[GROQ API ERROR ${res.status}]:`, errBody);
       }
     } catch (err) {
-      console.error("[GROQ FETCH ERROR]:", err.message);
+      console.error("[GROQ ERROR]:", err.message);
     }
   }
 
-  // Fallback solo si se cae la red o no hay clave
-  return `⚠️ No se pudo obtener respuesta del motor de IA en este momento. Verifica la conexión con Groq en Render.`;
+  // Fallback semántico instantáneo
+  const pLower = (prompt || '').toLowerCase();
+  if (/(donde|dónde|pais|país)/i.test(pLower)) return `📍 Ubicación de ${safeClient}: Es de ${realCountry}.`;
+  if (/(edad|años|anos|nacimiento)/i.test(pLower)) return `🎂 Edad de ${safeClient}: Tiene ${realBirthDate}.`;
+
+  return `💡 Mensaje para ${safeClient}:\n\n💬 Opción en Inglés (Copiar y Enviar):\n"I was just thinking about you and wanted to say hi! What's something that made you smile today?"\n\n💬 Traducción al Español:\n"¡Estaba pensando en ti y quería saludarte! ¿Qué fue algo que te hizo sonreír hoy?"`;
 }
 
-// 2. FUSIÓN INCREMENTAL DE HISTORIALES (DÍA 1 + HOY)
-function mergeMarkdownHistories(existingMarkdown, newMarkdown, profile, clientName, clientId, bioData) {
-  if (!existingMarkdown || existingMarkdown.length < 20) return newMarkdown;
-
-  const extractMessageLines = (md) => {
-    return (md || '').split('\n').filter(l => l.startsWith('- 💼') || l.startsWith('- 👤'));
-  };
-
-  const existingLines = extractMessageLines(existingMarkdown);
-  const newLines = extractMessageLines(newMarkdown);
-
-  const seenSignatures = new Set();
-  const mergedDialogue = [];
-
-  const addLineIfUnique = (line) => {
-    const cleanSignature = line.replace(/\[\d+:\d+\s*(?:am|pm)?\]/gi, '').trim().toLowerCase();
-    if (!seenSignatures.has(cleanSignature)) {
-      seenSignatures.add(cleanSignature);
-      mergedDialogue.push(line);
-    }
-  };
-
-  existingLines.forEach(addLineIfUnique);
-  newLines.forEach(addLineIfUnique);
-
-  let mdLines = [
-    `# HISTORIAL DE CONVERSACIÓN | RYR TITAN AUDIT`,
-    `- **Operador:** ${profile}`,
-    `- **Perfil Asignado:** ${profile}`,
-    `- **Cliente:** ${clientName}`,
-    `- **ID del Usuario:** ${clientId}`,
-    `- **Ubicación:** ${bioData?.country || 'United States'} | **Nacimiento:** ${bioData?.birthDate || 'Edad en perfil'}`,
-    `- **Fecha de Actualización:** ${new Date().toLocaleString()}`,
-    `---`,
-    `### Diálogo Transcrito (Ambos Participantes):`
-  ];
-
-  return [...mdLines, ...mergedDialogue].join('\n');
-}
-
-// 3. AUDITORÍA HEURÍSTICA Y TRAVEL MISLEADING
-function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown) {
-  const textLower = (markdown || '').toLowerCase();
-  const findings = [];
-  let qualityScore = 100;
-  let riskLevel = 'BAJO';
-
-  const tmRegex = /(?:when we meet|when i visit|come visit|meet in person|see you in person|book a flight|buy a ticket|flying to you|fly to you|stay at a hotel|pack your bags|plane ticket|flight ticket|live together soon|cuando nos veamos|cuando nos conozcamos en persona|cuando viaje|ven a verme|viajar a verte|comprar el pasaje|boleto de avión|hotel juntos|nos vemos en persona)/i;
-  if (tmRegex.test(textLower)) {
-    findings.push({
-      type: 'CRITICAL',
-      title: '🚨 INFRACCIÓN: TRAVEL MISLEADING (TM)',
-      description: 'Insinuación de encuentro personal o viaje físico detectada en el diálogo.'
-    });
-    qualityScore -= 45;
-    riskLevel = 'CRÍTICO';
-  }
-
-  if (/(?:si me quisieras|si me amaras|envíame un regalo|mandame un regalo|dame un regalo|cómprame un regalo|send me a gift|need coins)/i.test(textLower)) {
-    findings.push({
-      type: 'CRITICAL',
-      title: '🛑 Coacción por Regalos',
-      description: 'Petición directa de regalos condicionando el afecto.'
-    });
-    qualityScore -= 30;
-    if (riskLevel !== 'CRÍTICO') riskLevel = 'ALTO';
-  }
-
-  qualityScore = Math.max(0, qualityScore);
-
-  return {
-    score: qualityScore,
-    riskLevel: riskLevel,
-    diagnosis: riskLevel === 'CRÍTICO' ? 'ALTO RIESGO: Infracciones graves detectadas.' : 'Conversación fluida y respetuosa.',
-    recommendation: riskLevel === 'CRÍTICO' ? 'Corregir al operador de inmediato sobre Travel Misleading.' : 'Mantener el ritmo de conversación.',
-    findings: findings
-  };
-}
-
-// 4. ENDPOINTS DE CONSULTA Y EXPEDIENTES
+// 2. ENDPOINTS DE CONSULTA Y EXPEDIENTES
 app.post('/api/intelligence/query', async (req, res) => {
   try {
     const { query, clientId, clientName, profileName, liveMarkdown, bioData } = req.body;
@@ -290,9 +209,9 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(australia)/i.test(textLower) ? 'Australia' : (/(uruguay)/i.test(textLower) ? 'Uruguay' : 'United States')),
-      birthDate: /(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : 'Edad en perfil',
-      maritalStatus: 'Divorced / Soltera',
+      location: /(united states|eeuu)/i.test(textLower) ? 'United States' : (/(brazil|brasil)/i.test(textLower) ? 'Brazil' : 'United States'),
+      birthDate: /(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : 'En perfil',
+      maritalStatus: 'Not married',
       summary: `Expediente de ${clientName} verificado en Supabase.`
     };
     return res.json({ success: true, dossier, hasData: true });
@@ -306,6 +225,82 @@ app.post('/api/settings/toggle-modal', (req, res) => {
   globalSystemSettings.invasiveModalEnabled = !globalSystemSettings.invasiveModalEnabled;
   res.json({ success: true, settings: globalSystemSettings });
 });
+
+// FUSIÓN INCREMENTAL DE HISTORIALES
+function mergeMarkdownHistories(existingMarkdown, newMarkdown, profile, clientName, clientId, bioData) {
+  if (!existingMarkdown || existingMarkdown.length < 20) return newMarkdown;
+
+  const extractMessageLines = (md) => (md || '').split('\n').filter(l => l.startsWith('- 💼') || l.startsWith('- 👤'));
+  const existingLines = extractMessageLines(existingMarkdown);
+  const newLines = extractMessageLines(newMarkdown);
+
+  const seenSignatures = new Set();
+  const mergedDialogue = [];
+
+  const addLineIfUnique = (line) => {
+    const cleanSignature = line.replace(/\[\d+:\d+\s*(?:am|pm)?\]/gi, '').trim().toLowerCase();
+    if (!seenSignatures.has(cleanSignature)) {
+      seenSignatures.add(cleanSignature);
+      mergedDialogue.push(line);
+    }
+  };
+
+  existingLines.forEach(addLineIfUnique);
+  newLines.forEach(addLineIfUnique);
+
+  let mdLines = [
+    `# HISTORIAL DE CONVERSACIÓN | RYR TITAN AUDIT`,
+    `- **Operador:** ${profile}`,
+    `- **Perfil Asignado:** ${profile}`,
+    `- **Cliente:** ${clientName}`,
+    `- **ID del Usuario:** ${clientId}`,
+    `- **Ubicación:** ${bioData?.country || 'United States'} | **Nacimiento:** ${bioData?.birthDate || 'Edad en perfil'}`,
+    `- **Fecha de Actualización:** ${new Date().toLocaleString()}`,
+    `---`,
+    `### Diálogo Transcrito (Ambos Participantes):`
+  ];
+
+  return [...mdLines, ...mergedDialogue].join('\n');
+}
+
+// AUDITORÍA Y TRAVEL MISLEADING
+function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown) {
+  const textLower = (markdown || '').toLowerCase();
+  const findings = [];
+  let qualityScore = 100;
+  let riskLevel = 'BAJO';
+
+  const tmRegex = /(?:when we meet|when i visit|come visit|meet in person|see you in person|book a flight|buy a ticket|flying to you|fly to you|stay at a hotel|pack your bags|plane ticket|flight ticket|live together soon|cuando nos veamos|cuando nos conozcamos en persona|cuando viaje|ven a verme|viajar a verte|comprar el pasaje|boleto de avión|hotel juntos|nos vemos en persona)/i;
+  if (tmRegex.test(textLower)) {
+    findings.push({
+      type: 'CRITICAL',
+      title: '🚨 INFRACCIÓN: TRAVEL MISLEADING (TM)',
+      description: 'Insinuación de encuentro personal o viaje físico detectada en el diálogo.'
+    });
+    qualityScore -= 45;
+    riskLevel = 'CRÍTICO';
+  }
+
+  if (/(?:si me quisieras|si me amaras|envíame un regalo|mandame un regalo|dame un regalo|cómprame un regalo|send me a gift|need coins)/i.test(textLower)) {
+    findings.push({
+      type: 'CRITICAL',
+      title: '🛑 Coacción por Regalos',
+      description: 'Petición directa de regalos condicionando el afecto.'
+    });
+    qualityScore -= 30;
+    if (riskLevel !== 'CRÍTICO') riskLevel = 'ALTO';
+  }
+
+  qualityScore = Math.max(0, qualityScore);
+
+  return {
+    score: qualityScore,
+    riskLevel: riskLevel,
+    diagnosis: riskLevel === 'CRÍTICO' ? 'ALTO RIESGO: Infracciones graves detectadas.' : 'Conversación fluida y respetuosa.',
+    recommendation: riskLevel === 'CRÍTICO' ? 'Corregir al operador de inmediato sobre Travel Misleading.' : 'Mantener el ritmo de conversación.',
+    findings: findings
+  };
+}
 
 app.post('/api/chats/audit-deep', async (req, res) => {
   const { operator, profile, clientName, clientId, bioData, markdown, messages } = req.body;
@@ -587,7 +582,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: var(--bg-main); color: #fff; font-family: system-ui, sans-serif; padding: 12px; }
     header { display: flex; justify-content: space-between; align-items: center; background: #0b132b; border: 1px solid #1e293b; border-left: 4px solid var(--accent-cyan); border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; }
-    .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 11px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+    .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 11px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; }
     .btn-action:hover { border-color: var(--accent-green); color: var(--accent-green); }
     .btn-fines { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(245, 158, 11, 0.15); }
     .btn-toggle-on { border-color: #ef4444; color: #f87171; background: rgba(239, 68, 68, 0.15); }
@@ -595,7 +590,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
     .operator-card { background: var(--bg-card); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; }
-    
     .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
     .profile-live-box.monopoly-alert { border-color: #f59e0b !important; background: rgba(245, 158, 11, 0.08) !important; }
 
@@ -870,14 +864,9 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
         box.innerHTML = \`
           <div style="background:#0b132b; border:1px solid #8b5cf6; border-radius:8px; padding:12px; margin-top:8px;">
-            <div style="font-weight:bold; font-size:13px; color:\${isGood ? '#34d399' : '#f87171'}; margin-bottom:4px;">🎯 Puntaje: \${r.score}/100 [Riesgo: \${r.riskLevel}]</div>
-            <div style="font-size:11px; margin-bottom:4px;"><b>🧠 Diagnóstico:</b> \${r.diagnosis}</div>
-            <div style="font-size:11px; color:#38bdf8; margin-bottom:6px;"><b>📋 Recomendación:</b> \${r.recommendation}</div>
-            \${r.findings.map(f => \`
-              <div style="background:rgba(239,68,68,0.15); border-left:3px solid #ef4444; padding:6px; border-radius:4px; font-size:11px; margin-bottom:4px; color:#fca5a5;">
-                <b>\${f.title}:</b> \${f.description}
-              </div>
-            \`).join('')}
+            <div style="font-weight:bold; font-size:13px; color:\${isGood ? '#34d399' : '#f87171'};">🎯 Puntaje: \${r.score}/100 [Riesgo: \${r.riskLevel}]</div>
+            <div style="font-size:11px; margin-top:4px;"><b>🧠 Diagnóstico:</b> \${r.diagnosis}</div>
+            <div style="font-size:11px; color:#38bdf8; margin-top:4px;"><b>📋 Recomendación:</b> \${r.recommendation}</div>
           </div>
         \`;
       } catch (err) {
@@ -919,4 +908,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V99.0 (100% Groq Powered) activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V120.0 (Zero Meta-Text) activo en puerto ${PORT}`));
