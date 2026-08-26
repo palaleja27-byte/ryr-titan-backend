@@ -11,11 +11,16 @@ function cleanEnv(val) {
 const SUPABASE_URL = cleanEnv(process.env.SUPABASE_URL).replace(/\/+$/, '');
 const SUPABASE_KEY = cleanEnv(process.env.SUPABASE_KEY);
 const GROQ_API_KEY = cleanEnv(process.env.GROQ_API_KEY);
+const OPENAI_API_KEY = cleanEnv(process.env.OPENAI_API_KEY);
+const DEEPSEEK_API_KEY = cleanEnv(process.env.DEEPSEEK_API_KEY);
 
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 
-let globalSystemSettings = { invasiveModalEnabled: true };
+let globalSystemSettings = {
+  invasiveModalEnabled: true
+};
+
 const liveTelemetryMap = new Map();
 const recentChatAuditsRAM = new Map();
 const activeAlertsMap = new Map();
@@ -28,115 +33,166 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// LIMPIADOR ULTRA ESTRICTO DE LOGS EN INGLÉS
+// LIMPIADOR DE FORMATO DE IA
 function sanitizeAiOutput(rawText) {
   if (!rawText) return '';
   let text = String(rawText);
 
   text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
-
-  if (/(?:1\.\s*Analyze|Analyze User Input|Evaluate Chat History|Identify Key|Here'?s a thinking|Check against)/i.test(text)) {
-    const markerMatch = text.match(/(?:💡|💬|Estrategia|Respuesta|Opción|Option|Draft Response|Draft:?|Message:?|Mensaje:?|📍|🎂|💍|🐾|👶|💼)\s*([\s\S]+)$/i);
-    if (markerMatch && markerMatch[0].trim().length > 15) {
-      text = markerMatch[0];
-    } else {
-      const paragraphs = text.split(/\n\s*\n/);
-      const cleanParagraphs = paragraphs.filter(p => {
-        const pt = p.trim();
-        return !/^\d+\.\s*(?:Analyze|Evaluate|Identify|Formulate|Draft|Check|Review)/i.test(pt) &&
-               !/^-(?:\s*)(?:User says|Context|Client|Operator|Chat History|Goal|Rules)/i.test(pt) &&
-               !/^(?:The user wants|Looking at the|Here is a)/i.test(pt) &&
-               pt.length > 5;
-      });
-      if (cleanParagraphs.length > 0) {
-        text = cleanParagraphs.join('\n\n');
-      }
-    }
-  }
-
-  text = text.replace(/^(?:Draft Response:|Draft:|Response:|Respuesta:)\s*/gi, '');
+  text = text.replace(/Here'?s a thinking process:?[\s\S]*?(?=\n\n|$)/gi, '');
   text = text.replace(/Check against (?:rules|constraints):[\s\S]*$/gi, '');
-  text = text.replace(/Rules to apply:[\s\S]*$/gi, '');
+  text = text.replace(/1\.\s*Analyze User Input:[\s\S]*?(?=\n\n|$)/gi, '');
   text = text.replace(/\*\*/g, '').trim();
 
   return text;
 }
 
-// 1. MOTOR DE IA CONECTADO A GROQ CLOUD
-async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName, bioData) {
-  const safeClient = (clientName && !['Search', 'Cliente', 'Yes', 'No', 'Open', 'More'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Renate, 80';
+// 1. MOTOR DE IA CONVERSACIONAL PURO (GROQ / OPENAI / DEEPSEEK)
+async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName, bioData, conversationHistory = []) {
+  const safeClient = (clientName && !['Search', 'Cliente', 'Yes', 'No', 'Open', 'More'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'la clienta';
   const safeProfile = profileName || 'HORACIO';
-  const realCountry = bioData?.country || 'Australia';
-  const realBirthDate = bioData?.birthDate || 'Jan 7, 1946 (80 años)';
-  const realMarital = bioData?.maritalStatus || 'Widowed';
+  const realCountry = bioData?.country || 'Ubicación en perfil';
+  const realBirthDate = bioData?.birthDate || 'Edad en perfil';
+  const realMarital = bioData?.maritalStatus || 'En perfil';
+  const realInterests = bioData?.interests || 'En perfil';
 
-  console.log(`[GROQ DIRECT] Clienta: ${safeClient} | Pregunta: "${prompt}"`);
+  const lines = (fullTranscript || '').split('\n').filter(l => l.startsWith('- 💼') || l.startsWith('- 👤'));
+  const condensedTranscript = lines.slice(-35).join('\n');
 
+  console.log(`[IA QUERY] Cliente: ${safeClient} | Consulta: "${prompt}"`);
+
+  const systemPrompt = `Eres el Co-Piloto de IA, Psicólogo y Estratega de Chat para la agencia RYR TITAN en Talkytimes.
+Analizas a la clienta ${safeClient} para el perfil asignado ${safeProfile}.
+
+DATOS DE PERFIL DE ${safeClient}:
+- Nombre: ${safeClient}
+- Ubicación: ${realCountry}
+- Edad / Nacimiento: ${realBirthDate}
+- Estado Civil: ${realMarital}
+- Intereses / Gustos: ${realInterests}
+
+HISTORIAL DEL CHAT CON ${safeClient}:
+${condensedTranscript || 'Sin mensajes previos registrados.'}
+
+REGLAS DE ORO OBLIGATORIAS:
+1. Responde a CUALQUIER pregunta del operador con razonamiento directo, humano y empático en español.
+2. Si preguntan datos fácticos (hijos, mascotas, trabajo, créditos, intenciones, de dónde es): responde directamente con la información del chat o perfil.
+3. Si el operador pide un mensaje de respuesta, enamoramiento o enganche:
+   💡 Breve explicación táctica.
+   💬 Opción en Inglés (redactada de forma natural, seductora y entre comillas, lista para copiar).
+   💬 Traducción al Español.
+4. CERO TRAVEL MISLEADING (TM): NUNCA sugieras encuentros físicos, citas en persona ni viajes ("when we meet", "come see me", "book a flight").
+5. PROHIBIDO escribir en inglés "Here is a thinking process" o listas numeradas de análisis. Responde directamente en español.`;
+
+  // A. INTENTO CON GROQ (MODELOS EN CASCADA)
   if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
+    const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'llama3-70b-8192', 'llama3-8b-8192'];
+
+    for (let model of groqModels) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 14000);
+
+        const messagesPayload = [{ role: 'system', content: systemPrompt }];
+
+        if (Array.isArray(conversationHistory) && conversationHistory.length > 0) {
+          conversationHistory.slice(-4).forEach(msg => {
+            if (msg.role && msg.content) messagesPayload.push({ role: msg.role, content: msg.content });
+          });
+        }
+
+        messagesPayload.push({ role: 'user', content: prompt });
+
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${GROQ_API_KEY}`,
+            'Content-Type': 'application/json',
+            'User-Agent': 'RYR-Titan-Engine/9.0'
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: messagesPayload,
+            temperature: 0.7,
+            max_tokens: 900
+          }),
+          signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.choices && data.choices[0] && data.choices[0].message?.content) {
+            const clean = sanitizeAiOutput(data.choices[0].message.content);
+            if (clean && clean.length > 3) {
+              console.log(`[GROQ SUCCESS] Respuesta generada con modelo: ${model}`);
+              return clean;
+            }
+          }
+        } else {
+          const errText = await res.text();
+          console.error(`[GROQ ERROR ${res.status}] en ${model}:`, errText);
+        }
+      } catch (err) {
+        console.error(`[GROQ FETCH ERROR] en ${model}:`, err.message);
+      }
+    }
+  }
+
+  // B. INTENTO CON OPENAI
+  if (OPENAI_API_KEY && OPENAI_API_KEY.startsWith('sk-')) {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-      const systemPrompt = `Eres el Asistente de IA y Estratega de Citas de RYR TITAN en Talkytimes.
-Analizas a la clienta ${safeClient} con el perfil ${safeProfile}.
-
-DATOS DE ${safeClient}:
-- Nombre: ${safeClient} | Ubicación: ${realCountry} | Edad: ${realBirthDate} | Estado Civil: ${realMarital}
-
-HISTORIAL DE LA CONVERSACIÓN:
-${fullTranscript || 'Sin historial previo.'}
-
-REGLAS OBLIGATORIAS:
-1. Responde a CUALQUIER pregunta del operador sobre la clienta (su pensión, de qué hablaron, sus dudas, mascotas, cómo responderle, etc.).
-2. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos, citas en persona o viajes.
-3. Si el operador pide un mensaje: redacta una sugerencia seductora y humana en inglés (entre comillas) y su traducción al español.
-4. PROHIBIDO escribir listas de análisis en inglés o "Here is a thinking process". Responde DIRECTAMENTE en español.`;
-
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
-          'Content-Type': 'application/json',
-          'User-Agent': 'RYR-Titan-Engine/10.0'
-        },
+        headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
+          model: 'gpt-4o-mini',
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: prompt }
           ],
-          temperature: 0.65,
-          max_tokens: 850
-        }),
-        signal: controller.signal
+          temperature: 0.7
+        })
       });
-
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.choices && data.choices[0] && data.choices[0].message?.content) {
-          const clean = sanitizeAiOutput(data.choices[0].message.content);
-          if (clean && clean.length > 5) return clean;
-        }
+      const data = await res.json();
+      if (data.choices && data.choices[0] && data.choices[0].message?.content) {
+        return sanitizeAiOutput(data.choices[0].message.content);
       }
-    } catch (err) {
-      console.error("[GROQ ERROR]:", err.message);
+    } catch (e) {
+      console.error("[OPENAI ERROR]:", e);
     }
   }
 
-  // Fallback directo
-  const pLower = (prompt || '').toLowerCase();
-  if (/(donde|dónde|pais|país)/i.test(pLower)) return `📍 Ubicación de ${safeClient}: Es de ${realCountry}.`;
-  if (/(edad|años|anos|nacimiento)/i.test(pLower)) return `🎂 Edad de ${safeClient}: Tiene ${realBirthDate}.`;
+  // C. INTENTO CON DEEPSEEK
+  if (DEEPSEEK_API_KEY) {
+    try {
+      const res = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.7
+        })
+      });
+      const data = await res.json();
+      if (data.choices && data.choices[0] && data.choices[0].message?.content) {
+        return sanitizeAiOutput(data.choices[0].message.content);
+      }
+    } catch (e) {}
+  }
 
-  return `💡 Análisis sobre ${safeClient}:\nReside en ${realCountry}, edad: ${realBirthDate}. Conversación activa en la plataforma.`;
+  return `⚠️ Error de comunicación con el motor de IA. Por favor verifica que tu clave de Groq en Render esté activa y sin espacios.`;
 }
 
 // 2. ENDPOINTS DE CONSULTA Y EXPEDIENTES
 app.post('/api/intelligence/query', async (req, res) => {
   try {
-    const { query, clientId, clientName, profileName, liveMarkdown, bioData } = req.body;
+    const { query, clientId, clientName, profileName, liveMarkdown, bioData, conversationHistory } = req.body;
     const targetId = String(clientId || '').trim();
     let chatMd = liveMarkdown || '';
 
@@ -159,7 +215,7 @@ app.post('/api/intelligence/query', async (req, res) => {
       }
     }
 
-    const aiAnswer = await generateMasterAiResponse(query, chatMd, clientName, profileName, bioData);
+    const aiAnswer = await generateMasterAiResponse(query, chatMd, clientName, profileName, bioData, conversationHistory);
     res.json({ success: true, answer: aiAnswer });
   } catch (err) {
     res.json({ success: true, answer: `Consulta procesada con éxito.` });
@@ -191,9 +247,9 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(australia)/i.test(textLower) ? 'Australia' : 'United States'),
-      birthDate: /(jan 7, 1946|1946)/i.test(textLower) ? 'Jan 7, 1946 (80 años)' : '80 años',
-      maritalStatus: 'Widowed',
+      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(australia)/i.test(textLower) ? 'Australia' : (/(uruguay)/i.test(textLower) ? 'Uruguay' : 'United States')),
+      birthDate: /(jan 7, 1946|1946)/i.test(textLower) ? 'Jan 7, 1946 (80 años)' : (/(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : 'Edad en perfil'),
+      maritalStatus: /(widowed|viuda|viudo)/i.test(textLower) ? 'Widowed' : 'Not married',
       summary: `Expediente de ${clientName} verificado en Supabase.`
     };
     return res.json({ success: true, dossier, hasData: true });
@@ -202,7 +258,13 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null, hasData: false });
 });
 
-// FUSIÓN INCREMENTAL DE HISTORIALES
+app.get('/api/settings', (req, res) => res.json({ success: true, settings: globalSystemSettings }));
+app.post('/api/settings/toggle-modal', (req, res) => {
+  globalSystemSettings.invasiveModalEnabled = !globalSystemSettings.invasiveModalEnabled;
+  res.json({ success: true, settings: globalSystemSettings });
+});
+
+// FUSIÓN INCREMENTAL
 function mergeMarkdownHistories(existingMarkdown, newMarkdown, profile, clientName, clientId, bioData) {
   if (!existingMarkdown || existingMarkdown.length < 20) return newMarkdown;
 
@@ -561,14 +623,26 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 11px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; }
     .btn-action:hover { border-color: var(--accent-green); color: var(--accent-green); }
     .btn-fines { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(245, 158, 11, 0.15); }
+    .btn-toggle-on { border-color: #ef4444; color: #f87171; background: rgba(239, 68, 68, 0.15); }
+    .btn-toggle-off { border-color: #64748b; color: #94a3b8; background: #1e293b; }
+
     .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
     .operator-card { background: var(--bg-card); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; }
     .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
+    .profile-live-box.monopoly-alert { border-color: #f59e0b !important; background: rgba(245, 158, 11, 0.08) !important; }
+
     .live-timers-container { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
     .live-chat-timer-badge { font-size: 10px; font-weight: bold; font-family: monospace; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
     .timer-ok { background: #064e3b; color: #34d399; border: 1px solid #10b981; }
     .timer-expired { background: #450a0a; color: #f87171; border: 1px solid #ef4444; }
-    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.88); backdrop-filter: blur(5px); z-index: 99999; justify-content: center; align-items: center; }
+
+    .prospect-pill { font-size: 10px; font-weight: bold; font-family: monospace; padding: 3px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; }
+    .prospect-progress { background: #1c2541; border: 1px solid #f59e0b; color: #fde68a; }
+    .prospect-done { background: #064e3b; border: 1px solid #10b981; color: #34d399; }
+
+    .monopoly-banner { background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; border-radius: 4px; padding: 6px 8px; font-size: 10.5px; color: #fca5a5; margin-top: 6px; font-weight: bold; }
+
+    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); z-index: 99999; justify-content: center; align-items: center; }
     .modal-content { background: #0e1526; border: 1px solid var(--accent-cyan); border-radius: 10px; width: 940px; max-width: 95%; max-height: 88vh; padding: 20px; display: flex; flex-direction: column; gap: 12px; color: #fff; }
     .chat-transcript { background: #0b132b; border: 1px solid #1e293b; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 250px; overflow-y: auto; line-height: 1.6; color: #cbd5e1; }
   </style>
@@ -577,12 +651,15 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <header>
     <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE</div>
     <div style="display:flex; gap:8px;">
+      <button id="btn-toggle-modal" class="btn-action btn-toggle-on" onclick="toggleInvasiveModal()">🚨 Modal Invasivo: ON</button>
       <button class="btn-action btn-fines" onclick="openFinesModal()">💰 Multas (<span id="total-fines-count">0</span>)</button>
       <button class="btn-action" onclick="openChatAuditsModal()">📄 Historial de Chats (MD)</button>
       <button class="btn-action" onclick="openBannedWordsModal()">🛡️ Palabras Prohibidas</button>
     </div>
   </header>
+
   <div id="operators-grid" class="grid-operators"></div>
+
   <div id="modal-fines" class="modal-overlay">
     <div class="modal-content">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
@@ -592,6 +669,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <div id="fines-list-container" style="overflow-y:auto; flex:1;"></div>
     </div>
   </div>
+
   <div id="modal-alerts-hub" class="modal-overlay">
     <div class="modal-content">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
@@ -601,6 +679,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <div id="alerts-hub-list" style="overflow-y:auto; flex:1;"></div>
     </div>
   </div>
+
   <div id="modal-chats" class="modal-overlay">
     <div class="modal-content">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
@@ -610,6 +689,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <div id="chat-audits-list" style="overflow-y:auto; flex:1;"></div>
     </div>
   </div>
+
   <div id="modal-banned" class="modal-overlay">
     <div class="modal-content" style="width:550px;">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
@@ -623,13 +703,37 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <div id="banned-words-list" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;"></div>
     </div>
   </div>
+
   <script>
     const API_URL = window.location.origin;
     let globalAuditsList = [];
+
+    async function toggleInvasiveModal() {
+      const res = await fetch(\`\${API_URL}/api/settings/toggle-modal\`, { method: 'POST' });
+      const data = await res.json();
+      updateToggleBtn(data.settings.invasiveModalEnabled);
+    }
+
+    function updateToggleBtn(isEnabled) {
+      const btn = document.getElementById('btn-toggle-modal');
+      if (isEnabled) {
+        btn.className = 'btn-action btn-toggle-on';
+        btn.innerText = '🚨 Modal Invasivo: ON';
+      } else {
+        btn.className = 'btn-action btn-toggle-off';
+        btn.innerText = '⚪ Modal Invasivo: OFF';
+      }
+    }
+
     async function fetchLive() {
       try {
         const res = await fetch(\`\${API_URL}/api/telemetry/live\`);
         const data = await res.json();
+        
+        if (data.settings) {
+          updateToggleBtn(data.settings.invasiveModalEnabled);
+        }
+
         document.getElementById('operators-grid').innerHTML = (data.operators || []).map(op => \`
           <div class="operator-card">
             <div style="display:flex; justify-content:space-between; font-weight:bold; border-bottom:1px solid #1e293b; padding-bottom:6px; margin-bottom:8px;">
@@ -643,12 +747,33 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
                 const timeStr = \`\${min < 10 ? '0' : ''}\${min}:\${sec < 10 ? '0' : ''}\${sec}\`;
                 return \`<span class="live-chat-timer-badge \${t.isExpired ? 'timer-expired' : 'timer-ok'}">💬 \${t.contact}: \${t.isExpired ? '00:00 (VENCIDO)' : timeStr}</span>\`;
               }).join('');
+
+              const prog = p.prospectingProgress || { count: 0, quota: 10, remainingSeconds: 1800, isCompleted: false };
+              const pMin = Math.floor(prog.remainingSeconds / 60);
+              const pSec = prog.remainingSeconds % 60;
+              const pTimeStr = \`\${pMin < 10 ? '0' : ''}\${pMin}:\${pSec < 10 ? '0' : ''}\${pSec}\`;
+
+              const monopoly = p.monopolyStatus || { hasMonopoly: false };
+
               return \`
-                <div class="profile-live-box">
-                  <div style="display:flex; justify-content:space-between;">
+                <div class="profile-live-box \${monopoly.hasMonopoly ? 'monopoly-alert' : ''}">
+                  <div style="display:flex; justify-content:space-between; align-items:center;">
                     <span style="font-weight:bold; color:#00ffcc;">🎯 \${p.profileName}</span>
                     <span style="font-size:11px; color:#38bdf8;">✉️ \${p.pendingReadLetters} cartas</span>
                   </div>
+
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+                    <span class="prospect-pill \${prog.isCompleted ? 'prospect-done' : 'prospect-progress'}">
+                      🎯 Seguimiento: \${prog.isCompleted ? 'OK' : pTimeStr} [\${prog.count}/\${prog.quota}]
+                    </span>
+                  </div>
+
+                  \${monopoly.hasMonopoly ? \`
+                    <div class="monopoly-banner">
+                      ⚠️ DESATENCIÓN: Hablando solo con "\${monopoly.focusedClient}" (\${monopoly.consecutiveSent} msgs) mientras tiene \${monopoly.unattendedCount} clientas esperando respuesta.
+                    </div>
+                  \` : ''}
+
                   \${timersHtml ? \`<div class="live-timers-container">\${timersHtml}</div>\` : \`<div style="font-size:10px; color:#10b981; margin-top:4px;">⏱️ Todos los chats al día</div>\`}
                 </div>
               \`;
@@ -659,6 +784,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         fetchAlertsCount();
       } catch (e) {}
     }
+
     async function fetchFinesCount() {
       try {
         const res = await fetch(\`\${API_URL}/api/fines\`);
@@ -666,6 +792,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         document.getElementById('total-fines-count').innerText = data.fines ? data.fines.length : 0;
       } catch (e) {}
     }
+
     async function openFinesModal() {
       document.getElementById('modal-fines').style.display = 'flex';
       const res = await fetch(\`\${API_URL}/api/fines\`);
@@ -680,11 +807,13 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           <div>
             <div style="font-weight:bold; color:#fde68a;">👤 \${f.operator_name} [\${f.shift}] - 🎯 \${f.profile_name}</div>
             <div style="font-size:11px; color:#94a3b8;">Cliente: \${f.client_name} | Motivo: \${f.reason}</div>
+            <div style="font-size:9px; color:#64748b;">\${new Date(f.created_at).toLocaleString()}</div>
           </div>
           <div style="font-size:14px; font-weight:900; color:#ef4444;">-\$\${Number(f.amount).toLocaleString('es-CO')} COP</div>
         </div>
       \`).join('');
     }
+
     async function fetchAlertsCount() {
       try {
         const res = await fetch(\`\${API_URL}/api/alerts/live\`);
@@ -692,6 +821,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         document.getElementById('count-behavior-alerts').innerText = data.alerts ? data.alerts.length : 0;
       } catch (e) {}
     }
+
     async function openAlertsCenterModal() {
       document.getElementById('modal-alerts-hub').style.display = 'flex';
       const res = await fetch(\`\${API_URL}/api/alerts/live\`);
@@ -716,6 +846,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         </div>
       \`).join('');
     }
+
     async function resolveAlert(id) { await fetch(\`\${API_URL}/api/alerts/\${id}/resolve\`, { method: 'POST' }); document.getElementById('alert-item-' + id)?.remove(); fetchAlertsCount(); }
     async function dismissAlert(id) { await fetch(\`\${API_URL}/api/alerts/\${id}/dismiss\`, { method: 'POST' }); document.getElementById('alert-item-' + id)?.remove(); fetchAlertsCount(); }
 
@@ -724,7 +855,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       const res = await fetch(\`\${API_URL}/api/chats/audits\`);
       const data = await res.json();
       globalAuditsList = data.audits || [];
-      document.getElementById('chat-audits-list').innerHTML = globalAuditsList.map((a, index) => \`
+      const container = document.getElementById('chat-audits-list');
+      
+      if (globalAuditsList.length === 0) {
+        container.innerHTML = '<p style="color:#94a3b8;">No hay conversaciones en Supabase aún. Presiona ⚡ en Talkytimes.</p>';
+        return;
+      }
+
+      container.innerHTML = globalAuditsList.map((a, index) => \`
         <div style="background:#060913; border:1px solid #1e293b; border-radius:6px; padding:12px; margin-bottom:10px;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
             <span style="font-weight:bold; color:var(--accent-cyan);">👤 Op: \${a.operator} | 🎯 Perfil: \${a.profile} | 💬 Cliente: \${a.clientName} (ID: \${a.clientId})</span>
@@ -738,33 +876,57 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         </div>
       \`).join('');
     }
+
     async function runAiAnalysisByIndex(index) {
       const audit = globalAuditsList[index];
       if (!audit) return;
+
       const box = document.getElementById('ai-box-' + index);
-      box.innerHTML = '<p style="color:#c4b5fd; font-size:12px; margin:8px 0;">🤖 Analizando diálogo con IA...</p>';
+      box.innerHTML = '<p style="color:#c4b5fd; font-size:12px; margin:8px 0;">🤖 Analizando diálogo con IA en busca de Travel Misleading e infracciones...</p>';
+
       try {
         const res = await fetch(\`\${API_URL}/api/chats/analyze-single\`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ operator: audit.operator, profile: audit.profile, clientName: audit.clientName, clientId: audit.clientId, markdown: audit.markdown })
+          body: JSON.stringify({
+            operator: audit.operator,
+            profile: audit.profile,
+            clientName: audit.clientName,
+            clientId: audit.clientId,
+            markdown: audit.markdown
+          })
         });
         const data = await res.json();
         const r = data.aiReport;
+        const isGood = r.score >= 70;
+
         box.innerHTML = \`
           <div style="background:#0b132b; border:1px solid #8b5cf6; border-radius:8px; padding:12px; margin-top:8px;">
-            <div style="font-weight:bold; font-size:13px; color:\${r.score >= 70 ? '#34d399' : '#f87171'};">🎯 Puntaje: \${r.score}/100 [Riesgo: \${r.riskLevel}]</div>
-            <div style="font-size:11px; margin-top:4px;"><b>🧠 Diagnóstico:</b> \${r.diagnosis}</div>
-            <div style="font-size:11px; color:#38bdf8; margin-top:4px;"><b>📋 Recomendación:</b> \${r.recommendation}</div>
-          </div>\`;
-      } catch (err) { box.innerHTML = '<p style="color:#ef4444;">Error al procesar análisis.</p>'; }
+            <div style="font-weight:bold; font-size:13px; color:\${isGood ? '#34d399' : '#f87171'};">🎯 Puntaje: \${r.score}/100 [Riesgo: \${r.riskLevel}]</div>
+            <div style="font-size:11px; margin-bottom:4px;"><b>🧠 Diagnóstico:</b> \${r.diagnosis}</div>
+            <div style="font-size:11px; color:#38bdf8; margin-bottom:6px;"><b>📋 Recomendación:</b> \${r.recommendation}</div>
+            \${r.findings.map(f => \`
+              <div style="background:rgba(239,68,68,0.15); border-left:3px solid #ef4444; padding:6px; border-radius:4px; font-size:11px; margin-bottom:4px; color:#fca5a5;">
+                <b>\${f.title}:</b> \${f.description}
+              </div>
+            \`).join('')}
+          </div>
+        \`;
+      } catch (err) {
+        box.innerHTML = '<p style="color:#ef4444;">Error al procesar el análisis de IA.</p>';
+      }
     }
+
     async function openBannedWordsModal() {
       document.getElementById('modal-banned').style.display = 'flex';
       const res = await fetch(\`\${API_URL}/api/banned-words\`);
       const data = await res.json();
-      document.getElementById('banned-words-list').innerHTML = (data.words || []).map(w => \`<div style="background:#1c2541; border:1px solid #ef4444; color:#fca5a5; padding:3px 6px; border-radius:4px; font-size:11px;">\${w} <span style="cursor:pointer; font-weight:bold;" onclick="delWord('\${w}')">✕</span></div>\`).join('');
+      document.getElementById('banned-words-list').innerHTML = (data.words || []).map(w => \`
+        <div style="background:#1c2541; border:1px solid #ef4444; color:#fca5a5; padding:3px 6px; border-radius:4px; font-size:11px;">
+          \${w} <span style="cursor:pointer; font-weight:bold; margin-left:4px;" onclick="delWord('\${w}')">✕</span>
+        </div>\`).join('');
     }
+
     async function addBannedWord() {
       const word = document.getElementById('input-new-word').value.trim();
       if (!word) return;
@@ -772,10 +934,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       document.getElementById('input-new-word').value = '';
       openBannedWordsModal();
     }
+
     async function delWord(word) {
       await fetch(\`\${API_URL}/api/banned-words/delete\`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word }) });
       openBannedWordsModal();
     }
+
     function closeModals() { document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none'); }
     setInterval(fetchLive, 2000);
     fetchLive();
@@ -787,4 +951,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V180.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V200.0 (Pure AI Reasoning) activo en puerto ${PORT}`));
