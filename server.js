@@ -4,7 +4,6 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Variables de entorno limpias
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
 const SUPABASE_KEY = (process.env.SUPABASE_KEY || '').trim();
 const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim();
@@ -26,13 +25,13 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR DE IA CONECTADO A GROQ CLOUD (LLAMA-3.3-70B / LLAMA-3.1-8B)
+// 1. MOTOR DE IA CONECTADO A GROQ CLOUD
 async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName) {
-  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Helena, 56';
+  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Laura, 46';
   const safeProfile = profileName || 'HORACIO';
 
   const systemPrompt = `Eres el Co-Piloto de IA, Psicólogo y Estratega de Citas de la agencia RYR TITAN operando en Talkytimes.
-Analizas el historial real de conversación entre el cliente (${safeClient}) y el perfil (${safeProfile}).
+Analizas el historial real de conversación entre la clienta (${safeClient}) y el perfil (${safeProfile}).
 
 REGLAS DE ORO:
 1. RESPONDE DIRECTAMENTE en español claro y conciso a cualquier pregunta del operador (mascotas, hijos, trabajo, créditos, estado de ánimo, intenciones).
@@ -40,7 +39,6 @@ REGLAS DE ORO:
 3. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos, citas en persona o viajes ("when we meet", "come see me", "book a flight"). Desvía hacia la conexión emocional digital y cartas.
 4. Devuelve ÚNICAMENTE la respuesta final limpia en español. Prohibido incluir procesos de pensamiento en inglés como "Here's a thinking process" ni asteriscos dobles (**).`;
 
-  // A. CONEXIÓN A GROQ CLOUD
   if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
     const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'llama-3.1-70b-versatile'];
     for (let model of groqModels) {
@@ -73,7 +71,6 @@ REGLAS DE ORO:
           const data = await res.json();
           if (data.choices && data.choices[0] && data.choices[0].message?.content) {
             let answer = data.choices[0].message.content.replace(/\*\*/g, '').trim();
-            // Limpiar cualquier residuo de thinking process
             answer = answer.replace(/Here'?s a thinking process[\s\S]*?(?=\n\n|\n[A-Z]|$)/i, '').trim();
             return answer;
           }
@@ -82,7 +79,7 @@ REGLAS DE ORO:
     }
   }
 
-  // B. MOTOR NATIVO COGNITIVO (FALLBACK SEGURO)
+  // FALLBACK NATIVO
   const pLower = (prompt || '').toLowerCase().trim();
   const mdLower = (fullTranscript || '').toLowerCase();
 
@@ -144,7 +141,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
   const queryName = String(req.query.name || '').trim();
   let chatMd = '';
-  let clientName = queryName || 'Helena, 56';
+  let clientName = queryName || 'Laura, 46';
 
   if (SUPABASE_URL && SUPABASE_KEY && clientId !== 'N/A') {
     try {
@@ -185,12 +182,12 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : (/(canada)/i.test(textLower) ? 'Canada' : 'Ubicación en perfil')),
-      birthDate: /(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : (/(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : 'En perfil'),
+      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : (/(belgium|belgica)/i.test(textLower) ? 'Belgium' : 'Ubicación en perfil')),
+      birthDate: /(may 16, 1980|1980)/i.test(textLower) ? 'May 16, 1980 (46 años)' : '46 años',
       maritalStatus: /(living together|marriage)/i.test(textLower) ? 'Busca relación seria' : 'Not married',
       pets: /(perro|dog)/i.test(textLower) ? 'Tiene perro' : 'No especificado aún',
       family: /(hijos|kids)/i.test(textLower) ? 'Tiene hijos' : 'No especificado aún',
-      work: /(retirado|retired)/i.test(textLower) ? 'Retirado / Jubilado' : 'Activo laboralmente',
+      work: 'Activo laboralmente',
       summary: `Expediente de ${clientName} verificado en Supabase.`
     };
     return res.json({ success: true, dossier, hasData: true });
@@ -254,7 +251,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
 
   const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Helena, 56').trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Laura, 46').trim();
   const auditKey = `${profile}_${cleanClientId}`;
   
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
@@ -397,7 +394,7 @@ app.get('/api/fines', async (req, res) => {
   res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() });
 });
 
-// 7. TELEMETRÍA Y DEMÁS
+// 7. TELEMETRÍA
 app.post('/api/telemetry', (req, res) => {
   const { operator, shift, profile, profileId, pendingReadLetters, unansweredChatsCount, hasExpiredSla, isAfk, idleSeconds, activeChatTimersList, status } = req.body;
   if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
@@ -486,7 +483,7 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 8. DASHBOARD EMBEBIDO
+// DASHBOARD
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
