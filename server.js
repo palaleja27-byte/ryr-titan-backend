@@ -25,26 +25,35 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR DE IA CONECTADO A GROQ CLOUD
+// 1. MOTOR DE IA CON AUTO-DETECCIÓN DE MODELOS DE GROQ
 async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName) {
-  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Laura, 46';
+  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Helena';
   const safeProfile = profileName || 'HORACIO';
 
   const systemPrompt = `Eres el Co-Piloto de IA, Psicólogo y Estratega de Citas de la agencia RYR TITAN operando en Talkytimes.
 Analizas el historial real de conversación entre la clienta (${safeClient}) y el perfil (${safeProfile}).
 
 REGLAS DE ORO:
-1. RESPONDE DIRECTAMENTE en español claro y conciso a cualquier pregunta del operador (mascotas, hijos, trabajo, créditos, estado de ánimo, intenciones).
-2. Si te piden un mensaje de respuesta o enganche, redacta una opción seductora y humana en inglés (lista para copiar) y su traducción en español.
+1. RESPONDE DIRECTAMENTE en español con razonamiento analítico y profundo a cualquier pregunta del operador (qué busca, estado de ánimo, mascotas, hijos, trabajo, intenciones).
+2. Si te piden un mensaje de respuesta o conquista, redacta una opción seductora, humana y natural en inglés (lista para copiar) y su traducción en español.
 3. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos, citas en persona o viajes ("when we meet", "come see me", "book a flight"). Desvía hacia la conexión emocional digital y cartas.
 4. Devuelve ÚNICAMENTE la respuesta final limpia en español. Prohibido incluir procesos de pensamiento en inglés como "Here's a thinking process" ni asteriscos dobles (**).`;
 
+  // A. CONEXIÓN A GROQ CLOUD (PROBANDO MODELOS ACTIVOS)
   if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
-    const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'llama-3.1-70b-versatile'];
-    for (let model of groqModels) {
+    const groqCandidateModels = [
+      'llama-3.3-70b-versatile',
+      'llama-3.1-70b-versatile',
+      'llama3-70b-8192',
+      'llama-3.1-8b-instant',
+      'llama3-8b-8192',
+      'gemma2-9b-it'
+    ];
+
+    for (let model of groqCandidateModels) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
 
         const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
@@ -79,28 +88,30 @@ REGLAS DE ORO:
     }
   }
 
-  // FALLBACK NATIVO
-  const pLower = (prompt || '').toLowerCase().trim();
-  const mdLower = (fullTranscript || '').toLowerCase();
-
-  if (/(mascota|mascotas|perro|gato|pet|dog)/i.test(pLower)) {
-    if (/(perro|dog)/i.test(mdLower)) return `🐾 Mascotas de ${safeClient}: Mencionó afinidad con los perros en el chat.`;
-    if (/(gato|cat)/i.test(mdLower)) return `🐾 Mascotas de ${safeClient}: Mencionó afinidad con los gatos en el chat.`;
-    return `🐾 Mascotas de ${safeClient}: En las conversaciones analizadas no ha mencionado tener mascotas todavía.`;
-  }
-
-  if (/(hijo|hijos|hija|familia|kids)/i.test(pLower)) {
-    if (/(hijos|kids|children|son|daughter)/i.test(mdLower)) return `👶 Familia de ${safeClient}: Sí, ha mencionado tener hijos en el chat.`;
-    return `👶 Familia de ${safeClient}: No ha detallado tener hijos en las conversaciones actuales.`;
-  }
-
-  if (/(trabajo|work|job|retirado)/i.test(pLower)) {
-    if (/(retirado|retired)/i.test(mdLower)) return `💼 Trabajo de ${safeClient}: Está retirada / jubilada.`;
-    return `💼 Trabajo de ${safeClient}: Se encuentra activa laboralmente.`;
+  // B. CONEXIÓN A OPENAI / DEEPSEEK COMO RESPALDO
+  if (OPENAI_API_KEY && OPENAI_API_KEY.startsWith('sk-')) {
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `HISTORIAL:\n${fullTranscript}\n\nPREGUNTA:\n${prompt}` }
+          ],
+          temperature: 0.65
+        })
+      });
+      const data = await res.json();
+      if (data.choices && data.choices[0]) {
+        return data.choices[0].message.content.replace(/\*\*/g, '').trim();
+      }
+    } catch (e) {}
   }
 
   return `💡 Análisis sobre ${safeClient}:
-Conversación analizada en tiempo real. Puedes preguntarme sobre su estado de ánimo, intenciones o pedirme mensajes de enganche adaptados a ella.`;
+Conversación analizada en tiempo real. Puedes preguntarme sobre su estado de ánimo, qué temas le interesan o pedirme una respuesta específica.`;
 }
 
 // 2. ENDPOINT: CONSULTA DE INTELIGENCIA
@@ -141,7 +152,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
   const queryName = String(req.query.name || '').trim();
   let chatMd = '';
-  let clientName = queryName || 'Laura, 46';
+  let clientName = queryName || 'Helena';
 
   if (SUPABASE_URL && SUPABASE_KEY && clientId !== 'N/A') {
     try {
@@ -182,11 +193,11 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : (/(belgium|belgica)/i.test(textLower) ? 'Belgium' : 'Ubicación en perfil')),
-      birthDate: /(may 16, 1980|1980)/i.test(textLower) ? 'May 16, 1980 (46 años)' : '46 años',
+      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : (/(australia)/i.test(textLower) ? 'Australia' : 'En perfil')),
+      birthDate: /(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : (/(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : 'En perfil'),
       maritalStatus: /(living together|marriage)/i.test(textLower) ? 'Busca relación seria' : 'Not married',
-      pets: /(perro|dog)/i.test(textLower) ? 'Tiene perro' : 'No especificado aún',
-      family: /(hijos|kids)/i.test(textLower) ? 'Tiene hijos' : 'No especificado aún',
+      pets: 'No especificado aún',
+      family: 'No especificado aún',
       work: 'Activo laboralmente',
       summary: `Expediente de ${clientName} verificado en Supabase.`
     };
@@ -251,7 +262,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
 
   const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Laura, 46').trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Cliente').trim();
   const auditKey = `${profile}_${cleanClientId}`;
   
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
@@ -394,9 +405,14 @@ app.get('/api/fines', async (req, res) => {
   res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() });
 });
 
-// 7. TELEMETRÍA
+// 7. TELEMETRÍA EN VIVO CON SEGUIMIENTO POR PERFIL
 app.post('/api/telemetry', (req, res) => {
-  const { operator, shift, profile, profileId, pendingReadLetters, unansweredChatsCount, hasExpiredSla, isAfk, idleSeconds, activeChatTimersList, status } = req.body;
+  const {
+    operator, shift, profile, profileId,
+    pendingReadLetters, unansweredChatsCount,
+    hasExpiredSla, isAfk, idleSeconds, activeChatTimersList, prospectingProgress, status
+  } = req.body;
+
   if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
 
   const sessionKey = `${operator.toLowerCase().trim()}_${profile.toLowerCase().trim()}`;
@@ -416,6 +432,7 @@ app.post('/api/telemetry', (req, res) => {
     isAfk: Boolean(isAfk),
     idleSeconds: parseInt(idleSeconds, 10) || 0,
     activeChatTimersList: Array.isArray(activeChatTimersList) ? activeChatTimersList : [],
+    prospectingProgress: prospectingProgress || null,
     lastSeen: Date.now()
   });
 
@@ -425,22 +442,44 @@ app.post('/api/telemetry', (req, res) => {
 app.get('/api/telemetry/live', (req, res) => {
   const now = Date.now();
   const operatorsMap = new Map();
+
   for (const [key, data] of liveTelemetryMap.entries()) {
     if (now - data.lastSeen > 35000) {
       liveTelemetryMap.delete(key);
     } else {
       const opKey = data.operatorName.toLowerCase();
       if (!operatorsMap.has(opKey)) {
-        operatorsMap.set(opKey, { operatorName: data.operatorName, shift: data.shift, lastSeen: data.lastSeen, isAfkGlobal: false, hasExpiredSlaGlobal: false, totalLetters: 0, profiles: [] });
+        operatorsMap.set(opKey, {
+          operatorName: data.operatorName,
+          shift: data.shift,
+          lastSeen: data.lastSeen,
+          isAfkGlobal: false,
+          hasExpiredSlaGlobal: false,
+          totalLetters: 0,
+          profiles: []
+        });
       }
+
       const opEntry = operatorsMap.get(opKey);
-      opEntry.profiles.push({ profileName: data.profileName, profileId: data.profileId, pendingReadLetters: data.pendingReadLetters, unansweredChatsCount: data.unansweredChatsCount, hasExpiredSla: data.hasExpiredSla, isAfk: data.isAfk, idleSeconds: data.idleSeconds, activeChatTimersList: data.activeChatTimersList || [] });
+      opEntry.profiles.push({
+        profileName: data.profileName,
+        profileId: data.profileId,
+        pendingReadLetters: data.pendingReadLetters,
+        unansweredChatsCount: data.unansweredChatsCount,
+        hasExpiredSla: data.hasExpiredSla,
+        isAfk: data.isAfk,
+        idleSeconds: data.idleSeconds,
+        activeChatTimersList: data.activeChatTimersList || [],
+        prospectingProgress: data.prospectingProgress || null
+      });
+
       opEntry.totalLetters += data.pendingReadLetters;
       if (data.hasExpiredSla) opEntry.hasExpiredSlaGlobal = true;
       if (data.isAfk) opEntry.isAfkGlobal = true;
       if (data.lastSeen > opEntry.lastSeen) opEntry.lastSeen = data.lastSeen;
     }
   }
+
   res.json({ success: true, operators: Array.from(operatorsMap.values()) });
 });
 
@@ -483,23 +522,29 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// DASHBOARD
+// 8. DASHBOARD EMBEBIDO CON CAMPO DE SEGUIMIENTO EN CADA PERFIL
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>RYR TITAN APEX - SUPERVISIÓN & MULTAS LIVE</title>
+  <title>RYR TITAN APEX - SUPERVISIÓN LIVE & SEGUIMIENTO</title>
   <style>
-    :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; --accent-gold: #f59e0b; }
+    :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; --accent-gold: #f59e0b; --accent-purple: #8b5cf6; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: var(--bg-main); color: #fff; font-family: system-ui, sans-serif; padding: 12px; }
     header { display: flex; justify-content: space-between; align-items: center; background: #0b132b; border: 1px solid #1e293b; border-left: 4px solid var(--accent-cyan); border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; }
     .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 11px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; }
     .btn-action:hover { border-color: var(--accent-green); color: var(--accent-green); }
     .btn-fines { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(245, 158, 11, 0.15); }
-    .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+    .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
     .operator-card { background: var(--bg-card); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; }
-    .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
+    
+    .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 10px; margin-bottom: 8px; }
+    .profile-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .prospecting-badge { font-size: 10.5px; font-weight: bold; font-family: monospace; padding: 3px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
+    .prospect-ok { background: #064e3b; color: #34d399; border: 1px solid #10b981; }
+    .prospect-pending { background: #1c2541; color: #fde68a; border: 1px solid #f59e0b; }
+
     .live-timers-container { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
     .live-chat-timer-badge { font-size: 10px; font-weight: bold; font-family: monospace; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
     .timer-ok { background: #064e3b; color: #34d399; border: 1px solid #10b981; }
@@ -513,7 +558,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <header>
-    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & AUDITORÍA FORENSE</div>
+    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & SEGUIMIENTO</div>
     <div style="display:flex; gap:8px;">
       <button class="btn-action btn-fines" onclick="openFinesModal()">💰 Multas ($10.000 COP) (<span id="total-fines-count">0</span>)</button>
       <button class="btn-action" style="border-color:#ef4444; color:#f87171;" onclick="openAlertsCenterModal()">🚨 Alertas de Conducta (<span id="count-behavior-alerts">0</span>)</button>
@@ -584,12 +629,27 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
                 return \`<span class="live-chat-timer-badge \${t.isExpired ? 'timer-expired' : 'timer-ok'}">💬 \${t.contact}: \${t.isExpired ? '00:00 (VENCIDO)' : timeStr}</span>\`;
               }).join('');
 
+              let prospectHtml = '';
+              if (p.prospectingProgress) {
+                const pr = p.prospectingProgress;
+                const isDone = pr.isCompleted;
+                const timeText = isDone ? 'OK' : (pr.formattedTime || '25:00');
+                prospectHtml = \`
+                  <div style="margin-top:5px;">
+                    <span class="prospecting-badge \${isDone ? 'prospect-ok' : 'prospect-pending'}">
+                      🎯 Seguimiento: \${timeText} [\${pr.count}/\${pr.quota}]
+                    </span>
+                  </div>
+                \`;
+              }
+
               return \`
                 <div class="profile-live-box">
-                  <div style="display:flex; justify-content:space-between;">
+                  <div class="profile-header-row">
                     <span style="font-weight:bold; color:#00ffcc;">🎯 \${p.profileName}</span>
                     <span style="font-size:11px; color:#38bdf8;">✉️ \${p.pendingReadLetters} cartas</span>
                   </div>
+                  \${prospectHtml}
                   \${timersHtml ? \`<div class="live-timers-container">\${timersHtml}</div>\` : \`<div style="font-size:10px; color:#10b981; margin-top:4px;">⏱️ Todos los chats al día</div>\`}
                 </div>
               \`;
@@ -767,4 +827,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V38.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V39.0 activo en puerto ${PORT}`));
