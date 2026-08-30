@@ -79,26 +79,6 @@ REGLAS DE ORO:
     }
   }
 
-  // FALLBACK NATIVO INTELIGENTE
-  const pLower = (prompt || '').toLowerCase().trim();
-  const mdLower = (fullTranscript || '').toLowerCase();
-
-  if (/(mascota|perro|gato|pet|dog)/i.test(pLower)) {
-    if (/(perro|dog)/i.test(mdLower)) return `🐾 Mascotas de ${safeClient}: Mencionó afinidad con los perros en el chat.`;
-    if (/(gato|cat)/i.test(mdLower)) return `🐾 Mascotas de ${safeClient}: Mencionó afinidad con los gatos en el chat.`;
-    return `🐾 Mascotas de ${safeClient}: En las conversaciones analizadas no ha mencionado tener mascotas todavía.`;
-  }
-
-  if (/(hijo|hijos|hija|familia|kids)/i.test(pLower)) {
-    if (/(hijos|kids|children|son|daughter)/i.test(mdLower)) return `👶 Familia de ${safeClient}: Sí, ha mencionado tener hijos en el chat.`;
-    return `👶 Familia de ${safeClient}: No ha detallado tener hijos en las conversaciones actuales.`;
-  }
-
-  if (/(trabajo|work|job|retirado)/i.test(pLower)) {
-    if (/(retirado|retired)/i.test(mdLower)) return `💼 Trabajo de ${safeClient}: Está retirada / jubilada.`;
-    return `💼 Trabajo de ${safeClient}: Se encuentra activa laboralmente.`;
-  }
-
   return `💡 Análisis sobre ${safeClient}:
 Conversación analizada en tiempo real. Puedes preguntarme sobre su estado de ánimo, qué temas le interesan o pedirme una respuesta específica.`;
 }
@@ -394,9 +374,14 @@ app.get('/api/fines', async (req, res) => {
   res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() });
 });
 
-// 7. TELEMETRÍA
+// 7. TELEMETRÍA CON CAMPO DE SEGUIMIENTO POR PERFIL
 app.post('/api/telemetry', (req, res) => {
-  const { operator, shift, profile, profileId, pendingReadLetters, unansweredChatsCount, hasExpiredSla, isAfk, idleSeconds, activeChatTimersList, status } = req.body;
+  const {
+    operator, shift, profile, profileId,
+    pendingReadLetters, unansweredChatsCount,
+    hasExpiredSla, isAfk, idleSeconds, activeChatTimersList, prospectingProgress, status
+  } = req.body;
+
   if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
 
   const sessionKey = `${operator.toLowerCase().trim()}_${profile.toLowerCase().trim()}`;
@@ -416,6 +401,7 @@ app.post('/api/telemetry', (req, res) => {
     isAfk: Boolean(isAfk),
     idleSeconds: parseInt(idleSeconds, 10) || 0,
     activeChatTimersList: Array.isArray(activeChatTimersList) ? activeChatTimersList : [],
+    prospectingProgress: prospectingProgress || { count: 0, quota: 10, remainingSeconds: 1800, isCompleted: false },
     lastSeen: Date.now()
   });
 
@@ -425,22 +411,44 @@ app.post('/api/telemetry', (req, res) => {
 app.get('/api/telemetry/live', (req, res) => {
   const now = Date.now();
   const operatorsMap = new Map();
+
   for (const [key, data] of liveTelemetryMap.entries()) {
     if (now - data.lastSeen > 35000) {
       liveTelemetryMap.delete(key);
     } else {
       const opKey = data.operatorName.toLowerCase();
       if (!operatorsMap.has(opKey)) {
-        operatorsMap.set(opKey, { operatorName: data.operatorName, shift: data.shift, lastSeen: data.lastSeen, isAfkGlobal: false, hasExpiredSlaGlobal: false, totalLetters: 0, profiles: [] });
+        operatorsMap.set(opKey, {
+          operatorName: data.operatorName,
+          shift: data.shift,
+          lastSeen: data.lastSeen,
+          isAfkGlobal: false,
+          hasExpiredSlaGlobal: false,
+          totalLetters: 0,
+          profiles: []
+        });
       }
+
       const opEntry = operatorsMap.get(opKey);
-      opEntry.profiles.push({ profileName: data.profileName, profileId: data.profileId, pendingReadLetters: data.pendingReadLetters, unansweredChatsCount: data.unansweredChatsCount, hasExpiredSla: data.hasExpiredSla, isAfk: data.isAfk, idleSeconds: data.idleSeconds, activeChatTimersList: data.activeChatTimersList || [] });
+      opEntry.profiles.push({
+        profileName: data.profileName,
+        profileId: data.profileId,
+        pendingReadLetters: data.pendingReadLetters,
+        unansweredChatsCount: data.unansweredChatsCount,
+        hasExpiredSla: data.hasExpiredSla,
+        isAfk: data.isAfk,
+        idleSeconds: data.idleSeconds,
+        activeChatTimersList: data.activeChatTimersList || [],
+        prospectingProgress: data.prospectingProgress || { count: 0, quota: 10, remainingSeconds: 1800, isCompleted: false }
+      });
+
       opEntry.totalLetters += data.pendingReadLetters;
       if (data.hasExpiredSla) opEntry.hasExpiredSlaGlobal = true;
       if (data.isAfk) opEntry.isAfkGlobal = true;
       if (data.lastSeen > opEntry.lastSeen) opEntry.lastSeen = data.lastSeen;
     }
   }
+
   res.json({ success: true, operators: Array.from(operatorsMap.values()) });
 });
 
@@ -488,18 +496,25 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>RYR TITAN APEX - SUPERVISIÓN & MULTAS LIVE</title>
+  <title>RYR TITAN APEX - SUPERVISIÓN LIVE & SEGUIMIENTO</title>
   <style>
-    :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; --accent-gold: #f59e0b; }
+    :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; --accent-gold: #f59e0b; --accent-purple: #8b5cf6; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: var(--bg-main); color: #fff; font-family: system-ui, sans-serif; padding: 12px; }
     header { display: flex; justify-content: space-between; align-items: center; background: #0b132b; border: 1px solid #1e293b; border-left: 4px solid var(--accent-cyan); border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; }
     .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 11px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; }
     .btn-action:hover { border-color: var(--accent-green); color: var(--accent-green); }
     .btn-fines { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(245, 158, 11, 0.15); }
-    .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+    .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
     .operator-card { background: var(--bg-card); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; }
-    .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
+    
+    .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 10px; margin-bottom: 8px; }
+    .profile-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .prospecting-badge { font-size: 10.5px; font-weight: bold; font-family: monospace; padding: 3px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
+    .prospect-ok { background: #064e3b; color: #34d399; border: 1px solid #10b981; }
+    .prospect-pending { background: #1c2541; color: #fde68a; border: 1px solid #f59e0b; }
+    .prospect-danger { background: #450a0a; color: #f87171; border: 1px solid #ef4444; animation: pulseRed 1s infinite; }
+
     .live-timers-container { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
     .live-chat-timer-badge { font-size: 10px; font-weight: bold; font-family: monospace; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
     .timer-ok { background: #064e3b; color: #34d399; border: 1px solid #10b981; }
@@ -513,7 +528,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <header>
-    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & AUDITORÍA FORENSE</div>
+    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & SEGUIMIENTO</div>
     <div style="display:flex; gap:8px;">
       <button class="btn-action btn-fines" onclick="openFinesModal()">💰 Multas ($10.000 COP) (<span id="total-fines-count">0</span>)</button>
       <button class="btn-action" style="border-color:#ef4444; color:#f87171;" onclick="openAlertsCenterModal()">🚨 Alertas de Conducta (<span id="count-behavior-alerts">0</span>)</button>
@@ -584,11 +599,23 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
                 return \`<span class="live-chat-timer-badge \${t.isExpired ? 'timer-expired' : 'timer-ok'}">💬 \${t.contact}: \${t.isExpired ? '00:00 (VENCIDO)' : timeStr}</span>\`;
               }).join('');
 
+              const pr = p.prospectingProgress || { count: 0, quota: 10, remainingSeconds: 1800, isCompleted: false };
+              const isDone = pr.count >= (pr.quota || 10);
+              const minLeft = Math.floor((pr.remainingSeconds || 1800) / 60);
+              const secLeft = (pr.remainingSeconds || 0) % 60;
+              const timeDisplay = \`\${minLeft < 10 ? '0' : ''}\${minLeft}:\${secLeft < 10 ? '0' : ''}\${secLeft}\`;
+
+              const badgeClass = isDone ? 'prospect-ok' : (pr.remainingSeconds <= 300 ? 'prospect-danger' : 'prospect-pending');
+              const textDisplay = isDone ? \`✅ Seguimiento: OK [\${pr.count}/\${pr.quota || 10}]\` : \`🎯 Seguimiento: \${timeDisplay} [\${pr.count}/\${pr.quota || 10}]\`;
+
               return \`
                 <div class="profile-live-box">
-                  <div style="display:flex; justify-content:space-between;">
+                  <div class="profile-header-row">
                     <span style="font-weight:bold; color:#00ffcc;">🎯 \${p.profileName}</span>
                     <span style="font-size:11px; color:#38bdf8;">✉️ \${p.pendingReadLetters} cartas</span>
+                  </div>
+                  <div style="margin-top:4px;">
+                    <span class="prospecting-badge \${badgeClass}">\${textDisplay}</span>
                   </div>
                   \${timersHtml ? \`<div class="live-timers-container">\${timersHtml}</div>\` : \`<div style="font-size:10px; color:#10b981; margin-top:4px;">⏱️ Todos los chats al día</div>\`}
                 </div>
@@ -767,4 +794,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V40.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V41.0 activo en puerto ${PORT}`));
