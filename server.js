@@ -27,7 +27,7 @@ let dynamicBannedWords = new Set([
 
 // 1. MOTOR DE IA CONECTADO A GROQ CLOUD
 async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName, bioData) {
-  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Jaye, 64';
+  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Fola, 38';
   const safeProfile = profileName || 'HORACIO';
 
   const systemPrompt = `Eres el Co-Piloto de IA, Psicólogo y Estratega de Citas de la agencia RYR TITAN operando en Talkytimes.
@@ -35,13 +35,13 @@ Analizas el historial real y la ficha de la clienta (${safeClient}) con el perfi
 
 FICHA DEL CLIENTE:
 - Nombre: ${safeClient}
-- Ubicación / País: ${bioData?.country || 'United States'}
-- Nacimiento / Edad: ${bioData?.birthDate || '64 años'}
-- Estado Civil: ${bioData?.maritalStatus || 'Divorced / Viuda'}
+- Ubicación / País: ${bioData?.country || 'Brazil'}
+- Nacimiento / Edad: ${bioData?.birthDate || '38 años'}
+- Estado Civil: ${bioData?.maritalStatus || 'Single / Soltera'}
 
 REGLAS DE ORO:
 1. Responde DIRECTAMENTE y con razonamiento humano en español a cualquier pregunta del operador (ubicación, edad, psicología, estado de ánimo, qué busca, profesión, etc.).
-2. Si te preguntan edad, responde cuántos años tiene (ej: "Jaye tiene 64 años").
+2. Si te preguntan edad, responde cuántos años tiene.
 3. Si te piden un mensaje de conquista, redacta una opción seductora y humana en inglés (para copiar) y su traducción en español.
 4. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos, citas en persona o viajes ("when we meet", "come see me", "book a flight"). Desvía siempre hacia la conexión emocional digital y cartas.
 5. Devuelve ÚNICAMENTE la respuesta final limpia en español. Prohibido incluir procesos de pensamiento en inglés como "Here's a thinking process" ni asteriscos dobles (**).`;
@@ -90,34 +90,30 @@ REGLAS DE ORO:
   const pLower = (prompt || '').toLowerCase().trim();
   const mdLower = (fullTranscript || '').toLowerCase();
 
-  // Edad
-  if (/(edad|anos|años|cumpleaños|nacimiento|nacida|cuantos anos|cuántos años|cuantos anos tierner)/i.test(pLower)) {
+  if (/(edad|anos|años|cumpleaños|nacimiento|nacida|cuantos anos|cuántos años)/i.test(pLower)) {
     const ageMatch = safeClient.match(/,\s*(\d{2})/);
-    const ageValue = ageMatch ? `${ageMatch[1]} años` : (bioData?.birthDate || '64 años');
+    const ageValue = ageMatch ? `${ageMatch[1]} años` : (bioData?.birthDate || '38 años');
     return `🎂 Edad y Nacimiento de ${safeClient}:
 ${safeClient} tiene ${ageValue}.`;
   }
 
-  // Ubicación
   if (/(donde es|dónde es|de donde|de dónde|pais|país|location|ubicacion|ubicación|donde vive)/i.test(pLower)) {
     return `📍 Ubicación de ${safeClient}:
-${safeClient} es de ${bioData?.country || 'United States'}.`;
+${safeClient} es de ${bioData?.country || 'Brazil'}.`;
   }
 
-  // Estado Civil
   if (/(estado civil|casada|soltera|divorciada|viuda|pareja|novio|esposo)/i.test(pLower)) {
     return `💍 Estado Civil de ${safeClient}:
-Figura como ${bioData?.maritalStatus || 'Divorced / Viuda'}.`;
+Figura como ${bioData?.maritalStatus || 'Single / Soltera'}.`;
   }
 
-  // Mascotas
   if (/(mascota|mascotas|perro|gato|pet|dog)/i.test(pLower)) {
     if (/(perro|dog)/i.test(mdLower)) return `🐾 Mascotas de ${safeClient}: Mencionó tener perro en la conversación.`;
     return `🐾 Mascotas de ${safeClient}: En las conversaciones analizadas no ha mencionado tener mascotas todavía.`;
   }
 
   return `📋 Información sobre ${safeClient}:
-${safeClient} tiene ${bioData?.birthDate || '64 años'} y es de ${bioData?.country || 'United States'}. Puedes preguntarme sobre su estado de ánimo, qué temas le interesan o pedirme un mensaje de conquista.`;
+${safeClient} tiene ${bioData?.birthDate || '38 años'} y es de ${bioData?.country || 'Brazil'}. Puedes preguntarme sobre su estado de ánimo, qué temas le interesan o pedirme un mensaje de conquista.`;
 }
 
 // 2. ENDPOINT: CONSULTA DE INTELIGENCIA
@@ -153,12 +149,12 @@ app.post('/api/intelligence/query', async (req, res) => {
   }
 });
 
-// 3. ENDPOINT: EXPEDIENTE DIRECTO EN ESPAÑOL
+// 3. ENDPOINT: EXPEDIENTE EN ESPAÑOL
 app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
   const queryName = String(req.query.name || '').trim();
   let chatMd = '';
-  let clientName = queryName || 'Jaye, 64';
+  let clientName = queryName || 'Fola, 38';
 
   if (SUPABASE_URL && SUPABASE_KEY && clientId !== 'N/A') {
     try {
@@ -199,9 +195,9 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : 'United States'),
-      birthDate: /(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : '64 años',
-      maritalStatus: 'Divorced / Viuda',
+      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : 'Brazil'),
+      birthDate: /(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : '38 años',
+      maritalStatus: 'Single / Soltera',
       pets: 'No especificado aún',
       family: 'No especificado aún',
       work: 'Activo laboralmente',
@@ -268,7 +264,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
 
   const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Jaye, 64').trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Fola, 38').trim();
   const auditKey = `${profile}_${cleanClientId}`;
   
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
@@ -411,7 +407,7 @@ app.get('/api/fines', async (req, res) => {
   res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() });
 });
 
-// 7. TELEMETRÍA
+// 7. TELEMETRÍA (RECEPCIÓN EN VIVO)
 app.post('/api/telemetry', (req, res) => {
   const {
     operator, shift, profile, profileId,
@@ -528,7 +524,7 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// DASHBOARD
+// DASHBOARD (ESCAPADO LIMPIO PARA EL NAVEGADOR)
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -831,4 +827,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V47.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V48.0 activo en puerto ${PORT}`));
