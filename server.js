@@ -25,42 +25,33 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR DE IA CONECTADO A GROQ CLOUD (MODELOS ACTIVOS)
+// 1. MOTOR DE IA CONECTADO A GROQ CLOUD (LLAMA-3.3-70B / LLAMA-3.1-8B)
 async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName, bioData) {
-  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Christine';
+  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Penny, 33';
   const safeProfile = profileName || 'HORACIO';
 
-  const systemPrompt = `Eres el Co-Piloto de IA, Psicólogo y Estratega de Citas de la agencia RYR TITAN operando en Talkytimes.
-Analizas el historial real y expediente de la clienta (${safeClient}) con el perfil asignado (${safeProfile}).
+  const systemPrompt = `Eres el Asistente de IA y Estratega de Citas de la agencia RYR TITAN operando en Talkytimes.
+Analizas el historial real y la ficha de la clienta (${safeClient}) con el perfil asignado (${safeProfile}).
 
-DATOS VERIFICADOS DE LA CLIENTA:
+FICHA DEL CLIENTE:
 - Nombre: ${safeClient}
-- Ubicación / País: ${bioData?.country || 'United States'}
-- Nacimiento / Edad: ${bioData?.birthDate || 'Feb 15, 1962 (64 años)'}
-- Estado Civil: ${bioData?.maritalStatus || 'Divorced / Viuda'}
+- Ubicación / País: ${bioData?.country || 'Brazil'}
+- Nacimiento / Edad: ${bioData?.birthDate || 'Jan 1, 1991 (33 años)'}
+- Estado Civil: ${bioData?.maritalStatus || 'Not married / Soltera'}
 
-REGLAS ESTRICTAS DE RESPUESTA:
-1. RESPONDE DIRECTAMENTE a la pregunta del operador con razonamiento analítico basado en los datos y el historial.
-2. Si te preguntan "de dónde es", responde de qué país/ciudad es.
-3. Si te preguntan edad, mascotas, hijos o trabajo, da el dato exacto de inmediato.
-4. Si te piden un mensaje de conquista o respuesta, redacta una opción seductora en inglés (para copiar) y su traducción en español.
-5. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos, citas en persona o viajes ("when we meet", "come see me", "book a flight"). Desvía hacia la conexión emocional digital y cartas.
-6. PROHIBIDO incluir procesos de pensamiento en inglés como "Here's a thinking process" ni asteriscos dobles (**). Devuelve solo la respuesta limpia en español.`;
+REGLAS DE ORO:
+1. Responde DIRECTAMENTE y con razonamiento humano en español a cualquier pregunta del operador (ubicación, edad, psicología, estado de ánimo, qué busca, profesión, etc.).
+2. Si te piden un mensaje de conquista, redacta una opción seductora y humana en inglés (para copiar) y su traducción en español.
+3. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos, citas en persona o viajes ("when we meet", "come see me", "book a flight"). Desvía siempre hacia la conexión emocional digital y cartas.
+4. Devuelve ÚNICAMENTE la respuesta final limpia en español. Prohibido incluir procesos de pensamiento en inglés como "Here's a thinking process" ni asteriscos dobles (**).`;
 
-  // A. INTENTO CON GROQ CLOUD
+  // A. CONEXIÓN DE ALTA VELOCIDAD A GROQ CLOUD
   if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
-    const groqActiveModels = [
-      'llama3-70b-8192',
-      'llama3-8b-8192',
-      'llama-3.3-70b-versatile',
-      'llama-3.1-8b-instant',
-      'gemma2-9b-it'
-    ];
-
-    for (let model of groqActiveModels) {
+    const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'llama3-70b-8192'];
+    for (let model of groqModels) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
 
         const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
@@ -73,10 +64,10 @@ REGLAS ESTRICTAS DE RESPUESTA:
             model: model,
             messages: [
               { role: 'system', content: systemPrompt },
-              { role: 'user', content: `HISTORIAL Y DATOS:\n${fullTranscript || 'Sin historial previo.'}\n\nPREGUNTA DEL OPERADOR:\n${prompt}` }
+              { role: 'user', content: `HISTORIAL DEL DIÁLOGO:\n${fullTranscript || 'Sin historial previo.'}\n\nPREGUNTA DEL OPERADOR:\n${prompt}` }
             ],
-            temperature: 0.6,
-            max_tokens: 850
+            temperature: 0.65,
+            max_tokens: 750
           }),
           signal: controller.signal
         });
@@ -95,48 +86,26 @@ REGLAS ESTRICTAS DE RESPUESTA:
     }
   }
 
-  // B. INTENTO CON OPENAI
-  if (OPENAI_API_KEY && OPENAI_API_KEY.startsWith('sk-')) {
-    try {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: `HISTORIAL:\n${fullTranscript}\n\nPREGUNTA:\n${prompt}` }
-          ],
-          temperature: 0.65
-        })
-      });
-      const data = await res.json();
-      if (data.choices && data.choices[0]) {
-        return data.choices[0].message.content.replace(/\*\*/g, '').trim();
-      }
-    } catch (e) {}
-  }
-
-  // C. MOTOR NATIVO COGNITIVO EXACTO
+  // B. MOTOR NATIVO COGNITIVO INSTANTÁNEO (RESPONDE EN 5ms SI LA RED FALLA)
   const pLower = (prompt || '').toLowerCase().trim();
   const mdLower = (fullTranscript || '').toLowerCase();
 
   // Ubicación / País
   if (/(donde es|dónde es|de donde|de dónde|pais|país|location|ubicacion|ubicación|donde vive)/i.test(pLower)) {
     return `📍 Ubicación de ${safeClient}:
-${safeClient} es de ${bioData?.country || 'United States'}.`;
+${safeClient} es de ${bioData?.country || 'Brazil'}.`;
   }
 
   // Edad / Nacimiento
   if (/(edad|anos|años|cumpleaños|nacimiento|nacida|cuantos anos|cuántos años)/i.test(pLower)) {
     return `🎂 Edad y Nacimiento de ${safeClient}:
-${safeClient} tiene ${bioData?.birthDate || '64 años'}.`;
+${safeClient} tiene ${bioData?.birthDate || '33 años'}.`;
   }
 
   // Estado Civil
   if (/(estado civil|casada|soltera|divorciada|viuda|pareja|novio|esposo)/i.test(pLower)) {
     return `💍 Estado Civil de ${safeClient}:
-Figura como ${bioData?.maritalStatus || 'Divorced / Viuda'}.`;
+Figura como ${bioData?.maritalStatus || 'Not married / Soltera'}.`;
   }
 
   // Mascotas
@@ -146,32 +115,20 @@ Figura como ${bioData?.maritalStatus || 'Divorced / Viuda'}.`;
     return `🐾 Mascotas de ${safeClient}: En las conversaciones analizadas no ha mencionado tener mascotas todavía.`;
   }
 
-  // Hijos / Familia
-  if (/(hijo|hijos|hija|familia|kids)/i.test(pLower)) {
-    if (/(hijos|kids|children|son|daughter)/i.test(mdLower)) return `👶 Familia de ${safeClient}: Sí, ha mencionado tener hijos en el chat.`;
-    return `👶 Familia de ${safeClient}: No ha detallado tener hijos en las conversaciones actuales.`;
-  }
-
-  // Trabajo
-  if (/(trabajo|work|job|retirado)/i.test(pLower)) {
-    if (/(retirado|retired)/i.test(mdLower)) return `💼 Trabajo de ${safeClient}: Está retirada / jubilada.`;
-    return `💼 Trabajo de ${safeClient}: Se encuentra activa laboralmente.`;
-  }
-
   // Mensaje de conquista / enganche
   if (/(mensaje|enamorar|conquistar|atraer|reconectar|respuesta|como responder)/i.test(pLower)) {
     return `💡 Estrategia para ${safeClient}:
-Conviene responder con un tono cálido y sincero, validando sus emociones y haciéndole una pregunta abierta.
+Conviene responder con un tono dulce y cercano, validando lo que ha compartido y haciéndole una pregunta abierta.
 
 💬 Opción en Inglés (Copiar y Enviar):
-"I loved reading what you shared with me. You have such a genuine way of expressing yourself, and talking with you brings a lot of peace to my day. How is your afternoon going, my love?"
+"I really loved reading your words. Talking with you always brings a warm smile to my day. How has your afternoon been treating you, my love?"
 
 💬 Traducción al Español:
-"Me encantó leer lo que compartiste conmigo. Tienes una forma muy genuina de expresarte, y hablar contigo le da mucha paz a mi día. ¿Cómo va tu tarde, mi amor?"`;
+"Realmente me encantó leer tus palabras. Hablar contigo siempre le saca una cálida sonrisa a mi día. ¿Cómo te ha tratado la tarde, mi amor?"`;
   }
 
   return `📋 Información sobre ${safeClient}:
-Historial revisado con éxito. Puedes preguntarme sobre su país de origen, edad, mascotas, hijos, trabajo o pedirme redactar un mensaje de conquista.`;
+${safeClient} es de ${bioData?.country || 'Brazil'} y tiene ${bioData?.birthDate || '33 años'}. Puedes preguntarme sobre su estado de ánimo, qué temas le interesan o pedirme un mensaje de conquista.`;
 }
 
 // 2. ENDPOINT: CONSULTA DE INTELIGENCIA
@@ -212,7 +169,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
   const queryName = String(req.query.name || '').trim();
   let chatMd = '';
-  let clientName = queryName || 'Christine';
+  let clientName = queryName || 'Penny, 33';
 
   if (SUPABASE_URL && SUPABASE_KEY && clientId !== 'N/A') {
     try {
@@ -253,9 +210,9 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : (/(australia)/i.test(textLower) ? 'Australia' : 'United States')),
-      birthDate: /(feb 15, 1962|1962)/i.test(textLower) ? 'Feb 15, 1962 (64 años)' : (/(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : 'En perfil'),
-      maritalStatus: /(divorced|viuda)/i.test(textLower) ? 'Divorced / Viuda' : 'Not married',
+      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : (/(australia)/i.test(textLower) ? 'Australia' : 'Brazil')),
+      birthDate: /(jan 1, 1991|1991)/i.test(textLower) ? 'Jan 1, 1991 (33 años)' : '33 años',
+      maritalStatus: 'Not married / Soltera',
       pets: 'No especificado aún',
       family: 'No especificado aún',
       work: 'Activo laboralmente',
@@ -322,7 +279,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
 
   const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Christine').trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Penny, 33').trim();
   const auditKey = `${profile}_${cleanClientId}`;
   
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
@@ -467,12 +424,7 @@ app.get('/api/fines', async (req, res) => {
 
 // 7. TELEMETRÍA
 app.post('/api/telemetry', (req, res) => {
-  const {
-    operator, shift, profile, profileId,
-    pendingReadLetters, unansweredChatsCount,
-    hasExpiredSla, isAfk, idleSeconds, activeChatTimersList, prospectingProgress, status
-  } = req.body;
-
+  const { operator, shift, profile, profileId, pendingReadLetters, unansweredChatsCount, hasExpiredSla, isAfk, idleSeconds, activeChatTimersList, status } = req.body;
   if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
 
   const sessionKey = `${operator.toLowerCase().trim()}_${profile.toLowerCase().trim()}`;
@@ -492,7 +444,6 @@ app.post('/api/telemetry', (req, res) => {
     isAfk: Boolean(isAfk),
     idleSeconds: parseInt(idleSeconds, 10) || 0,
     activeChatTimersList: Array.isArray(activeChatTimersList) ? activeChatTimersList : [],
-    prospectingProgress: prospectingProgress || { count: 0, quota: 10, remainingSeconds: 1800, isCompleted: false },
     lastSeen: Date.now()
   });
 
@@ -502,44 +453,22 @@ app.post('/api/telemetry', (req, res) => {
 app.get('/api/telemetry/live', (req, res) => {
   const now = Date.now();
   const operatorsMap = new Map();
-
   for (const [key, data] of liveTelemetryMap.entries()) {
     if (now - data.lastSeen > 35000) {
       liveTelemetryMap.delete(key);
     } else {
       const opKey = data.operatorName.toLowerCase();
       if (!operatorsMap.has(opKey)) {
-        operatorsMap.set(opKey, {
-          operatorName: data.operatorName,
-          shift: data.shift,
-          lastSeen: data.lastSeen,
-          isAfkGlobal: false,
-          hasExpiredSlaGlobal: false,
-          totalLetters: 0,
-          profiles: []
-        });
+        operatorsMap.set(opKey, { operatorName: data.operatorName, shift: data.shift, lastSeen: data.lastSeen, isAfkGlobal: false, hasExpiredSlaGlobal: false, totalLetters: 0, profiles: [] });
       }
-
       const opEntry = operatorsMap.get(opKey);
-      opEntry.profiles.push({
-        profileName: data.profileName,
-        profileId: data.profileId,
-        pendingReadLetters: data.pendingReadLetters,
-        unansweredChatsCount: data.unansweredChatsCount,
-        hasExpiredSla: data.hasExpiredSla,
-        isAfk: data.isAfk,
-        idleSeconds: data.idleSeconds,
-        activeChatTimersList: data.activeChatTimersList || [],
-        prospectingProgress: data.prospectingProgress || { count: 0, quota: 10, remainingSeconds: 1800, isCompleted: false }
-      });
-
+      opEntry.profiles.push({ profileName: data.profileName, profileId: data.profileId, pendingReadLetters: data.pendingReadLetters, unansweredChatsCount: data.unansweredChatsCount, hasExpiredSla: data.hasExpiredSla, isAfk: data.isAfk, idleSeconds: data.idleSeconds, activeChatTimersList: data.activeChatTimersList || [] });
       opEntry.totalLetters += data.pendingReadLetters;
       if (data.hasExpiredSla) opEntry.hasExpiredSlaGlobal = true;
       if (data.isAfk) opEntry.isAfkGlobal = true;
       if (data.lastSeen > opEntry.lastSeen) opEntry.lastSeen = data.lastSeen;
     }
   }
-
   res.json({ success: true, operators: Array.from(operatorsMap.values()) });
 });
 
@@ -587,31 +516,23 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>RYR TITAN APEX - SUPERVISIÓN LIVE & SEGUIMIENTO</title>
+  <title>RYR TITAN APEX - SUPERVISIÓN & MULTAS LIVE</title>
   <style>
-    :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; --accent-gold: #f59e0b; --accent-purple: #8b5cf6; }
+    :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; --accent-gold: #f59e0b; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: var(--bg-main); color: #fff; font-family: system-ui, sans-serif; padding: 12px; }
     header { display: flex; justify-content: space-between; align-items: center; background: #0b132b; border: 1px solid #1e293b; border-left: 4px solid var(--accent-cyan); border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; }
     .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 11px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; }
     .btn-action:hover { border-color: var(--accent-green); color: var(--accent-green); }
     .btn-fines { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(245, 158, 11, 0.15); }
-    .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+    .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
     .operator-card { background: var(--bg-card); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; }
-    
-    .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 10px; margin-bottom: 8px; }
-    .profile-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-    .prospecting-badge { font-size: 10.5px; font-weight: bold; font-family: monospace; padding: 3px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
-    .prospect-ok { background: #064e3b; color: #34d399; border: 1px solid #10b981; }
-    .prospect-pending { background: #1c2541; color: #fde68a; border: 1px solid #f59e0b; }
-    .prospect-danger { background: #450a0a; color: #f87171; border: 1px solid #ef4444; animation: pulseRed 1s infinite; }
-
+    .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
     .live-timers-container { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
     .live-chat-timer-badge { font-size: 10px; font-weight: bold; font-family: monospace; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
     .timer-ok { background: #064e3b; color: #34d399; border: 1px solid #10b981; }
     .timer-expired { background: #450a0a; color: #f87171; border: 1px solid #ef4444; animation: pulseRed 1s infinite; }
-
-    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.88); backdrop-filter: blur(5px); z-index: 99999; justify-content: center; align-items: center; }
+    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); z-index: 99999; justify-content: center; align-items: center; }
     .modal-content { background: #0e1526; border: 1px solid var(--accent-cyan); border-radius: 10px; width: 940px; max-width: 95%; max-height: 88vh; padding: 20px; display: flex; flex-direction: column; gap: 12px; color: #fff; }
     .chat-transcript { background: #0b132b; border: 1px solid #1e293b; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 250px; overflow-y: auto; line-height: 1.6; color: #cbd5e1; }
     @keyframes pulseRed { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
@@ -619,7 +540,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <header>
-    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & SEGUIMIENTO</div>
+    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & AUDITORÍA FORENSE</div>
     <div style="display:flex; gap:8px;">
       <button class="btn-action btn-fines" onclick="openFinesModal()">💰 Multas ($10.000 COP) (<span id="total-fines-count">0</span>)</button>
       <button class="btn-action" style="border-color:#ef4444; color:#f87171;" onclick="openAlertsCenterModal()">🚨 Alertas de Conducta (<span id="count-behavior-alerts">0</span>)</button>
@@ -682,36 +603,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
               <span>👤 \${op.operatorName} (\${op.profiles.length} Perfiles)</span>
               <span style="font-size:10px; color:#38bdf8;">\${op.shift}</span>
             </div>
-            \${op.profiles.map(p => {
-              const timersHtml = (p.activeChatTimersList || []).map(t => {
-                const min = Math.floor(t.remaining / 60);
-                const sec = t.remaining % 60;
-                const timeStr = \`\${min < 10 ? '0' : ''}\${min}:\${sec < 10 ? '0' : ''}\${sec}\`;
-                return \`<span class="live-chat-timer-badge \${t.isExpired ? 'timer-expired' : 'timer-ok'}">💬 \${t.contact}: \${t.isExpired ? '00:00 (VENCIDO)' : timeStr}</span>\`;
-              }).join('');
-
-              const pr = p.prospectingProgress || { count: 0, quota: 10, remainingSeconds: 1800, isCompleted: false };
-              const isDone = pr.count >= (pr.quota || 10);
-              const minLeft = Math.floor((pr.remainingSeconds || 1800) / 60);
-              const secLeft = (pr.remainingSeconds || 0) % 60;
-              const timeDisplay = \`\${minLeft < 10 ? '0' : ''}\${minLeft}:\${secLeft < 10 ? '0' : ''}\${secLeft}\`;
-
-              const badgeClass = isDone ? 'prospect-ok' : (pr.remainingSeconds <= 300 ? 'prospect-danger' : 'prospect-pending');
-              const textDisplay = isDone ? \`✅ Seguimiento: OK [\${pr.count}/\${pr.quota || 10}]\` : \`🎯 Seguimiento: \${timeDisplay} [\${pr.count}/\${pr.quota || 10}]\`;
-
-              return \`
-                <div class="profile-live-box">
-                  <div class="profile-header-row">
-                    <span style="font-weight:bold; color:#00ffcc;">🎯 \${p.profileName}</span>
-                    <span style="font-size:11px; color:#38bdf8;">✉️ \${p.pendingReadLetters} cartas</span>
-                  </div>
-                  <div style="margin-top:4px;">
-                    <span class="prospecting-badge \${badgeClass}">\${textDisplay}</span>
-                  </div>
-                  \${timersHtml ? \`<div class="live-timers-container">\${timersHtml}</div>\` : \`<div style="font-size:10px; color:#10b981; margin-top:4px;">⏱️ Todos los chats al día</div>\`}
+            \${op.profiles.map(p => \`
+              <div class="profile-live-box">
+                <div style="display:flex; justify-content:space-between;">
+                  <span style="font-weight:bold; color:#00ffcc;">🎯 \${p.profileName}</span>
+                  <span style="font-size:11px; color:#38bdf8;">✉️ \${p.pendingReadLetters} cartas</span>
                 </div>
-              \`;
-            }).join('')}
+              </div>
+            \`).join('')}
           </div>
         \`).join('');
         fetchFinesCount();
@@ -885,4 +784,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V42.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V45.0 activo en puerto ${PORT}`));
