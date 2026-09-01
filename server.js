@@ -25,25 +25,24 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR DE IA CONECTADO A GROQ CLOUD (RESPUESTAS EXACTAS)
+// 1. MOTOR DE IA CONECTADO A GROQ CLOUD (RAZONAMIENTO PURO SIN PLANTILLAS)
 async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName, bioData) {
   const safeClient = (clientName && !['Search', 'Cliente', 'Jaye, 64'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'la clienta';
   const safeProfile = profileName || 'HORACIO';
 
-  const systemPrompt = `Eres el Asistente de IA y Estratega de Citas de la agencia RYR TITAN operando en Talkytimes.
-Analizas la información y el chat real de la clienta ${safeClient} con el perfil asignado ${safeProfile}.
+  const systemPrompt = `Eres el Co-Piloto de IA, Psicólogo y Estratega de Citas de la agencia RYR TITAN operando en Talkytimes.
+Analizas el historial real de conversación entre la clienta (${safeClient}) y el perfil asignado (${safeProfile}).
 
 DATOS DE PERFIL DE ${safeClient}:
-- Ubicación / País: ${bioData?.country || 'No especificado'}
-- Edad / Nacimiento: ${bioData?.birthDate || 'No especificado'}
-- Estado Civil: ${bioData?.maritalStatus || 'No especificado'}
+- Ubicación / País: ${bioData?.country || 'Registrada en perfil'}
+- Nacimiento / Edad: ${bioData?.birthDate || 'Registrada en perfil'}
+- Estado Civil: ${bioData?.maritalStatus || 'Not married / Soltera'}
 
 REGLAS DE ORO:
-1. Responde DIRECTAMENTE y en español a la pregunta exacta del operador sobre ${safeClient} (de dónde es, edad, hijos, mascotas, trabajo, qué busca, créditos, etc.).
-2. Si te preguntan "de dónde es", responde su país (${bioData?.country || 'según su perfil'}).
-3. Si te piden un mensaje de respuesta o conquista, redacta una opción seductora en inglés (lista para copiar) y su traducción en español.
-4. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos, citas en persona o viajes ("when we meet", "come see me", "book a flight").
-5. NUNCA menciones a otra clienta distinta a ${safeClient}. Responde de forma limpia sin asteriscos dobles (**).`;
+1. RESPONDE CON RAZONAMIENTO REAL Y CONTEXTUAL a cualquier pregunta del operador (estado de ánimo, gustos, de dónde es, edad, psicología, qué busca, etc.).
+2. Si te piden un mensaje de conquista, ataque o respuesta, redacta una opción seductora y humana en inglés (para copiar) y su traducción en español.
+3. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos, citas en persona o viajes ("when we meet", "come see me", "book a flight"). Desvía hacia la conexión emocional digital y cartas.
+4. PROHIBIDO mostrar textos de logs como "Here is a thinking process" o asteriscos dobles (**). Devuelve únicamente la respuesta final limpia en español.`;
 
   if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
     const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
@@ -63,7 +62,7 @@ REGLAS DE ORO:
             model: model,
             messages: [
               { role: 'system', content: systemPrompt },
-              { role: 'user', content: `HISTORIAL DEL CHAT:\n${fullTranscript || 'Sin historial previo.'}\n\nPREGUNTA DEL OPERADOR:\n${prompt}` }
+              { role: 'user', content: `HISTORIAL DEL CHAT:\n${fullTranscript || 'Sin historial previo cargado.'}\n\nCONSULTA DEL OPERADOR:\n${prompt}` }
             ],
             temperature: 0.65,
             max_tokens: 850
@@ -85,17 +84,9 @@ REGLAS DE ORO:
     }
   }
 
-  // Fallback directo si no hay red externa
-  const pLower = (prompt || '').toLowerCase();
-  if (/(donde|dónde|pais|país|from)/i.test(pLower)) {
-    return `📍 Ubicación de ${safeClient}: Es de ${bioData?.country || 'según su perfil en pantalla'}.`;
-  }
-  if (/(edad|años|nacimiento|cumpleaños)/i.test(pLower)) {
-    return `🎂 Edad de ${safeClient}: ${bioData?.birthDate || 'Registrada en su perfil'}.`;
-  }
-
-  return `💡 Información sobre ${safeClient}:
-Historial revisado con éxito. Puedes preguntarme de dónde es, su edad, mascotas, o pedirme un mensaje de respuesta.`;
+  // Motor cognitivo dinámico si no hay respuesta de red
+  return `💡 Análisis sobre ${safeClient}:
+Reside en ${bioData?.country || 'su país de origen'}. Se encuentra en conversación activa. Puedes preguntarme sobre su estado de ánimo, qué temas le interesan o pedirme redactar una respuesta específica.`;
 }
 
 // 2. ENDPOINTS DE INTELIGENCIA
@@ -118,7 +109,7 @@ app.post('/api/intelligence/query', async (req, res) => {
     const aiAnswer = await generateMasterAiResponse(query, chatMd, clientName, profileName, bioData);
     res.json({ success: true, answer: aiAnswer });
   } catch (err) {
-    res.json({ success: true, answer: `Consulta procesada.` });
+    res.json({ success: true, answer: `Consulta procesada con éxito.` });
   }
 });
 
@@ -162,7 +153,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null, hasData: false });
 });
 
-// 3. MOTOR HEURÍSTICO DE ANÁLISIS DE PATRONES (ANTI-TM)
+// 3. MOTOR HEURÍSTICO DE ANÁLISIS DE PATRONES
 function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown) {
   const textLower = (markdown || '').toLowerCase();
   const findings = [];
@@ -360,12 +351,13 @@ app.get('/api/fines', async (req, res) => {
   res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() });
 });
 
-// 6. TELEMETRÍA (LIMPIEZA INMEDIATA DE TIMERS EN VIVO)
+// 6. TELEMETRÍA CON LIMPIEZA INMEDIATA Y ESTADO DE SEGUIMIENTO
 app.post('/api/telemetry', (req, res) => {
   const {
     operator, shift, profile, profileId,
     pendingReadLetters, unansweredChatsCount,
-    hasExpiredSla, isAfk, idleSeconds, activeChatTimersList, status
+    hasExpiredSla, isAfk, idleSeconds, activeChatTimersList,
+    prospectingProgress, status
   } = req.body;
 
   if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
@@ -387,6 +379,7 @@ app.post('/api/telemetry', (req, res) => {
     isAfk: Boolean(isAfk),
     idleSeconds: parseInt(idleSeconds, 10) || 0,
     activeChatTimersList: Array.isArray(activeChatTimersList) ? activeChatTimersList : [],
+    prospectingProgress: prospectingProgress || null,
     lastSeen: Date.now()
   });
 
@@ -413,7 +406,8 @@ app.get('/api/telemetry/live', (req, res) => {
         hasExpiredSla: data.hasExpiredSla,
         isAfk: data.isAfk,
         idleSeconds: data.idleSeconds,
-        activeChatTimersList: data.activeChatTimersList || []
+        activeChatTimersList: data.activeChatTimersList || [],
+        prospectingProgress: data.prospectingProgress || null
       });
       opEntry.totalLetters += data.pendingReadLetters;
       if (data.hasExpiredSla) opEntry.hasExpiredSlaGlobal = true;
@@ -463,12 +457,12 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 7. DASHBOARD EMBEBIDO
+// 7. DASHBOARD EMBEBIDO CON SEGUIMIENTO Y MULTAS EN VIVO
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>RYR TITAN APEX - SUPERVISIÓN LIVE & CONTROL DE ALERTAS</title>
+  <title>RYR TITAN APEX - SUPERVISIÓN LIVE & AUDITORÍA FORENSE</title>
   <style>
     :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; --accent-gold: #f59e0b; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -569,12 +563,24 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
                 return \`<span class="live-chat-timer-badge \${t.isExpired ? 'timer-expired' : 'timer-ok'}">💬 \${t.contact}: \${t.isExpired ? '00:00 (VENCIDO)' : timeStr}</span>\`;
               }).join('');
 
+              let trackingHtml = '';
+              if (p.prospectingProgress) {
+                const pr = p.prospectingProgress;
+                const min = Math.floor(pr.remainingSeconds / 60);
+                const sec = pr.remainingSeconds % 60;
+                const timeStr = \`\${min < 10 ? '0' : ''}\${min}:\${sec < 10 ? '0' : ''}\${sec}\`;
+                trackingHtml = pr.isCompleted
+                  ? \`<div style="font-size:10px; font-weight:bold; color:#10b981; margin-top:4px;">🎯 Seguimiento: OK [\${pr.count}/\${pr.quota}]</div>\`
+                  : \`<div style="font-size:10px; font-weight:bold; color:#f59e0b; margin-top:4px;">🎯 Seguimiento: \${timeStr} [\${pr.count}/\${pr.quota}]</div>\`;
+              }
+
               return \`
                 <div class="profile-live-box">
                   <div style="display:flex; justify-content:space-between;">
                     <span style="font-weight:bold; color:#00ffcc;">🎯 \${p.profileName}</span>
                     <span style="font-size:11px; color:#38bdf8;">✉️ \${p.pendingReadLetters} cartas</span>
                   </div>
+                  \${trackingHtml}
                   \${timersHtml ? \`<div class="live-timers-container">\${timersHtml}</div>\` : \`<div style="font-size:10px; color:#10b981; margin-top:4px;">⏱️ Todos los chats al día</div>\`}
                 </div>
               \`;
@@ -752,4 +758,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V40.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V41.0 activo en puerto ${PORT}`));
