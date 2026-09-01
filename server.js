@@ -25,22 +25,28 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR DE IA CONECTADO A GROQ CLOUD
-async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName) {
-  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Helena, 56';
+// 1. MOTOR DE IA CONECTADO A GROQ CLOUD (RESPUESTAS EXACTAS)
+async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName, bioData) {
+  const safeClient = (clientName && !['Search', 'Cliente', 'Jaye, 64'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'la clienta';
   const safeProfile = profileName || 'HORACIO';
 
-  const systemPrompt = `Eres el Co-Piloto de IA, Psicólogo y Estratega de Citas de la agencia RYR TITAN operando en Talkytimes.
-Analizas el historial real de conversación entre el cliente (${safeClient}) y el perfil (${safeProfile}).
+  const systemPrompt = `Eres el Asistente de IA y Estratega de Citas de la agencia RYR TITAN operando en Talkytimes.
+Analizas la información y el chat real de la clienta ${safeClient} con el perfil asignado ${safeProfile}.
+
+DATOS DE PERFIL DE ${safeClient}:
+- Ubicación / País: ${bioData?.country || 'No especificado'}
+- Edad / Nacimiento: ${bioData?.birthDate || 'No especificado'}
+- Estado Civil: ${bioData?.maritalStatus || 'No especificado'}
 
 REGLAS DE ORO:
-1. RESPONDE DIRECTAMENTE en español claro y conciso a cualquier pregunta del operador (mascotas, hijos, trabajo, créditos, estado de ánimo, intenciones).
-2. Si te piden un mensaje de respuesta o enganche, redacta una opción seductora y humana en inglés (lista para copiar) y su traducción en español.
-3. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos, citas en persona o viajes ("when we meet", "come see me", "book a flight"). Desvía hacia la conexión emocional digital y cartas.
-4. Devuelve ÚNICAMENTE la respuesta final limpia en español sin asteriscos dobles (**).`;
+1. Responde DIRECTAMENTE y en español a la pregunta exacta del operador sobre ${safeClient} (de dónde es, edad, hijos, mascotas, trabajo, qué busca, créditos, etc.).
+2. Si te preguntan "de dónde es", responde su país (${bioData?.country || 'según su perfil'}).
+3. Si te piden un mensaje de respuesta o conquista, redacta una opción seductora en inglés (lista para copiar) y su traducción en español.
+4. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos, citas en persona o viajes ("when we meet", "come see me", "book a flight").
+5. NUNCA menciones a otra clienta distinta a ${safeClient}. Responde de forma limpia sin asteriscos dobles (**).`;
 
   if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
-    const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'llama-3.1-70b-versatile'];
+    const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
     for (let model of groqModels) {
       try {
         const controller = new AbortController();
@@ -79,14 +85,23 @@ REGLAS DE ORO:
     }
   }
 
-  return `💡 Análisis sobre ${safeClient}:
-Conversación analizada en tiempo real. Puedes preguntarme sobre su estado de ánimo, intenciones o pedirme mensajes de enganche adaptados a ella.`;
+  // Fallback directo si no hay red externa
+  const pLower = (prompt || '').toLowerCase();
+  if (/(donde|dónde|pais|país|from)/i.test(pLower)) {
+    return `📍 Ubicación de ${safeClient}: Es de ${bioData?.country || 'según su perfil en pantalla'}.`;
+  }
+  if (/(edad|años|nacimiento|cumpleaños)/i.test(pLower)) {
+    return `🎂 Edad de ${safeClient}: ${bioData?.birthDate || 'Registrada en su perfil'}.`;
+  }
+
+  return `💡 Información sobre ${safeClient}:
+Historial revisado con éxito. Puedes preguntarme de dónde es, su edad, mascotas, o pedirme un mensaje de respuesta.`;
 }
 
-// 2. ENDPOINT: CONSULTA AL ASISTENTE DE IA
+// 2. ENDPOINTS DE INTELIGENCIA
 app.post('/api/intelligence/query', async (req, res) => {
   try {
-    const { query, clientId, clientName, profileName, liveMarkdown } = req.body;
+    const { query, clientId, clientName, profileName, bioData, liveMarkdown } = req.body;
     const targetId = String(clientId || '').trim();
     let chatMd = liveMarkdown || '';
 
@@ -100,28 +115,18 @@ app.post('/api/intelligence/query', async (req, res) => {
       } catch (e) {}
     }
 
-    if (!chatMd) {
-      for (let audit of recentChatAuditsRAM.values()) {
-        if (String(audit.clientId) === targetId || String(audit.client_id) === targetId || String(audit.clientName).toLowerCase() === String(clientName).toLowerCase()) {
-          chatMd = audit.markdown;
-          break;
-        }
-      }
-    }
-
-    const aiAnswer = await generateMasterAiResponse(query, chatMd, clientName, profileName);
+    const aiAnswer = await generateMasterAiResponse(query, chatMd, clientName, profileName, bioData);
     res.json({ success: true, answer: aiAnswer });
   } catch (err) {
-    res.json({ success: true, answer: `Consulta procesada con éxito.` });
+    res.json({ success: true, answer: `Consulta procesada.` });
   }
 });
 
-// 3. ENDPOINT: EXPEDIENTE DIRECTO
 app.get('/api/intelligence/user/:clientId', async (req, res) => {
   const clientId = String(req.params.clientId).trim();
   const queryName = String(req.query.name || '').trim();
   let chatMd = '';
-  let clientName = queryName || 'Helena, 56';
+  let clientName = queryName || 'Cliente';
 
   if (SUPABASE_URL && SUPABASE_KEY && clientId !== 'N/A') {
     try {
@@ -129,13 +134,6 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
         headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
       });
       let data = await resp.json();
-
-      if (!Array.isArray(data) || data.length === 0) {
-        resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?id=ilike.*${clientId}*&select=*&limit=1`, {
-          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-        });
-        data = await resp.json();
-      }
 
       if (Array.isArray(data) && data[0]) {
         chatMd = data[0].markdown;
@@ -146,25 +144,13 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
     } catch (e) {}
   }
 
-  if (!chatMd) {
-    for (let audit of recentChatAuditsRAM.values()) {
-      if (String(audit.clientId) === clientId || String(audit.client_id) === clientId || (queryName && String(audit.clientName).toLowerCase().includes(queryName.toLowerCase()))) {
-        chatMd = audit.markdown;
-        if (audit.clientName && !['Search', 'Cliente'].includes(audit.clientName)) {
-          clientName = audit.clientName.split('\n')[0].trim();
-        }
-        break;
-      }
-    }
-  }
-
   if (chatMd) {
     const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : 'Ubicación en perfil'),
-      birthDate: /(jul 4, 1970|1970)/i.test(textLower) ? 'Jul 4, 1970 (54 años)' : '56 años',
-      maritalStatus: /(no credits|credits)/i.test(textLower) ? 'Sin créditos actualmente (Recarga el 30)' : 'Not married',
+      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : (/(australia)/i.test(textLower) ? 'Australia' : 'En perfil')),
+      birthDate: 'En perfil',
+      maritalStatus: 'Not married',
       pets: 'No especificado aún',
       family: 'No especificado aún',
       work: 'Activo laboralmente',
@@ -176,7 +162,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null, hasData: false });
 });
 
-// 4. MOTOR HEURÍSTICO DE ANÁLISIS DE PATRONES (ANTI-TM)
+// 3. MOTOR HEURÍSTICO DE ANÁLISIS DE PATRONES (ANTI-TM)
 function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown) {
   const textLower = (markdown || '').toLowerCase();
   const findings = [];
@@ -225,13 +211,13 @@ function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markd
   };
 }
 
-// 5. AUDITORÍA Y GUARDADO
+// 4. AUDITORÍA Y GUARDADO
 app.post('/api/chats/audit-deep', async (req, res) => {
   const { operator, profile, clientName, clientId, markdown, messages } = req.body;
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
 
   const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Helena, 56').trim();
+  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Cliente').trim();
   const auditKey = `${profile}_${cleanClientId}`;
   
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
@@ -300,7 +286,7 @@ app.post('/api/chats/analyze-single', (req, res) => {
   res.json({ success: true, aiReport });
 });
 
-// 6. GESTIÓN DE ALERTAS
+// 5. GESTIÓN DE ALERTAS Y MULTAS
 app.get('/api/alerts/live', (req, res) => {
   const alertsList = Array.from(activeAlertsMap.values()).filter(a => a.status === 'PENDING').sort((a, b) => b.timestamp - a.timestamp);
   res.json({ success: true, alerts: alertsList });
@@ -331,7 +317,6 @@ app.post('/api/alerts/:id/dismiss', (req, res) => {
   res.json({ success: true });
 });
 
-// 7. REGISTRO DE MULTAS
 app.post('/api/fines/register', async (req, res) => {
   const { operator, shift, profile, clientName, clientId, reason } = req.body;
   if (!operator) return res.status(400).json({ error: 'Operador requerido' });
@@ -375,7 +360,7 @@ app.get('/api/fines', async (req, res) => {
   res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() });
 });
 
-// 8. TELEMETRÍA (LIMPIEZA INMEDIATA DE TIMERS AL RESPONDER)
+// 6. TELEMETRÍA (LIMPIEZA INMEDIATA DE TIMERS EN VIVO)
 app.post('/api/telemetry', (req, res) => {
   const {
     operator, shift, profile, profileId,
@@ -401,7 +386,6 @@ app.post('/api/telemetry', (req, res) => {
     hasExpiredSla: Boolean(hasExpiredSla),
     isAfk: Boolean(isAfk),
     idleSeconds: parseInt(idleSeconds, 10) || 0,
-    // Sobrescribe directamente con los timers activos reales
     activeChatTimersList: Array.isArray(activeChatTimersList) ? activeChatTimersList : [],
     lastSeen: Date.now()
   });
@@ -479,7 +463,7 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 9. DASHBOARD EMBEBIDO (LIMPIEZA DE TIMERS EN TIEMPO REAL)
+// 7. DASHBOARD EMBEBIDO
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -768,4 +752,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V39.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V40.0 activo en puerto ${PORT}`));
