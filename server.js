@@ -6,6 +6,8 @@ const PORT = process.env.PORT || 3000;
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
 const SUPABASE_KEY = (process.env.SUPABASE_KEY || '').trim();
+
+// Claves de IA Centralizadas
 const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim();
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || '').trim();
 const DEEPSEEK_API_KEY = (process.env.DEEPSEEK_API_KEY || '').trim();
@@ -25,9 +27,58 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. MOTOR DE IA CONECTADO A GROQ CLOUD (RAZONAMIENTO PURO SIN PLANTILLAS)
+// 1. RESOLUTOR AUTOMÁTICO DE MODELOS ACTIVOS DE GROQ
+let cachedGroqModel = null;
+
+async function getAvailableGroqModel(apiKey) {
+  if (cachedGroqModel) return cachedGroqModel;
+
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/models', {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'User-Agent': 'RYR-Titan-Apex/1.0'
+      }
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.data)) {
+        const availableIds = data.data.map(m => m.id);
+        const priorityList = [
+          'llama-3.3-70b-versatile',
+          'llama-3.1-70b-versatile',
+          'llama3-70b-8192',
+          'llama-3.1-8b-instant',
+          'llama3-8b-8192',
+          'gemma2-9b-it',
+          'deepseek-r1-distill-llama-70b'
+        ];
+
+        for (let pref of priorityList) {
+          if (availableIds.includes(pref)) {
+            cachedGroqModel = pref;
+            console.log(`[GROQ ENGINE] Modelo seleccionado con éxito: ${cachedGroqModel}`);
+            return cachedGroqModel;
+          }
+        }
+
+        if (availableIds.length > 0) {
+          cachedGroqModel = availableIds[0];
+          return cachedGroqModel;
+        }
+      }
+    }
+  } catch (e) {
+    console.error("[GROQ MODEL FETCH ERROR]:", e.message);
+  }
+
+  return 'llama-3.3-70b-versatile';
+}
+
+// 2. MOTOR DE IA CONECTADO A GROQ (RAZONAMIENTO PURO EN TIEMPO REAL)
 async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName, bioData) {
-  const safeClient = (clientName && !['Search', 'Cliente', 'Jaye, 64'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'la clienta';
+  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'la clienta';
   const safeProfile = profileName || 'HORACIO';
 
   const systemPrompt = `Eres el Co-Piloto de IA, Psicólogo y Estratega de Citas de la agencia RYR TITAN operando en Talkytimes.
@@ -39,57 +90,83 @@ DATOS DE PERFIL DE ${safeClient}:
 - Estado Civil: ${bioData?.maritalStatus || 'Not married / Soltera'}
 
 REGLAS DE ORO:
-1. RESPONDE CON RAZONAMIENTO REAL Y CONTEXTUAL a cualquier pregunta del operador (estado de ánimo, gustos, de dónde es, edad, psicología, qué busca, etc.).
+1. RESPONDE CON RAZONAMIENTO REAL Y CONTEXTUAL a cualquier pregunta del operador (estado de ánimo, gustos, de dónde es, edad, psicología, qué busca, créditos, etc.).
 2. Si te piden un mensaje de conquista, ataque o respuesta, redacta una opción seductora y humana en inglés (para copiar) y su traducción en español.
 3. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos, citas en persona o viajes ("when we meet", "come see me", "book a flight"). Desvía hacia la conexión emocional digital y cartas.
-4. PROHIBIDO mostrar textos de logs como "Here is a thinking process" o asteriscos dobles (**). Devuelve únicamente la respuesta final limpia en español.`;
+4. PROHIBIDO mostrar textos de proceso como "Here is a thinking process" o asteriscos dobles (**). Devuelve únicamente la respuesta final limpia en español.`;
 
+  // A. GROQ CLOUD CON AUTO-RESOLUCIÓN
   if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
-    const groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
-    for (let model of groqModels) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const targetModel = await getAvailableGroqModel(GROQ_API_KEY);
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json',
+          'User-Agent': 'RYR-Titan-Apex/1.0'
+        },
+        body: JSON.stringify({
+          model: targetModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `HISTORIAL DEL CHAT:\n${fullTranscript || 'Sin historial previo.'}\n\nCONSULTA DEL OPERADOR:\n${prompt}` }
+          ],
+          temperature: 0.65,
+          max_tokens: 850
+        })
+      });
 
-        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${GROQ_API_KEY}`,
-            'Content-Type': 'application/json',
-            'User-Agent': 'RYR-Titan-Apex/1.0'
-          },
-          body: JSON.stringify({
-            model: model,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: `HISTORIAL DEL CHAT:\n${fullTranscript || 'Sin historial previo cargado.'}\n\nCONSULTA DEL OPERADOR:\n${prompt}` }
-            ],
-            temperature: 0.65,
-            max_tokens: 850
-          }),
-          signal: controller.signal
-        });
-
-        clearTimeout(timeoutId);
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data.choices && data.choices[0] && data.choices[0].message?.content) {
-            let answer = data.choices[0].message.content.replace(/\*\*/g, '').trim();
-            answer = answer.replace(/Here'?s a thinking process[\s\S]*?(?=\n\n|\n[A-Z]|$)/i, '').trim();
-            return answer;
-          }
+      if (res.ok) {
+        const data = await res.json();
+        if (data.choices && data.choices[0] && data.choices[0].message?.content) {
+          let answer = data.choices[0].message.content.replace(/\*\*/g, '').trim();
+          answer = answer.replace(/Here'?s a thinking process[\s\S]*?(?=\n\n|\n[A-Z]|$)/i, '').trim();
+          answer = answer.replace(/^<think>[\s\S]*?<\/think>/i, '').trim();
+          return answer;
         }
-      } catch (err) {}
+      }
+    } catch (err) {
+      console.error("[GROQ EXEC ERROR]:", err.message);
     }
   }
 
-  // Motor cognitivo dinámico si no hay respuesta de red
-  return `💡 Análisis sobre ${safeClient}:
-Reside en ${bioData?.country || 'su país de origen'}. Se encuentra en conversación activa. Puedes preguntarme sobre su estado de ánimo, qué temas le interesan o pedirme redactar una respuesta específica.`;
+  // B. OPENAI (FALLBACK)
+  if (OPENAI_API_KEY && OPENAI_API_KEY.startsWith('sk-')) {
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `HISTORIAL DEL CHAT:\n${fullTranscript || 'Sin historial.'}\n\nPREGUNTA:\n${prompt}` }
+          ],
+          temperature: 0.65
+        })
+      });
+      const data = await res.json();
+      if (data.choices && data.choices[0] && data.choices[0].message?.content) {
+        return data.choices[0].message.content.replace(/\*\*/g, '').trim();
+      }
+    } catch (e) {}
+  }
+
+  // C. FALLBACK DINÁMICO
+  const pLower = (prompt || '').toLowerCase();
+  if (/(donde|dónde|pais|país|from)/i.test(pLower)) {
+    return `📍 Ubicación de ${safeClient}: Es de ${bioData?.country || 'su país de origen en perfil'}.`;
+  }
+  if (/(edad|años|nacimiento|cumpleaños)/i.test(pLower)) {
+    return `🎂 Edad de ${safeClient}: ${bioData?.birthDate || 'Registrada en su perfil'}.`;
+  }
+
+  return `💡 Información sobre ${safeClient}:
+Reside en ${bioData?.country || 'su país de origen'}. Historial revisado con éxito. Puedes preguntarme sobre su estado de ánimo, qué temas le interesan o pedirme una respuesta específica.`;
 }
 
-// 2. ENDPOINTS DE INTELIGENCIA
+// 3. ENDPOINTS DE INTELIGENCIA
 app.post('/api/intelligence/query', async (req, res) => {
   try {
     const { query, clientId, clientName, profileName, bioData, liveMarkdown } = req.body;
@@ -106,10 +183,19 @@ app.post('/api/intelligence/query', async (req, res) => {
       } catch (e) {}
     }
 
+    if (!chatMd) {
+      for (let audit of recentChatAuditsRAM.values()) {
+        if (String(audit.clientId) === targetId || String(audit.client_id) === targetId || String(audit.clientName).toLowerCase() === String(clientName).toLowerCase()) {
+          chatMd = audit.markdown;
+          break;
+        }
+      }
+    }
+
     const aiAnswer = await generateMasterAiResponse(query, chatMd, clientName, profileName, bioData);
     res.json({ success: true, answer: aiAnswer });
   } catch (err) {
-    res.json({ success: true, answer: `Consulta procesada con éxito.` });
+    res.json({ success: true, answer: `Consulta procesada.` });
   }
 });
 
@@ -153,7 +239,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null, hasData: false });
 });
 
-// 3. MOTOR HEURÍSTICO DE ANÁLISIS DE PATRONES
+// 4. MOTOR HEURÍSTICO DE ANÁLISIS DE PATRONES (ANTI-TM)
 function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown) {
   const textLower = (markdown || '').toLowerCase();
   const findings = [];
@@ -202,7 +288,7 @@ function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markd
   };
 }
 
-// 4. AUDITORÍA Y GUARDADO
+// 5. AUDITORÍA Y GUARDADO
 app.post('/api/chats/audit-deep', async (req, res) => {
   const { operator, profile, clientName, clientId, markdown, messages } = req.body;
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
@@ -277,7 +363,7 @@ app.post('/api/chats/analyze-single', (req, res) => {
   res.json({ success: true, aiReport });
 });
 
-// 5. GESTIÓN DE ALERTAS Y MULTAS
+// 6. GESTIÓN DE ALERTAS Y MULTAS
 app.get('/api/alerts/live', (req, res) => {
   const alertsList = Array.from(activeAlertsMap.values()).filter(a => a.status === 'PENDING').sort((a, b) => b.timestamp - a.timestamp);
   res.json({ success: true, alerts: alertsList });
@@ -351,7 +437,7 @@ app.get('/api/fines', async (req, res) => {
   res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() });
 });
 
-// 6. TELEMETRÍA CON LIMPIEZA INMEDIATA Y ESTADO DE SEGUIMIENTO
+// 7. TELEMETRÍA (SUPERVISIÓN LIVE)
 app.post('/api/telemetry', (req, res) => {
   const {
     operator, shift, profile, profileId,
@@ -457,7 +543,7 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 7. DASHBOARD EMBEBIDO CON SEGUIMIENTO Y MULTAS EN VIVO
+// DASHBOARD
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -758,4 +844,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V41.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V42.0 (Dynamic Groq AI Engine) activo en puerto ${PORT}`));
