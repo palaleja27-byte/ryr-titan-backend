@@ -22,7 +22,7 @@ const operatorFinesRAM = new Map();
 const syncedClientsRegistry = new Set();
 
 // Chat bidireccional Supervisor <-> Operador
-const supervisorToOperatorMessages = new Map(); // operatorName -> Array de mensajes
+const supervisorToOperatorMessages = new Map();
 
 let dynamicBannedWords = new Set([
   'whatsapp', 'skype', 'email', 'correo', 'teléfono', 'telefono', 
@@ -470,7 +470,7 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 8. DASHBOARD EMBEBIDO CON CHAT DIRECTO SUPERVISOR -> OPERADOR
+// 8. DASHBOARD EMBEBIDO CON POLLING REALTIME DE CHAT (1.5s)
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -516,7 +516,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <div id="modal-supervisor-chat" class="modal-overlay">
     <div class="modal-content" style="width:500px;">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span id="sup-chat-title" style="font-weight:bold; color:var(--accent-cyan);">💬 LLAMAR LA ATENCIÓN AL OPERADOR</span>
+        <span id="sup-chat-title" style="font-weight:bold; color:var(--accent-cyan);">💬 COMUNICACIÓN DIRECTA CON OPERADOR</span>
         <button class="btn-action" onclick="closeModals()">✕</button>
       </div>
       <div id="sup-chat-history" style="background:#060913; border:1px solid #1e293b; border-radius:6px; padding:10px; height:200px; overflow-y:auto; font-size:12px;"></div>
@@ -574,6 +574,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <script>
     const API_URL = window.location.origin;
     let activeChatOperator = '';
+    let supChatPollingInterval = null; // POLLING REALTIME
 
     async function fetchLive() {
       try {
@@ -630,25 +631,30 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       document.getElementById('sup-chat-title').innerText = \`💬 COMUNICACIÓN DIRECTA CON: \${operatorName.toUpperCase()}\`;
       document.getElementById('modal-supervisor-chat').style.display = 'flex';
       loadSupervisorChatHistory();
+
+      if (supChatPollingInterval) clearInterval(supChatPollingInterval);
+      supChatPollingInterval = setInterval(loadSupervisorChatHistory, 1500); // REFRESH EN VIVO CADA 1.5s
     }
 
     async function loadSupervisorChatHistory() {
       if (!activeChatOperator) return;
-      const res = await fetch(\`\${API_URL}/api/supervisor/messages/\${activeChatOperator}\`);
-      const data = await res.json();
-      const container = document.getElementById('sup-chat-history');
-      if (!data.messages || data.messages.length === 0) {
-        container.innerHTML = '<p style="color:#64748b;">No hay mensajes previos. Escribe para llamar la atención del operador.</p>';
-        return;
-      }
-      container.innerHTML = data.messages.map(m => \`
-        <div style="margin-bottom:6px; text-align:\${m.sender === 'SUPERVISOR' ? 'right' : 'left'};">
-          <span style="background:\${m.sender === 'SUPERVISOR' ? '#1e1b4b' : '#064e3b'}; border:1px solid \${m.sender === 'SUPERVISOR' ? '#8b5cf6' : '#10b981'}; padding:4px 8px; border-radius:6px; display:inline-block; font-size:11px;">
-            <b>\${m.sender}:</b> \${m.text}
-          </span>
-        </div>
-      \`).join('');
-      container.scrollTop = container.scrollHeight;
+      try {
+        const res = await fetch(\`\${API_URL}/api/supervisor/messages/\${activeChatOperator}\`);
+        const data = await res.json();
+        const container = document.getElementById('sup-chat-history');
+        if (!data.messages || data.messages.length === 0) {
+          container.innerHTML = '<p style="color:#64748b;">No hay mensajes previos. Escribe para llamar la atención del operador.</p>';
+          return;
+        }
+        container.innerHTML = data.messages.map(m => \`
+          <div style="margin-bottom:6px; text-align:\${m.sender === 'SUPERVISOR' ? 'right' : 'left'};">
+            <span style="background:\${m.sender === 'SUPERVISOR' ? '#1e1b4b' : '#064e3b'}; border:1px solid \${m.sender === 'SUPERVISOR' ? '#8b5cf6' : '#10b981'}; padding:4px 8px; border-radius:6px; display:inline-block; font-size:11px;">
+              <b>\${m.sender}:</b> \${m.text}
+            </span>
+          </div>
+        \`).join('');
+        container.scrollTop = container.scrollHeight;
+      } catch (e) {}
     }
 
     async function sendSupervisorMsg() {
@@ -665,6 +671,15 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       input.value = '';
       loadSupervisorChatHistory();
     }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const supInput = document.getElementById('input-msg-to-op');
+      if (supInput) {
+        supInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') sendSupervisorMsg();
+        });
+      }
+    });
 
     async function fetchFinesCount() {
       try {
@@ -774,7 +789,11 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       openBannedWordsModal();
     }
 
-    function closeModals() { document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none'); }
+    function closeModals() {
+      if (supChatPollingInterval) clearInterval(supChatPollingInterval);
+      document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none');
+    }
+
     setInterval(fetchLive, 2000);
     fetchLive();
   </script>
@@ -785,4 +804,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V46.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V47.0 activo en puerto ${PORT}`));
