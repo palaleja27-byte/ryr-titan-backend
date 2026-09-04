@@ -22,7 +22,6 @@ const activeAlertsMap = new Map();
 const operatorFinesRAM = new Map();
 const syncedClientsRegistry = new Set();
 
-// Chat bidireccional Supervisor <-> Operador
 const supervisorToOperatorMessages = new Map();
 
 let dynamicBannedWords = new Set([
@@ -31,7 +30,7 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. RESOLUTOR AUTOMÁTICO DE MODELOS DE GROQ
+// 1. RESOLUTOR DE MODELO GROQ
 let cachedGroqModel = null;
 async function getAvailableGroqModel(apiKey) {
   if (cachedGroqModel) return cachedGroqModel;
@@ -57,7 +56,51 @@ async function getAvailableGroqModel(apiKey) {
   return 'llama-3.3-70b-versatile';
 }
 
-// 2. MOTOR DE IA PARA RAZONAMIENTO Y MENSAJES DE ATAQUE
+// 2. TRADUCTOR Y CONSOLIDADOR DE DIÁLOGOS EN ESPAÑOL
+async function translateAndFormatDialogueToSpanish(rawMarkdown, profileName, clientName) {
+  if (!GROQ_API_KEY || !GROQ_API_KEY.startsWith('gsk_')) return rawMarkdown;
+
+  const targetModel = await getAvailableGroqModel(GROQ_API_KEY);
+  const prompt = `Eres el Traductor y Auditor Forense de RYR TITAN.
+Toma la siguiente transcripción de chat y devuélvela con formato Markdown PERFECTO Y 100% EN ESPAÑOL.
+
+REGLAS:
+1. Mantén la alternancia clara de ambos participantes:
+   - 💼 **${profileName} [Operador]** [Hora]: (Mensaje en español)
+   - 👤 **${clientName} [Cliente]** [Hora]: (Mensaje en español)
+2. Traduce con total naturalidad cualquier mensaje en inglés o portugués al español.
+3. No agregues saludos, explicaciones ni notas. Solo devuelve el encabezado y el diálogo traducido.`;
+
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: targetModel,
+        messages: [
+          { role: 'system', content: prompt },
+          { role: 'user', content: rawMarkdown }
+        ],
+        temperature: 0.2,
+        max_tokens: 1500
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.choices && data.choices[0] && data.choices[0].message?.content) {
+        return data.choices[0].message.content.trim();
+      }
+    }
+  } catch (e) {}
+
+  return rawMarkdown;
+}
+
+// 3. MOTOR DE IA PARA RAZONAMIENTO Y MENSAJES DE ATAQUE
 async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName, bioData) {
   const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'la clienta';
   const safeProfile = profileName || 'HORACIO';
@@ -135,54 +178,7 @@ Basado en su historial reciente, conviene responder conectando con su sensibilid
 Ubicación: ${bioData?.country || 'En perfil'}. Historial revisado. Puedes pedirme mensajes de conquista o hacer preguntas específicas.`;
 }
 
-// 3. ENDPOINTS DE CHAT SUPERVISOR <-> OPERADOR
-app.post('/api/supervisor/send-message', (req, res) => {
-  const { operatorName, text } = req.body;
-  if (!operatorName || !text) return res.status(400).json({ error: 'Faltan datos' });
-
-  const opKey = operatorName.toLowerCase().trim();
-  if (!supervisorToOperatorMessages.has(opKey)) {
-    supervisorToOperatorMessages.set(opKey, []);
-  }
-
-  const msgObj = {
-    id: `MSG_${Date.now()}`,
-    sender: 'SUPERVISOR',
-    text: text.trim(),
-    timestamp: Date.now()
-  };
-
-  supervisorToOperatorMessages.get(opKey).push(msgObj);
-  res.json({ success: true, message: msgObj });
-});
-
-app.get('/api/supervisor/messages/:operatorName', (req, res) => {
-  const opKey = req.params.operatorName.toLowerCase().trim();
-  const messages = supervisorToOperatorMessages.get(opKey) || [];
-  res.json({ success: true, messages });
-});
-
-app.post('/api/operator/reply-message', (req, res) => {
-  const { operatorName, text } = req.body;
-  if (!operatorName || !text) return res.status(400).json({ error: 'Faltan datos' });
-
-  const opKey = operatorName.toLowerCase().trim();
-  if (!supervisorToOperatorMessages.has(opKey)) {
-    supervisorToOperatorMessages.set(opKey, []);
-  }
-
-  const msgObj = {
-    id: `REPLY_${Date.now()}`,
-    sender: 'OPERATOR',
-    text: text.trim(),
-    timestamp: Date.now()
-  };
-
-  supervisorToOperatorMessages.get(opKey).push(msgObj);
-  res.json({ success: true, message: msgObj });
-});
-
-// 4. ENDPOINTS DE INTELIGENCIA Y AUDITORÍA
+// 4. ENDPOINTS DE INTELIGENCIA
 app.post('/api/intelligence/query', async (req, res) => {
   try {
     const { query, clientId, clientName, profileName, bioData, liveMarkdown } = req.body;
@@ -302,7 +298,7 @@ function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markd
   };
 }
 
-// 6. AUDITORÍA Y GUARDADO
+// 6. AUDITORÍA Y GUARDADO CON TRADUCCIÓN A ESPAÑOL
 app.post('/api/chats/audit-deep', async (req, res) => {
   const { operator, profile, clientName, clientId, markdown, messages } = req.body;
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
@@ -314,7 +310,9 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
   syncedClientsRegistry.add(safeClientName.toLowerCase());
 
-  const aiReport = runDeepAiPatternAnalysis(operator, profile, safeClientName, cleanClientId, markdown);
+  // Traducir y formatear a español fluido
+  const finalSpanishMarkdown = await translateAndFormatDialogueToSpanish(markdown, profile || 'HORACIO', safeClientName);
+  const aiReport = runDeepAiPatternAnalysis(operator, profile, safeClientName, cleanClientId, finalSpanishMarkdown);
 
   aiReport.findings.forEach((finding, index) => {
     if (finding.type === 'CRITICAL' || finding.type === 'WARNING') {
@@ -329,7 +327,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
         category: finding.title,
         severity: finding.type === 'CRITICAL' ? 'CRÍTICA' : 'ALTA',
         snippet: finding.description,
-        markdown: markdown,
+        markdown: finalSpanishMarkdown,
         status: 'PENDING',
         timestamp: Date.now()
       };
@@ -354,7 +352,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
     total_messages: Array.isArray(messages) ? messages.length : 0,
     flags: aiReport.findings.map(f => f.title),
     has_breach: aiReport.riskLevel === 'CRÍTICO' || aiReport.riskLevel === 'ALTO',
-    markdown: markdown,
+    markdown: finalSpanishMarkdown,
     updated_at: new Date().toISOString()
   };
 
@@ -557,7 +555,7 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 9. DASHBOARD EMBEBIDO CON BOTÓN "ANALIZAR CONVERSACIÓN" RESTABLECIDO
+// 9. DASHBOARD EMBEBIDO
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -589,7 +587,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <header>
-    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & COMUNICACIÓN DIRECTA</div>
+    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & AUDITORÍA FORENSE</div>
     <div style="display:flex; gap:8px;">
       <button class="btn-action btn-fines" onclick="openFinesModal()">💰 Multas ($10.000 COP) (<span id="total-fines-count">0</span>)</button>
       <button class="btn-action" style="border-color:#ef4444; color:#f87171;" onclick="openAlertsCenterModal()">🚨 Alertas (<span id="count-behavior-alerts">0</span>)</button>
@@ -937,4 +935,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V48.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V49.0 activo en puerto ${PORT}`));
