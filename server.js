@@ -1,938 +1,1352 @@
+(() => {
+  if (window.self !== window.top) return;
 
-const express = require('express');
-const cors = require('cors');
+  function isContextValid() {
+    return typeof chrome !== 'undefined' && chrome.runtime && !!chrome.runtime.id;
+  }
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+  const API_URL = 'https://ryr-titan-backend.onrender.com';
 
-const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
-const SUPABASE_KEY = (process.env.SUPABASE_KEY || '').trim();
+  // 0. ESCUDO CSS INMEDIATO (0ms): OCULTA CUALQUIER LÁPIZ O ETIQUETA DRAFT EN LA LISTA LATERAL
+  const draftBlockerStyle = document.createElement('style');
+  draftBlockerStyle.id = 'ryr-draft-eradicator-css';
+  draftBlockerStyle.innerHTML = `
+    div[data-test-id*="dialog-item"] span:has(svg[class*="pencil" i]),
+    div[class*="dialog-item"] span:has(svg[class*="pencil" i]),
+    div[class*="item-wrap"] span:has(svg[class*="pencil" i]),
+    [class*="draft" i], [class*="Draft"] {
+      display: none !important;
+      visibility: hidden !important;
+      opacity: 0 !important;
+    }
+  `;
+  if (document.head) document.head.appendChild(draftBlockerStyle);
 
-// Claves de Inteligencia Artificial
-const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim();
-const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || '').trim();
-const DEEPSEEK_API_KEY = (process.env.DEEPSEEK_API_KEY || '').trim();
+  let isStorageLoaded = false;
 
-app.use(cors());
-app.use(express.json({ limit: '25mb' }));
+  let sessionData = {
+    operator: null,
+    shift: null,
+    profileName: null,
+    profileId: null,
+    monitoringActive: false
+  };
 
-const liveTelemetryMap = new Map();
-const recentChatAuditsRAM = new Map();
-const activeAlertsMap = new Map();
-const operatorFinesRAM = new Map();
-const syncedClientsRegistry = new Set();
+  let totalGlobalReadLetters = 0;
+  const pageReadCounts = new Map();
+  let isCrawlerRunning = false;
+  let lastCrawlerRunTime = 0;
 
-const supervisorToOperatorMessages = new Map();
+  let lastUserInteraction = Date.now();
+  const AFK_THRESHOLD_SECONDS = 300;
 
-let dynamicBannedWords = new Set([
-  'whatsapp', 'skype', 'email', 'correo', 'teléfono', 'telefono', 
-  'prometo', 'promesa', 'número', 'numero', 'banco', 'tarjeta', 
-  'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
-]);
+  let activeSlaTimers = {};
+  let finedTimerKeys = new Set();
+  let syncedChatsMemory = new Set();
+  let seenSupervisorMessageIds = new Set();
 
-// 1. RESOLUTOR DE MODELO GROQ
-let cachedGroqModel = null;
-async function getAvailableGroqModel(apiKey) {
-  if (cachedGroqModel) return cachedGroqModel;
-  try {
-    const res = await fetch('https://api.groq.com/openai/v1/models', {
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'User-Agent': 'RYR-Titan-Apex/1.0' }
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && Array.isArray(data.data)) {
-        const ids = data.data.map(m => m.id);
-        const prefs = ['llama-3.3-70b-versatile', 'llama-3.1-70b-versatile', 'llama3-70b-8192', 'llama-3.1-8b-instant', 'llama3-8b-8192'];
-        for (let p of prefs) {
-          if (ids.includes(p)) {
-            cachedGroqModel = p;
-            return cachedGroqModel;
+  const PROSPECTING_MIN_QUOTA = 10;
+  const PROSPECTING_CYCLE_DURATION = 1800; // 30 min
+  let prospectingCycleStartTime = Date.now();
+  let prospectingCount = 0;
+  let cycleInteractedUsersSet = new Set();
+
+  let bannedRoots = [
+    'promet', 'promes', 'whatsapp', 'skype', 'email', 'correo', 
+    'telefon', 'teléfon', 'numer', 'númer', 'banc', 'tarjet', 
+    'instagram', 'telegram', 'diner', 'transferenc', 'pay', 'cash'
+  ];
+
+  // 1. REGISTRO DE ACTIVIDAD
+  ['keydown', 'mousedown', 'mousemove', 'wheel', 'touchstart', 'input'].forEach(evt => {
+    window.addEventListener(evt, () => {
+      lastUserInteraction = Date.now();
+    }, { passive: true });
+  });
+
+  function getIdleSeconds() {
+    return Math.floor((Date.now() - lastUserInteraction) / 1000);
+  }
+
+  function isOperatorAfk() {
+    return getIdleSeconds() >= AFK_THRESHOLD_SECONDS;
+  }
+
+  // 2. ELIMINADOR DE TEXTAREA AL CAMBIAR DE CHAT (EVITA DUPLICAR EL TEXTO EN OTRAS CLIENTAS)
+  ['pointerdown', 'mousedown', 'touchstart'].forEach(evtType => {
+    document.addEventListener(evtType, (e) => {
+      const sidebarItem = e.target.closest('div[data-test-id*="dialog-item"], div[class*="dialog-item"], div[class*="item-wrap"], .tab-content-item');
+      if (sidebarItem && !e.target.closest('.ryr-row-extract-btn')) {
+        const textareas = document.querySelectorAll('textarea');
+        textareas.forEach(ta => {
+          if (!ta.id?.includes('intel') && !ta.id?.includes('search')) {
+            try {
+              const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+              if (nativeSetter) nativeSetter.call(ta, '');
+              else ta.value = '';
+              ta.dispatchEvent(new Event('input', { bubbles: true }));
+              ta.dispatchEvent(new Event('change', { bubbles: true }));
+            } catch (err) {
+              ta.value = '';
+            }
+          }
+        });
+      }
+    }, true);
+  });
+
+  // 3. DETECTOR DE CLICS PARA SEGUIMIENTO
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('button, a, div[role="button"]');
+    if (!btn) return;
+
+    const rawText = (btn.innerText || '').trim().toLowerCase();
+
+    if (rawText.includes('liked') || rawText.includes('winked') || rawText.includes('unfollow') || rawText.includes('following')) {
+      return;
+    }
+
+    const isFreshLike = rawText === 'like';
+    const isFreshWink = rawText === 'wink';
+    const isFreshFollow = rawText === 'follow';
+    const isCardHeart = btn.querySelector('svg[class*="heart"]') && !btn.className.includes('liked') && !btn.className.includes('active');
+
+    if (isFreshLike || isFreshWink || isFreshFollow || isCardHeart) {
+      const userLink = btn.closest('div, a')?.querySelector('a[href*="/user/"]') || btn.closest('a[href*="/user/"]');
+      let targetUserId = '';
+      if (userLink) {
+        const m = userLink.getAttribute('href').match(/user\/(\d+)/);
+        if (m) targetUserId = m[1];
+      }
+      if (!targetUserId && window.location.href.includes('/user/')) {
+        const m = window.location.href.match(/user\/(\d+)/);
+        if (m) targetUserId = m[1];
+      }
+      if (!targetUserId) targetUserId = `user_${Date.now()}`;
+
+      if (!cycleInteractedUsersSet.has(targetUserId)) {
+        cycleInteractedUsersSet.add(targetUserId);
+        prospectingCount = cycleInteractedUsersSet.size;
+
+        persistProspectingState();
+        renderFloatingBar();
+        sendTelemetry(true);
+      }
+    }
+  }, true);
+
+  function persistProspectingState() {
+    if (!isContextValid()) return;
+    try {
+      chrome.storage.local.set({
+        prospectingCycleStartTime,
+        prospectingCount,
+        cycleInteractedUsersList: Array.from(cycleInteractedUsersSet)
+      });
+    } catch (e) {}
+  }
+
+  // 4. RECUPERAR DATOS Y CARGA BLINDADA DE STORAGE (INMUNE A F5)
+  if (isContextValid()) {
+    try {
+      chrome.storage.local.get(null, (data) => {
+        if (!isContextValid() || !data) return;
+        
+        if (data.activeSlaTimers && typeof data.activeSlaTimers === 'object') {
+          activeSlaTimers = { ...data.activeSlaTimers };
+        }
+        
+        if (Array.isArray(data.syncedChatsList)) {
+          data.syncedChatsList.forEach(item => syncedChatsMemory.add(String(item).trim().toLowerCase()));
+        }
+
+        if (Array.isArray(data.seenSupervisorMessageIdsList)) {
+          data.seenSupervisorMessageIdsList.forEach(id => seenSupervisorMessageIds.add(id));
+        }
+
+        if (data.prospectingCycleStartTime) prospectingCycleStartTime = data.prospectingCycleStartTime;
+        if (data.prospectingCount) prospectingCount = data.prospectingCount;
+        if (Array.isArray(data.cycleInteractedUsersList)) {
+          data.cycleInteractedUsersList.forEach(id => cycleInteractedUsersSet.add(id));
+        }
+
+        if (data.monitoringActive) {
+          sessionData = {
+            operator: data.operator || 'walther',
+            shift: data.shift || 'Mañana',
+            profileName: data.profileName || 'HORACIO',
+            profileId: data.profileId || '118179794',
+            monitoringActive: true
+          };
+          renderFloatingBar();
+          injectIntelPanel();
+          syncServerKnownChats();
+        }
+
+        isStorageLoaded = true;
+      });
+    } catch (e) {
+      isStorageLoaded = true;
+    }
+  } else {
+    isStorageLoaded = true;
+  }
+
+  function persistTimersToStorage() {
+    if (!isContextValid() || !isStorageLoaded) return;
+    try {
+      chrome.storage.local.set({ activeSlaTimers });
+    } catch (e) {}
+  }
+
+  function persistSyncedChatsToStorage() {
+    if (!isContextValid()) return;
+    try {
+      chrome.storage.local.set({ syncedChatsList: Array.from(syncedChatsMemory) });
+    } catch (e) {}
+  }
+
+  function persistSeenSupervisorMessages() {
+    if (!isContextValid()) return;
+    try {
+      chrome.storage.local.set({ seenSupervisorMessageIdsList: Array.from(seenSupervisorMessageIds) });
+    } catch (e) {}
+  }
+
+  if (isContextValid()) {
+    try {
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (!isContextValid()) return;
+        if (area === 'local') {
+          if (changes.monitoringActive) sessionData.monitoringActive = changes.monitoringActive.newValue;
+          if (changes.operator) sessionData.operator = changes.operator.newValue;
+          if (changes.shift) sessionData.shift = changes.shift.newValue;
+          if (changes.profileName) sessionData.profileName = changes.profileName.newValue;
+          if (changes.profileId) sessionData.profileId = changes.profileId.newValue;
+
+          if (sessionData.monitoringActive) {
+            renderFloatingBar();
+            injectIntelPanel();
+            syncServerKnownChats();
+          } else {
+            removeFloatingBar();
           }
         }
-        if (ids.length > 0) return ids[0];
-      }
-    }
-  } catch (e) {}
-  return 'llama-3.3-70b-versatile';
-}
+      });
+    } catch (e) {}
+  }
 
-// 2. TRADUCTOR Y CONSOLIDADOR DE DIÁLOGOS EN ESPAÑOL
-async function translateAndFormatDialogueToSpanish(rawMarkdown, profileName, clientName) {
-  if (!GROQ_API_KEY || !GROQ_API_KEY.startsWith('gsk_')) return rawMarkdown;
-
-  const targetModel = await getAvailableGroqModel(GROQ_API_KEY);
-  const prompt = `Eres el Traductor y Auditor Forense de RYR TITAN.
-Toma la siguiente transcripción de chat y devuélvela con formato Markdown PERFECTO Y 100% EN ESPAÑOL.
-
-REGLAS:
-1. Mantén la alternancia clara de ambos participantes:
-   - 💼 **${profileName} [Operador]** [Hora]: (Mensaje en español)
-   - 👤 **${clientName} [Cliente]** [Hora]: (Mensaje en español)
-2. Traduce con total naturalidad cualquier mensaje en inglés o portugués al español.
-3. No agregues saludos, explicaciones ni notas. Solo devuelve el encabezado y el diálogo traducido.`;
-
-  try {
-    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: targetModel,
-        messages: [
-          { role: 'system', content: prompt },
-          { role: 'user', content: rawMarkdown }
-        ],
-        temperature: 0.2,
-        max_tokens: 1500
-      })
-    });
-
-    if (res.ok) {
+  // 5. REVISAR MENSAJES DIRECTOS DEL SUPERVISOR EN TIEMPO REAL
+  async function checkSupervisorDirectMessages() {
+    if (!sessionData.operator) return;
+    try {
+      const res = await fetch(`${API_URL}/api/supervisor/messages/${sessionData.operator}`);
       const data = await res.json();
-      if (data.choices && data.choices[0] && data.choices[0].message?.content) {
-        return data.choices[0].message.content.trim();
-      }
-    }
-  } catch (e) {}
-
-  return rawMarkdown;
-}
-
-// 3. MOTOR DE IA PARA RAZONAMIENTO Y MENSAJES DE ATAQUE
-async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName, bioData) {
-  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'la clienta';
-  const safeProfile = profileName || 'HORACIO';
-
-  const systemPrompt = `Eres el Co-Piloto de IA, Psicólogo y Estratega de Citas de la agencia RYR TITAN operando en Talkytimes.
-Analizas el historial real de conversación (últimos 50 mensajes) entre la clienta (${safeClient}) y el perfil asignado (${safeProfile}).
-
-DATOS DE PERFIL DE ${safeClient}:
-- Ubicación: ${bioData?.country || 'No especificado'}
-- Edad / Nacimiento: ${bioData?.birthDate || 'No especificado'}
-- Estado Civil: ${bioData?.maritalStatus || 'Not married / Soltera'}
-
-REGLAS DE ORO:
-1. SI PIDEN UN "MENSAJE DE ATAQUE", "CONQUISTA", "ENGANCHE" O "CÓMO RESPONDER":
-   - Estudia a fondo los últimos mensajes del historial para entender qué le gusta a ${safeClient}, qué le preocupa y de qué estaban hablando.
-   - Redacta un mensaje irresistible, natural, cálido y seductor en inglés (para copiar) y su traducción en español.
-2. SI HACEN UNA PREGUNTA FACTUAL (ej: "¿tiene hijos?", "¿qué le gusta?", "¿de dónde es?"):
-   - Revisa el historial y la biografía y responde DIRECTAMENTE con datos reales.
-3. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos, citas en persona ni viajes ("when we meet", "come see me", "book a flight"). Desvía siempre hacia la conexión emocional y cartas.
-4. PROHIBIDO responder con plantillas vacías ni textos de proceso como "Here is a thinking process". Devuelve únicamente la respuesta final limpia en español.`;
-
-  if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
-    const targetModel = await getAvailableGroqModel(GROQ_API_KEY);
-    try {
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
-          'Content-Type': 'application/json',
-          'User-Agent': 'RYR-Titan-Apex/1.0'
-        },
-        body: JSON.stringify({
-          model: targetModel,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: `HISTORIAL DEL CHAT (ÚLTIMOS MENSAJES):\n${fullTranscript || 'Sin historial previo.'}\n\nPETICIÓN DEL OPERADOR:\n${prompt}` }
-          ],
-          temperature: 0.7,
-          max_tokens: 850
-        })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.choices && data.choices[0] && data.choices[0].message?.content) {
-          let answer = data.choices[0].message.content.replace(/\*\*/g, '').trim();
-          answer = answer.replace(/Here'?s a thinking process[\s\S]*?(?=\n\n|\n[A-Z]|$)/i, '').trim();
-          answer = answer.replace(/^<think>[\s\S]*?<\/think>/i, '').trim();
-          return answer;
-        }
-      }
-    } catch (err) {}
-  }
-
-  const pLower = (prompt || '').toLowerCase();
-  const mdLower = (fullTranscript || '').toLowerCase();
-
-  if (/(ataque|conquista|enamorar|mensaje|enganchar|responder)/i.test(pLower)) {
-    return `🎯 Mensaje de Conquista para ${safeClient}:
-Basado en su historial reciente, conviene responder conectando con su sensibilidad y reactivando la conversación.
-
-💬 Opción en Inglés (Copiar y Enviar):
-"Thinking about our conversations always brings a warm smile to my face. I really value how genuine you are with me. Tell me, how has your day been treating you?"
-
-💬 Traducción al Español:
-"Pensar en nuestras conversaciones siempre me saca una sonrisa cálida. Valoro mucho lo genuina que eres conmigo. Dime, ¿cómo te ha tratado el día?"`;
-  }
-
-  if (/(hijo|hijos|familia|kids)/i.test(pLower)) {
-    if (/(hijos|kids|children|son|daughter)/i.test(mdLower)) return `👶 Familia de ${safeClient}: Sí, ha mencionado tener hijos en el chat.`;
-    return `👶 Familia de ${safeClient}: En los mensajes analizados no ha mencionado tener hijos todavía.`;
-  }
-
-  return `📋 Análisis sobre ${safeClient}:
-Ubicación: ${bioData?.country || 'En perfil'}. Historial revisado. Puedes pedirme mensajes de conquista o hacer preguntas específicas.`;
-}
-
-// 4. ENDPOINTS DE INTELIGENCIA
-app.post('/api/intelligence/query', async (req, res) => {
-  try {
-    const { query, clientId, clientName, profileName, bioData, liveMarkdown } = req.body;
-    const targetId = String(clientId || '').trim();
-    let chatMd = liveMarkdown || '';
-
-    if (!chatMd && SUPABASE_URL && SUPABASE_KEY && targetId && targetId !== 'N/A') {
-      try {
-        const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?client_id=eq.${targetId}&select=*&limit=1`, {
-          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-        });
-        const data = await resp.json();
-        if (Array.isArray(data) && data[0]) chatMd = data[0].markdown;
-      } catch (e) {}
-    }
-
-    const aiAnswer = await generateMasterAiResponse(query, chatMd, clientName, profileName, bioData);
-    res.json({ success: true, answer: aiAnswer });
-  } catch (err) {
-    res.json({ success: true, answer: `Consulta procesada con éxito.` });
-  }
-});
-
-app.get('/api/intelligence/user/:clientId', async (req, res) => {
-  const clientId = String(req.params.clientId).trim();
-  const queryName = String(req.query.name || '').trim();
-  let chatMd = '';
-  let clientName = queryName || 'Cliente';
-
-  if (SUPABASE_URL && SUPABASE_KEY && clientId !== 'N/A') {
-    try {
-      let resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?client_id=eq.${clientId}&select=*&limit=1`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-      });
-      let data = await resp.json();
-
-      if (!Array.isArray(data) || data.length === 0) {
-        resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?id=ilike.*${clientId}*&select=*&limit=1`, {
-          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-        });
-        data = await resp.json();
-      }
-
-      if (Array.isArray(data) && data[0]) {
-        chatMd = data[0].markdown;
-        if (data[0].client_name && !['Search', 'Cliente'].includes(data[0].client_name)) {
-          clientName = data[0].client_name.split('\n')[0].trim();
+      if (data && Array.isArray(data.messages)) {
+        const unreadSupMessages = data.messages.filter(m => m.sender === 'SUPERVISOR' && !seenSupervisorMessageIds.has(m.id));
+        if (unreadSupMessages.length > 0) {
+          const latest = unreadSupMessages[unreadSupMessages.length - 1];
+          showSupervisorDirectBanner(latest.text, latest.id);
         }
       }
     } catch (e) {}
   }
 
-  if (chatMd) {
-    const textLower = chatMd.toLowerCase();
-    const dossier = {
-      clientName: clientName,
-      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : (/(australia)/i.test(textLower) ? 'Australia' : 'En perfil')),
-      birthDate: 'En perfil',
-      maritalStatus: 'Not married',
-      pets: 'No especificado aún',
-      family: 'No especificado aún',
-      work: 'Activo laboralmente',
-      summary: `Expediente de ${clientName} verificado en Supabase.`
-    };
-    return res.json({ success: true, dossier, hasData: true });
-  }
+  // NOTIFICACIÓN DEL SUPERVISOR GLASSMORPHISM TRANSLÚCIDA
+  function showSupervisorDirectBanner(text, messageId) {
+    const existing = document.getElementById('ryr-supervisor-banner');
+    if (existing) existing.remove();
 
-  res.json({ success: false, dossier: null, hasData: false });
-});
+    const banner = document.createElement('div');
+    banner.id = 'ryr-supervisor-banner';
+    banner.style.cssText = `
+      position: fixed;
+      top: 48px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.72);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(168, 85, 247, 0.4);
+      color: #ffffff;
+      padding: 14px 18px;
+      border-radius: 12px;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 12px;
+      z-index: 2147483647;
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: 420px;
+      max-width: 95%;
+    `;
 
-// 5. MOTOR HEURÍSTICO DE ANÁLISIS DE PATRONES (ANTI-TM)
-function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown) {
-  const textLower = (markdown || '').toLowerCase();
-  const findings = [];
-  let qualityScore = 100;
-  let riskLevel = 'BAJO';
-
-  const tmRegex = /(?:when we meet|when i visit|come visit|meet in person|see you in person|book a flight|buy a ticket|flying to you|fly to you|stay at a hotel|pack your bags|plane ticket|flight ticket|live together soon|cuando nos veamos|cuando nos conozcamos en persona|cuando viaje|ven a verme|viajar a verte|comprar el pasaje|boleto de avión|hotel juntos|nos vemos en persona)/i;
-  if (tmRegex.test(textLower)) {
-    findings.push({
-      type: 'CRITICAL',
-      title: '🚨 INFRACCIÓN: TRAVEL MISLEADING (TM)',
-      description: 'Insinuación de encuentro personal o viaje físico detectada en el diálogo.'
-    });
-    qualityScore -= 45;
-    riskLevel = 'CRÍTICO';
-  }
-
-  if (/(?:si me quisieras|si me amaras|envíame un regalo|mandame un regalo|dame un regalo|cómprame un regalo|send me a gift|need coins)/i.test(textLower)) {
-    findings.push({
-      type: 'CRITICAL',
-      title: '🛑 Coacción por Regalos',
-      description: 'Petición directa de regalos condicionando el afecto.'
-    });
-    qualityScore -= 30;
-    if (riskLevel !== 'CRÍTICO') riskLevel = 'ALTO';
-  }
-
-  if (/(?:cállate|callate|no me importa|qué pereza|que pereza|apúrate|apurate|no tengo tiempo|fastidio|idiota|shut up|waste of time)/i.test(textLower)) {
-    findings.push({
-      type: 'CRITICAL',
-      title: '🚨 Maltrato / Tono Hostil',
-      description: 'Lenguaje inapropiado o agresivo detectado.'
-    });
-    qualityScore -= 30;
-    riskLevel = 'CRÍTICO';
-  }
-
-  qualityScore = Math.max(0, qualityScore);
-
-  return {
-    score: qualityScore,
-    riskLevel: riskLevel,
-    diagnosis: riskLevel === 'CRÍTICO' ? 'ALTO RIESGO: Infracciones detectadas.' : 'Conversación fluida y respetuosa.',
-    recommendation: riskLevel === 'CRÍTICO' ? 'Corregir al operador de inmediato sobre Travel Misleading.' : 'Mantener el ritmo de conversación.',
-    findings: findings
-  };
-}
-
-// 6. AUDITORÍA Y GUARDADO CON TRADUCCIÓN A ESPAÑOL
-app.post('/api/chats/audit-deep', async (req, res) => {
-  const { operator, profile, clientName, clientId, markdown, messages } = req.body;
-  if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
-
-  const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Cliente').trim();
-  const auditKey = `${profile}_${cleanClientId}`;
-  
-  syncedClientsRegistry.add(cleanClientId.toLowerCase());
-  syncedClientsRegistry.add(safeClientName.toLowerCase());
-
-  // Traducir y formatear a español fluido
-  const finalSpanishMarkdown = await translateAndFormatDialogueToSpanish(markdown, profile || 'HORACIO', safeClientName);
-  const aiReport = runDeepAiPatternAnalysis(operator, profile, safeClientName, cleanClientId, finalSpanishMarkdown);
-
-  aiReport.findings.forEach((finding, index) => {
-    if (finding.type === 'CRITICAL' || finding.type === 'WARNING') {
-      const alertId = `${auditKey}_${index}_${Date.now()}`;
-      const alertEntry = {
-        id: alertId,
-        auditId: auditKey,
-        operatorName: operator || 'Desconocido',
-        profileName: profile,
-        clientName: safeClientName,
-        clientId: cleanClientId,
-        category: finding.title,
-        severity: finding.type === 'CRITICAL' ? 'CRÍTICA' : 'ALTA',
-        snippet: finding.description,
-        markdown: finalSpanishMarkdown,
-        status: 'PENDING',
-        timestamp: Date.now()
-      };
-      activeAlertsMap.set(alertId, alertEntry);
-
-      if (SUPABASE_URL && SUPABASE_KEY) {
-        fetch(`${SUPABASE_URL}/rest/v1/chat_alerts`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
-          body: JSON.stringify(alertEntry)
-        }).catch(() => {});
-      }
-    }
-  });
-
-  const auditPayload = {
-    id: auditKey,
-    operator_name: operator || 'Desconocido',
-    profile_name: profile,
-    client_name: safeClientName,
-    client_id: cleanClientId,
-    total_messages: Array.isArray(messages) ? messages.length : 0,
-    flags: aiReport.findings.map(f => f.title),
-    has_breach: aiReport.riskLevel === 'CRÍTICO' || aiReport.riskLevel === 'ALTO',
-    markdown: finalSpanishMarkdown,
-    updated_at: new Date().toISOString()
-  };
-
-  recentChatAuditsRAM.set(auditKey, { ...auditPayload, operator, profile, clientName: safeClientName, clientId: cleanClientId, timestamp: Date.now() });
-
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(`${SUPABASE_URL}/rest/v1/chat_audits`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
-      body: JSON.stringify(auditPayload)
-    }).catch(() => {});
-  }
-
-  res.json({ success: true, clientId: cleanClientId, clientName: safeClientName, aiReport });
-});
-
-app.post('/api/chats/analyze-single', (req, res) => {
-  const { operator, profile, clientName, clientId, markdown } = req.body;
-  const aiReport = runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown);
-  res.json({ success: true, aiReport });
-});
-
-// 7. GESTIÓN DE ALERTAS Y MULTAS
-app.get('/api/alerts/live', (req, res) => {
-  const alertsList = Array.from(activeAlertsMap.values()).filter(a => a.status === 'PENDING').sort((a, b) => b.timestamp - a.timestamp);
-  res.json({ success: true, alerts: alertsList });
-});
-
-app.post('/api/alerts/:id/resolve', (req, res) => {
-  const alertId = req.params.id;
-  if (activeAlertsMap.has(alertId)) activeAlertsMap.get(alertId).status = 'RESOLVED';
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(`${SUPABASE_URL}/rest/v1/chat_alerts?id=eq.${alertId}`, {
-      method: 'PATCH',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'RESOLVED' })
-    }).catch(() => {});
-  }
-  res.json({ success: true });
-});
-
-app.post('/api/alerts/:id/dismiss', (req, res) => {
-  const alertId = req.params.id;
-  activeAlertsMap.delete(alertId);
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(`${SUPABASE_URL}/rest/v1/chat_alerts?id=eq.${alertId}`, {
-      method: 'DELETE',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-    }).catch(() => {});
-  }
-  res.json({ success: true });
-});
-
-app.post('/api/fines/register', async (req, res) => {
-  const { operator, shift, profile, clientName, clientId, reason } = req.body;
-  if (!operator) return res.status(400).json({ error: 'Operador requerido' });
-
-  const fineId = `FINE_${operator}_${clientId}_${Date.now()}`;
-  const finePayload = {
-    id: fineId,
-    operator_name: operator,
-    shift: shift || 'Mañana',
-    profile_name: profile || 'HORACIO',
-    client_name: clientName || 'Cliente',
-    client_id: clientId || 'N/A',
-    amount: 10000,
-    reason: reason || 'SLA 2 Minutos Excedido',
-    created_at: new Date().toISOString()
-  };
-
-  operatorFinesRAM.set(fineId, finePayload);
-
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(`${SUPABASE_URL}/rest/v1/operator_fines`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
-      body: JSON.stringify(finePayload)
-    }).catch(() => {});
-  }
-
-  res.json({ success: true, fine: finePayload });
-});
-
-app.get('/api/fines', async (req, res) => {
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/operator_fines?select=*&order=created_at.desc&limit=100`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-      });
-      const data = await resp.json();
-      if (Array.isArray(data)) return res.json({ success: true, fines: data });
-    } catch (e) {}
-  }
-  res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() });
-});
-
-// 8. TELEMETRÍA EN TIEMPO REAL
-app.post('/api/telemetry', (req, res) => {
-  const {
-    operator, shift, profile, profileId,
-    pendingReadLetters, unansweredChatsCount,
-    hasExpiredSla, isAfk, idleSeconds, activeChatTimersList,
-    prospectingProgress, status
-  } = req.body;
-
-  if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
-
-  const sessionKey = `${operator.toLowerCase().trim()}_${profile.toLowerCase().trim()}`;
-  if (status === 'OFFLINE') {
-    liveTelemetryMap.delete(sessionKey);
-    return res.json({ success: true });
-  }
-
-  liveTelemetryMap.set(sessionKey, {
-    operatorName: operator.trim(),
-    shift: shift || 'Mañana',
-    profileName: profile.trim(),
-    profileId: profileId || 'N/A',
-    pendingReadLetters: parseInt(pendingReadLetters, 10) || 0,
-    unansweredChatsCount: parseInt(unansweredChatsCount, 10) || 0,
-    hasExpiredSla: Boolean(hasExpiredSla),
-    isAfk: Boolean(isAfk),
-    idleSeconds: parseInt(idleSeconds, 10) || 0,
-    activeChatTimersList: Array.isArray(activeChatTimersList) ? activeChatTimersList : [],
-    prospectingProgress: prospectingProgress || null,
-    lastSeen: Date.now()
-  });
-
-  res.json({ success: true });
-});
-
-app.get('/api/telemetry/live', (req, res) => {
-  const now = Date.now();
-  const operatorsMap = new Map();
-  for (const [key, data] of liveTelemetryMap.entries()) {
-    if (now - data.lastSeen > 35000) {
-      liveTelemetryMap.delete(key);
-    } else {
-      const opKey = data.operatorName.toLowerCase();
-      if (!operatorsMap.has(opKey)) {
-        operatorsMap.set(opKey, { operatorName: data.operatorName, shift: data.shift, lastSeen: data.lastSeen, isAfkGlobal: false, hasExpiredSlaGlobal: false, totalLetters: 0, profiles: [] });
-      }
-      const opEntry = operatorsMap.get(opKey);
-      opEntry.profiles.push({
-        profileName: data.profileName,
-        profileId: data.profileId,
-        pendingReadLetters: data.pendingReadLetters,
-        unansweredChatsCount: data.unansweredChatsCount,
-        hasExpiredSla: data.hasExpiredSla,
-        isAfk: data.isAfk,
-        idleSeconds: data.idleSeconds,
-        activeChatTimersList: data.activeChatTimersList || [],
-        prospectingProgress: data.prospectingProgress || null
-      });
-      opEntry.totalLetters += data.pendingReadLetters;
-      if (data.hasExpiredSla) opEntry.hasExpiredSlaGlobal = true;
-      if (data.isAfk) opEntry.isAfkGlobal = true;
-      if (data.lastSeen > opEntry.lastSeen) opEntry.lastSeen = data.lastSeen;
-    }
-  }
-  res.json({ success: true, operators: Array.from(operatorsMap.values()) });
-});
-
-app.get('/api/chats/synced-ids', async (req, res) => {
-  const profile = req.query.profile;
-  const syncedSet = new Set(syncedClientsRegistry);
-  if (SUPABASE_URL && SUPABASE_KEY && profile) {
-    try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?profile_name=eq.${profile}&select=client_id,client_name`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-      });
-      const data = await resp.json();
-      if (Array.isArray(data)) {
-        data.forEach(d => {
-          if (d.client_id) syncedSet.add(String(d.client_id).trim().toLowerCase());
-          if (d.client_name) syncedSet.add(String(d.client_name).trim().toLowerCase());
-        });
-      }
-    } catch (e) {}
-  }
-  res.json({ success: true, syncedIds: Array.from(syncedSet) });
-});
-
-app.get('/api/chats/audits', async (req, res) => {
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    try {
-      const response = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?select=*&order=updated_at.desc&limit=60`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-      });
-      const data = await response.json();
-      if (Array.isArray(data)) {
-        return res.json({ success: true, audits: data.map(d => ({ id: d.id, operator: d.operator_name, profile: d.profile_name, clientName: d.client_name, clientId: d.client_id, flags: d.flags || [], markdown: d.markdown, timestamp: new Date(d.updated_at).getTime() })) });
-      }
-    } catch (e) {}
-  }
-  res.json({ success: true, audits: Array.from(recentChatAuditsRAM.values()) });
-});
-
-app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicBannedWords) }));
-app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
-app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
-
-// 9. DASHBOARD EMBEBIDO
-const DASHBOARD_HTML = `<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <title>RYR TITAN APEX - SUPERVISIÓN LIVE</title>
-  <style>
-    :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; --accent-gold: #f59e0b; }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: var(--bg-main); color: #fff; font-family: system-ui, sans-serif; padding: 12px; }
-    header { display: flex; justify-content: space-between; align-items: center; background: #0b132b; border: 1px solid #1e293b; border-left: 4px solid var(--accent-cyan); border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; }
-    .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 11px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; }
-    .btn-action:hover { border-color: var(--accent-green); color: var(--accent-green); }
-    .btn-fines { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(245, 158, 11, 0.15); }
-    .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
-    .operator-card { background: var(--bg-card); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; justify-content: space-between; }
-    .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
-    .live-timers-container { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-    .live-chat-timer-badge { font-size: 10px; font-weight: bold; font-family: monospace; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
-    .timer-ok { background: #064e3b; color: #34d399; border: 1px solid #10b981; }
-    .timer-expired { background: #450a0a; color: #f87171; border: 1px solid #ef4444; }
-    
-    .btn-chat-op { background: #1e1b4b; border: 1px solid #8b5cf6; color: #c4b5fd; padding: 6px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; text-align: center; margin-top: 6px; }
-    .btn-chat-op:hover { background: #8b5cf6; color: #060913; }
-
-    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.88); backdrop-filter: blur(5px); z-index: 99999; justify-content: center; align-items: center; }
-    .modal-content { background: #0e1526; border: 1px solid var(--accent-cyan); border-radius: 10px; width: 940px; max-width: 95%; max-height: 88vh; padding: 20px; display: flex; flex-direction: column; gap: 12px; color: #fff; }
-    .chat-transcript { background: #0b132b; border: 1px solid #1e293b; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 250px; overflow-y: auto; line-height: 1.6; color: #cbd5e1; }
-  </style>
-</head>
-<body>
-  <header>
-    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & AUDITORÍA FORENSE</div>
-    <div style="display:flex; gap:8px;">
-      <button class="btn-action btn-fines" onclick="openFinesModal()">💰 Multas ($10.000 COP) (<span id="total-fines-count">0</span>)</button>
-      <button class="btn-action" style="border-color:#ef4444; color:#f87171;" onclick="openAlertsCenterModal()">🚨 Alertas (<span id="count-behavior-alerts">0</span>)</button>
-      <button class="btn-action" onclick="openChatAuditsModal()">📄 Historial de Chats (MD)</button>
-      <button class="btn-action" onclick="openBannedWordsModal()">🛡️ Palabras Prohibidas</button>
-    </div>
-  </header>
-  <div id="operators-grid" class="grid-operators"></div>
-
-  <!-- MODAL CHAT SUPERVISOR -> OPERADOR -->
-  <div id="modal-supervisor-chat" class="modal-overlay">
-    <div class="modal-content" style="width:500px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span id="sup-chat-title" style="font-weight:bold; color:var(--accent-cyan);">💬 COMUNICACIÓN DIRECTA CON OPERADOR</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
+    banner.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-weight:900; color:#00ffcc; letter-spacing:0.5px;">📢 MENSAJE DEL SUPERVISOR:</span>
+        <span id="btn-close-sup-banner" style="cursor:pointer; font-size:16px; color:#94a3b8; line-height:1;">✕</span>
       </div>
-      <div id="sup-chat-history" style="background:#060913; border:1px solid #1e293b; border-radius:6px; padding:10px; height:200px; overflow-y:auto; font-size:12px;"></div>
+      <div style="font-size:12px; line-height:1.4; color:#fde68a; font-weight:500;">
+        ${text}
+      </div>
       <div style="display:flex; gap:6px;">
-        <input type="text" id="input-msg-to-op" placeholder="Escribe un mensaje o advertencia directa..." style="flex:1; padding:8px; background:#0b132b; border:1px solid #3a506b; color:#fff; border-radius:6px; outline:none; font-size:12px;">
-        <button class="btn-action" style="background:#8b5cf6; color:#060913;" onclick="sendSupervisorMsg()">Enviar</button>
+        <input type="text" id="input-reply-sup" placeholder="Escribe tu respuesta al supervisor..." style="flex:1; padding:7px 10px; background:rgba(6,9,19,0.65); border:1px solid rgba(58,80,107,0.7); color:#fff; border-radius:6px; font-size:11px; outline:none;">
+        <button id="btn-reply-sup" style="background:#8b5cf6; color:#060913; border:none; padding:7px 14px; border-radius:6px; font-weight:bold; cursor:pointer; font-size:11px;">Responder</button>
       </div>
-    </div>
-  </div>
+    `;
 
-  <div id="modal-fines" class="modal-overlay">
-    <div class="modal-content">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:var(--accent-gold);">💰 HISTORIAL DE MULTAS GENERADAS ($10.000 COP)</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
-      </div>
-      <div id="fines-list-container" style="overflow-y:auto; flex:1;"></div>
-    </div>
-  </div>
+    document.body.appendChild(banner);
 
-  <div id="modal-alerts-hub" class="modal-overlay">
-    <div class="modal-content">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:var(--accent-cyan);">🚨 ALERTAS EN VIVO</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
-      </div>
-      <div id="alerts-hub-list" style="overflow-y:auto; flex:1;"></div>
-    </div>
-  </div>
+    document.getElementById('btn-close-sup-banner').onclick = () => {
+      seenSupervisorMessageIds.add(messageId);
+      persistSeenSupervisorMessages();
+      banner.remove();
+    };
 
-  <div id="modal-chats" class="modal-overlay">
-    <div class="modal-content">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:var(--accent-cyan);">📄 HISTORIAL DE CHATS</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
-      </div>
-      <div id="chat-audits-list" style="overflow-y:auto; flex:1;"></div>
-    </div>
-  </div>
+    document.getElementById('btn-reply-sup').onclick = async () => {
+      const input = document.getElementById('input-reply-sup');
+      const replyText = input.value.trim();
+      if (!replyText) return;
 
-  <div id="modal-banned" class="modal-overlay">
-    <div class="modal-content" style="width:550px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:var(--accent-cyan);">🛡️ PALABRAS PROHIBIDAS</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
-      </div>
-      <div style="display:flex; gap:8px;">
-        <input type="text" id="input-new-word" placeholder="Nueva palabra..." style="flex:1; padding:8px; background:#060913; border:1px solid #3a506b; color:#fff; border-radius:6px;">
-        <button class="btn-action" style="background:#10b981; color:#000;" onclick="addBannedWord()">+ Agregar</button>
-      </div>
-      <div id="banned-words-list" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;"></div>
-    </div>
-  </div>
-
-  <script>
-    const API_URL = window.location.origin;
-    let activeChatOperator = '';
-    let supChatPollingInterval = null;
-    let globalAuditsList = [];
-
-    async function fetchLive() {
-      try {
-        const res = await fetch(\`\${API_URL}/api/telemetry/live\`);
-        const data = await res.json();
-        document.getElementById('operators-grid').innerHTML = (data.operators || []).map(op => \`
-          <div class="operator-card">
-            <div>
-              <div style="display:flex; justify-content:space-between; font-weight:bold; border-bottom:1px solid #1e293b; padding-bottom:6px; margin-bottom:8px;">
-                <span>👤 \${op.operatorName} (\${op.profiles.length} Perfiles)</span>
-                <span style="font-size:10px; color:#38bdf8;">\${op.shift}</span>
-              </div>
-              \${op.profiles.map(p => {
-                const timersHtml = (p.activeChatTimersList || []).map(t => {
-                  const min = Math.floor(t.remaining / 60);
-                  const sec = t.remaining % 60;
-                  const timeStr = \`\${min < 10 ? '0' : ''}\${min}:\${sec < 10 ? '0' : ''}\${sec}\`;
-                  return \`<span class="live-chat-timer-badge \${t.isExpired ? 'timer-expired' : 'timer-ok'}">💬 \${t.contact}: \${t.isExpired ? '00:00 (VENCIDO)' : timeStr}</span>\`;
-                }).join('');
-
-                let trackingHtml = '';
-                if (p.prospectingProgress) {
-                  const pr = p.prospectingProgress;
-                  const min = Math.floor(pr.remainingSeconds / 60);
-                  const sec = pr.remainingSeconds % 60;
-                  const timeStr = \`\${min < 10 ? '0' : ''}\${min}:\${sec < 10 ? '0' : ''}\${sec}\`;
-                  trackingHtml = pr.isCompleted
-                    ? \`<div style="font-size:10px; font-weight:bold; color:#10b981; margin-top:4px;">🎯 Seguimiento: OK [\${pr.count}/\${pr.quota}]</div>\`
-                    : \`<div style="font-size:10px; font-weight:bold; color:#f59e0b; margin-top:4px;">🎯 Seguimiento: \${timeStr} [\${pr.count}/\${pr.quota}]</div>\`;
-                }
-
-                return \`
-                  <div class="profile-live-box">
-                    <div style="display:flex; justify-content:space-between;">
-                      <span style="font-weight:bold; color:#00ffcc;">🎯 \${p.profileName}</span>
-                      <span style="font-size:11px; color:#38bdf8;">✉️ \${p.pendingReadLetters} cartas</span>
-                    </div>
-                    \${trackingHtml}
-                    \${timersHtml ? \`<div class="live-timers-container">\${timersHtml}</div>\` : \`<div style="font-size:10px; color:#10b981; margin-top:4px;">⏱️ Todos los chats al día</div>\`}
-                  </div>
-                \`;
-              }).join('')}
-            </div>
-            <button class="btn-chat-op" onclick="openSupervisorChat('\${op.operatorName}')">💬 Chatear con \${op.operatorName}</button>
-          </div>
-        \`).join('');
-        fetchFinesCount();
-        fetchAlertsCount();
-      } catch (e) {}
-    }
-
-    async function openSupervisorChat(operatorName) {
-      activeChatOperator = operatorName;
-      document.getElementById('sup-chat-title').innerText = \`💬 COMUNICACIÓN DIRECTA CON: \${operatorName.toUpperCase()}\`;
-      document.getElementById('modal-supervisor-chat').style.display = 'flex';
-      loadSupervisorChatHistory();
-
-      if (supChatPollingInterval) clearInterval(supChatPollingInterval);
-      supChatPollingInterval = setInterval(loadSupervisorChatHistory, 1500);
-    }
-
-    async function loadSupervisorChatHistory() {
-      if (!activeChatOperator) return;
-      try {
-        const res = await fetch(\`\${API_URL}/api/supervisor/messages/\${activeChatOperator}\`);
-        const data = await res.json();
-        const container = document.getElementById('sup-chat-history');
-        if (!data.messages || data.messages.length === 0) {
-          container.innerHTML = '<p style="color:#64748b;">No hay mensajes previos. Escribe para llamar la atención del operador.</p>';
-          return;
-        }
-        container.innerHTML = data.messages.map(m => \`
-          <div style="margin-bottom:6px; text-align:\${m.sender === 'SUPERVISOR' ? 'right' : 'left'};">
-            <span style="background:\${m.sender === 'SUPERVISOR' ? '#1e1b4b' : '#064e3b'}; border:1px solid \${m.sender === 'SUPERVISOR' ? '#8b5cf6' : '#10b981'}; padding:4px 8px; border-radius:6px; display:inline-block; font-size:11px;">
-              <b>\${m.sender}:</b> \${m.text}
-            </span>
-          </div>
-        \`).join('');
-        container.scrollTop = container.scrollHeight;
-      } catch (e) {}
-    }
-
-    async function sendSupervisorMsg() {
-      const input = document.getElementById('input-msg-to-op');
-      const text = input.value.trim();
-      if (!text || !activeChatOperator) return;
-
-      await fetch(\`\${API_URL}/api/supervisor/send-message\`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ operatorName: activeChatOperator, text })
-      });
-
-      input.value = '';
-      loadSupervisorChatHistory();
-    }
-
-    document.addEventListener('DOMContentLoaded', () => {
-      const supInput = document.getElementById('input-msg-to-op');
-      if (supInput) {
-        supInput.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') sendSupervisorMsg();
-        });
-      }
-    });
-
-    async function openChatAuditsModal() {
-      document.getElementById('modal-chats').style.display = 'flex';
-      const res = await fetch(\`\${API_URL}/api/chats/audits\`);
-      const data = await res.json();
-      globalAuditsList = data.audits || [];
-      const container = document.getElementById('chat-audits-list');
-      if (!data.audits || data.audits.length === 0) {
-        container.innerHTML = '<p style="color:#94a3b8;">No hay conversaciones en Supabase aún. Presiona ⚡ en Talkytimes.</p>';
-        return;
-      }
-      container.innerHTML = data.audits.map((a, index) => \`
-        <div style="background:#060913; border:1px solid #1e293b; border-radius:6px; padding:12px; margin-bottom:10px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <span style="font-weight:bold; color:var(--accent-cyan);">👤 Op: \${a.operator} | 🎯 Perfil: \${a.profile} | 💬 Cliente: \${a.clientName} (ID: \${a.clientId})</span>
-            <div style="display:flex; gap:6px;">
-              <button class="btn-action" style="background:#1e1b4b; border-color:#8b5cf6; color:#c4b5fd;" onclick="runAiAnalysisByIndex(\${index})">🔍 Analizar Conversación</button>
-              <a href="data:text/markdown;charset=utf-8,\${encodeURIComponent(a.markdown)}" download="chat_\${a.profile}_\${a.clientId}.md" class="btn-action" style="text-decoration:none;">📥 Descargar .MD</a>
-            </div>
-          </div>
-          <div id="ai-box-\${index}"></div>
-          <div class="chat-transcript" id="transcript-\${index}">\${a.markdown}</div>
-        </div>
-      \`).join('');
-    }
-
-    async function runAiAnalysisByIndex(index) {
-      const audit = globalAuditsList[index];
-      if (!audit) return;
-
-      const box = document.getElementById('ai-box-' + index);
-      box.innerHTML = '<p style="color:#c4b5fd; font-size:12px; margin:8px 0;">🤖 Analizando diálogo con IA en busca de infracciones...</p>';
+      seenSupervisorMessageIds.add(messageId);
+      persistSeenSupervisorMessages();
 
       try {
-        const res = await fetch(\`\${API_URL}/api/chats/analyze-single\`, {
+        await fetch(`${API_URL}/api/operator/reply-message`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            operator: audit.operator,
-            profile: audit.profile,
-            clientName: audit.clientName,
-            clientId: audit.clientId,
-            markdown: audit.markdown
+            operatorName: sessionData.operator,
+            text: replyText
           })
         });
-        const data = await res.json();
-        const r = data.aiReport;
-        const isGood = r.score >= 70;
+        banner.remove();
+      } catch (e) {
+        banner.remove();
+      }
+    };
+  }
 
-        box.innerHTML = \`
-          <div style="background:#0b132b; border:1px solid #8b5cf6; border-radius:8px; padding:12px; margin-top:8px;">
-            <div style="font-weight:bold; font-size:13px; color:\${isGood ? '#34d399' : '#f87171'}; margin-bottom:4px;">🎯 Puntaje: \${r.score}/100 [Riesgo: \${r.riskLevel}]</div>
-            <div style="font-size:11px; margin-bottom:4px;"><b>🧠 Diagnóstico:</b> \${r.diagnosis}</div>
-            <div style="font-size:11px; color:#38bdf8; margin-bottom:6px;"><b>📋 Recomendación:</b> \${r.recommendation}</div>
-            \${r.findings.map(f => \`
-              <div style="background:rgba(239,68,68,0.15); border-left:3px solid #ef4444; padding:6px; border-radius:4px; font-size:11px; margin-bottom:4px; color:#fca5a5;">
-                <b>\${f.title}:</b> \${f.description}
-              </div>
-            \`).join('')}
-          </div>
-        \`;
-      } catch (err) {
-        box.innerHTML = '<p style="color:#ef4444;">Error al procesar el análisis de IA.</p>';
+  // 6. EVALUADOR DEL CICLO DE SEGUIMIENTO (30 MINUTOS)
+  function evaluateProspectingCycle() {
+    const elapsed = Math.floor((Date.now() - prospectingCycleStartTime) / 1000);
+    const remaining = Math.max(0, PROSPECTING_CYCLE_DURATION - elapsed);
+
+    if (elapsed >= PROSPECTING_CYCLE_DURATION) {
+      prospectingCycleStartTime = Date.now();
+      prospectingCount = 0;
+      cycleInteractedUsersSet.clear();
+      persistProspectingState();
+    }
+
+    if (prospectingCount < PROSPECTING_MIN_QUOTA && (remaining === 300 || remaining === 180)) {
+      showNonInvasiveTrackingToast(Math.floor(remaining / 60), prospectingCount, PROSPECTING_MIN_QUOTA);
+    }
+
+    const min = Math.floor(remaining / 60);
+    const sec = remaining % 60;
+    return {
+      formattedTime: `${min < 10 ? '0' : ''}${min}:${sec < 10 ? '0' : ''}${sec}`,
+      count: prospectingCount,
+      quota: PROSPECTING_MIN_QUOTA,
+      isCompleted: prospectingCount >= PROSPECTING_MIN_QUOTA,
+      remainingSeconds: remaining
+    };
+  }
+
+  function showNonInvasiveTrackingToast(remainingMinutes, count, quota) {
+    const toastId = 'ryr-tracking-toast';
+    if (document.getElementById(toastId)) return;
+
+    const toast = document.createElement('div');
+    toast.id = toastId;
+    toast.style.cssText = `
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: rgba(30, 27, 75, 0.9);
+      backdrop-filter: blur(12px);
+      border: 2px solid #8b5cf6;
+      color: #f87171;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 12px;
+      z-index: 2147483647;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.75);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-width: 320px;
+    `;
+
+    toast.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-weight:900; color:#00ffcc;">🎯 RECORDATORIO DE SEGUIMIENTO</span>
+        <span style="cursor:pointer; font-size:14px; color:#94a3b8;" onclick="this.parentElement.parentElement.remove()">✕</span>
+      </div>
+      <div>
+        Te quedan <b>${remainingMinutes} minutos</b> para completar tu cuota de tráfico (<b>${count}/${quota}</b>).
+      </div>
+      <div style="font-size:11px; color:#fde68a;">
+        💡 <i>Recuerda usar los filtros de búsqueda por países en Search para atraer usuarias de varios países.</i>
+      </div>
+      <a href="https://talkytimes.com/search" style="background:#8b5cf6; color:#060913; text-align:center; padding:6px; border-radius:4px; font-weight:bold; text-decoration:none; font-size:11px; margin-top:2px;">
+        🔍 Ir a Search y Filtrar Países
+      </a>
+    `;
+
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 12000);
+  }
+
+  // 7. SINCRONIZACIÓN CON EL SERVIDOR
+  async function syncServerKnownChats() {
+    if (!sessionData.profileName) return;
+    try {
+      const res = await fetch(`${API_URL}/api/chats/synced-ids?profile=${sessionData.profileName}`);
+      const data = await res.json();
+      if (data && Array.isArray(data.syncedIds)) {
+        data.syncedIds.forEach(id => syncedChatsMemory.add(String(id).trim().toLowerCase()));
+        persistSyncedChatsToStorage();
+      }
+    } catch (e) {}
+  }
+
+  async function syncBannedWords() {
+    try {
+      const res = await fetch(`${API_URL}/api/banned-words`);
+      const data = await res.json();
+      if (data && Array.isArray(data.words)) {
+        bannedRoots = Array.from(new Set([...bannedRoots, ...data.words.map(w => w.toLowerCase())]));
+      }
+    } catch (e) {}
+  }
+  syncBannedWords();
+  setInterval(syncBannedWords, 15000);
+
+  // 8. FIREWALL 100% BLINDADO
+  function checkViolationInText(text) {
+    const lower = text.toLowerCase();
+    return bannedRoots.some(root => lower.includes(root.toLowerCase()));
+  }
+
+  function enforceFirewall() {
+    const inputs = document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"]');
+    let anyViolation = false;
+
+    inputs.forEach(input => {
+      if (input.id?.includes('intel') || input.id?.includes('search')) return;
+      
+      const text = (input.value || input.innerText || '').trim();
+      const hasViolation = checkViolationInText(text);
+
+      if (hasViolation) {
+        anyViolation = true;
+        input.style.setProperty('border', '2px solid #ef4444', 'important');
+      } else {
+        if (input.style.borderColor === 'rgb(239, 68, 68)') {
+          input.style.removeProperty('border');
+        }
+      }
+    });
+
+    const sendButtons = document.querySelectorAll('button, [role="button"], div[class*="send"]');
+    sendButtons.forEach(btn => {
+      const btnText = btn.innerText.toLowerCase();
+      const isSendBtn = (btnText.includes('send') || btnText.includes('enviar') || btn.querySelector('svg') || (btn.className && btn.className.toLowerCase().includes('send'))) &&
+                        !btn.classList.contains('ryr-row-extract-btn') && 
+                        !btn.classList.contains('ryr-btn-logout') &&
+                        !btn.classList.contains('ryr-btn-intel');
+
+      if (isSendBtn) {
+        if (anyViolation) {
+          btn.classList.add('ryr-btn-blocked-force');
+          btn.disabled = true;
+          btn.setAttribute('disabled', 'true');
+          btn.style.setProperty('background-color', '#9ca3af', 'important');
+          btn.style.setProperty('background', '#9ca3af', 'important');
+          btn.style.setProperty('pointer-events', 'none', 'important');
+          btn.style.setProperty('cursor', 'not-allowed', 'important');
+          btn.style.setProperty('filter', 'grayscale(100%)', 'important');
+          btn.style.setProperty('opacity', '0.45', 'important');
+        } else {
+          btn.classList.remove('ryr-btn-blocked-force');
+          btn.disabled = false;
+          btn.removeAttribute('disabled');
+          btn.style.removeProperty('background-color');
+          btn.style.removeProperty('background');
+          btn.style.removeProperty('pointer-events');
+          btn.style.removeProperty('cursor');
+          btn.style.removeProperty('filter');
+          btn.style.removeProperty('opacity');
+        }
+      }
+    });
+
+    if (anyViolation) {
+      document.body.classList.add('ryr-firewall-blocked');
+    } else {
+      document.body.classList.remove('ryr-firewall-blocked');
+    }
+  }
+
+  ['input', 'keyup', 'keydown', 'paste', 'change'].forEach(evtType => {
+    document.addEventListener(evtType, enforceFirewall, true);
+  });
+
+  // 9. EXTRACTOR EXACTO DE NOMBRE Y DATOS
+  function sanitizeClientName(raw) {
+    if (!raw) return 'Cliente';
+    const clean = raw
+      .split('\n')[0]
+      .replace(/(\d+\s*(minute|hour|day|week|month)s?\s*ago|\ban hour ago\b|\d+\s*[✉💬]|\bonline\b|\btyping\b|\bSearch\b|\bMessages\b)/gi, '')
+      .replace(/\s+/g, ' ')
+      .replace(/^,\s*/, '')
+      .trim();
+
+    const noisyWords = ['yes', 'no', 'open', 'search', 'messages', 'mail', 'gifts', 'account', 'titan apex', 'mute', 'listened', 'public photos', 'my content'];
+    if (noisyWords.includes(clean.toLowerCase()) || clean.length < 2) {
+      return 'Cliente';
+    }
+    return clean;
+  }
+
+  function getExactClientProfileData() {
+    let clientName = '';
+    const chatTitleContainer = document.querySelector('div[data-test-id="dialog-header-title"], div[class*="dialog-header"], div[class*="chat-header"]');
+    if (chatTitleContainer) {
+      const candidates = chatTitleContainer.querySelectorAll('h1, h2, h3, span, div');
+      for (let c of candidates) {
+        const txt = c.innerText.trim();
+        const cleaned = sanitizeClientName(txt);
+        if (cleaned !== 'Cliente' && txt.length > 1 && !txt.includes('ago') && !txt.includes('Online')) {
+          clientName = cleaned;
+          break;
+        }
       }
     }
 
-    async function fetchFinesCount() {
-      try {
-        const res = await fetch(\`\${API_URL}/api/fines\`);
-        const data = await res.json();
-        document.getElementById('total-fines-count').innerText = data.fines ? data.fines.length : 0;
-      } catch (e) {}
+    if (!clientName) {
+      const activeTabItem = document.querySelector('div[class*="dialog-item"][class*="active"], div[class*="item-wrap"][class*="active"], div[data-selected="true"]');
+      if (activeTabItem) {
+        const firstLine = activeTabItem.innerText.split('\n')[0].trim();
+        const cleaned = sanitizeClientName(firstLine);
+        if (cleaned !== 'Cliente') clientName = cleaned;
+      }
     }
 
-    async function openFinesModal() {
-      document.getElementById('modal-fines').style.display = 'flex';
-      const res = await fetch(\`\${API_URL}/api/fines\`);
-      const data = await res.json();
-      const container = document.getElementById('fines-list-container');
-      if (!data.fines || data.fines.length === 0) {
-        container.innerHTML = '<p style="color:#10b981;">✅ No hay multas registradas en este turno.</p>';
+    let country = '';
+    let birthDate = '';
+    let maritalStatus = '';
+
+    const allPills = document.querySelectorAll('span, div, button, p');
+    allPills.forEach(el => {
+      if (el.children.length > 1) return;
+      const t = el.innerText.trim();
+
+      if (!country && /^(Canada|United States|Brazil|Australia|Poland|Hong Kong|Colombia|Mexico|Spain|Argentina|United Kingdom|Germany|Uruguay|Italy|Albania)/i.test(t)) {
+        country = t;
+      }
+      if (!birthDate && /([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})/i.test(t)) {
+        const m = t.match(/([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})/i);
+        if (m) birthDate = m[1];
+      }
+      if (!maritalStatus && /^(Widowed|Divorced|Single|Not Married|Married|Viudo|Viuda|Divorciado|Soltero|Soltera)$/i.test(t)) {
+        maritalStatus = t;
+      }
+    });
+
+    let ageText = '';
+    if (birthDate) {
+      const yearMatch = birthDate.match(/\d{4}/);
+      if (yearMatch) {
+        const age = new Date().getFullYear() - parseInt(yearMatch[0], 10);
+        ageText = `${age} años`;
+      }
+    }
+
+    return {
+      clientName: clientName || 'Ka, 51',
+      bioData: {
+        country: country || 'Brazil',
+        birthDate: birthDate ? `${birthDate} (${ageText || '51 años'})` : 'En perfil',
+        maritalStatus: maritalStatus || 'Not married / Soltera'
+      }
+    };
+  }
+
+  function getExactNumericClientId(targetUrl = window.location.href) {
+    const chatMatch = targetUrl.match(/chat\/\d+_(\d+)/);
+    if (chatMatch) return String(chatMatch[1]).trim();
+    const mailMatch = targetUrl.match(/mails\/view\/\d+_(\d+)/);
+    if (mailMatch) return String(mailMatch[1]).trim();
+    const userMatch = targetUrl.match(/user\/(\d+)/);
+    if (userMatch) return String(userMatch[1]).trim();
+    return '119678157';
+  }
+
+  // 10. RECOLECTOR BIDIRECCIONAL COMPLETO
+  function parseCurrentChatMessagesBidirectional(realClientName) {
+    const messages = [];
+    const seenSignatures = new Set();
+
+    const chatView = document.querySelector('div[class*="dialog-content"], div[class*="chat-scroll"], div[class*="main-chat"], div[class*="messages"]') || document.body;
+    const allLeafElements = chatView.querySelectorAll('div, p');
+
+    allLeafElements.forEach(node => {
+      if (node.querySelectorAll('div, p').length > 2) return;
+
+      const raw = node.innerText || '';
+      if (raw.includes('TITAN APEX') || raw.includes('Search') || (raw.includes('seen') && raw.length < 10) || raw.includes('View post')) return;
+
+      if (/^(today|yesterday|january|february|march|april|may|june|july|august|september|october|november|december)\s*\d{0,2}$/i.test(raw.trim())) {
         return;
       }
-      container.innerHTML = data.fines.map(f => \`
-        <div style="background:#060913; border:1px solid #f59e0b; border-radius:6px; padding:10px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
-          <div>
-            <div style="font-weight:bold; color:#fde68a;">👤 \${f.operator_name} [\${f.shift}] - 🎯 \${f.profile_name}</div>
-            <div style="font-size:11px; color:#94a3b8;">Cliente: \${f.client_name} | Motivo: \${f.reason}</div>
-            <div style="font-size:9px; color:#64748b;">\${new Date(f.created_at).toLocaleString()}</div>
-          </div>
-          <div style="font-size:14px; font-weight:900; color:#ef4444;">-\$\${Number(f.amount).toLocaleString('es-CO')} COP</div>
-        </div>
-      \`).join('');
+
+      const timeMatch = raw.match(/\b\d{1,2}:\d{2}\s*(?:am|pm|a\.?\s*m\.?|p\.?\s*m\.?)\b/i);
+      const timeText = timeMatch ? timeMatch[0] : '';
+
+      let cleanText = raw
+        .replace(/(?:You:|Tú:|Tu:|Você:)/gi, '')
+        .replace(/\b\d{1,2}:\d{2}\s*(?:am|pm|a\.?\s*m\.?|p\.?\s*m\.?)\b/gi, '')
+        .replace(/\bseen\b/gi, '')
+        .replace(/\bView post\b/gi, '')
+        .replace(/\bShow original\b/gi, '')
+        .trim();
+
+      if (!cleanText || cleanText.length < 1) return;
+
+      const hasCheck = node.querySelector('svg[class*="check"], [class*="status-sent"]') !== null || 
+                       node.innerHTML.includes('polyline') || 
+                       node.innerHTML.includes('check') || 
+                       raw.includes('✔');
+
+      const hasOperatorPrefix = /(?:you:|tú:|tu:|você:)/i.test(raw);
+      
+      const bgColor = window.getComputedStyle(node).backgroundColor;
+      const isCreamBubble = bgColor.includes('254, 249') || bgColor.includes('254, 240') || bgColor.includes('255, 251') || bgColor.includes('224, 231');
+      const isRight = window.getComputedStyle(node).justifyContent === 'flex-end' || 
+                      window.getComputedStyle(node.parentElement || node).justifyContent === 'flex-end' ||
+                      node.className.includes('right') || 
+                      node.className.includes('out');
+
+      const isOperator = hasCheck || hasOperatorPrefix || isCreamBubble || isRight;
+      const signature = `${isOperator ? 'OP' : 'USER'}_${cleanText.substring(0, 40)}`;
+
+      if (!seenSignatures.has(signature)) {
+        seenSignatures.add(signature);
+        messages.push({
+          isOperator: Boolean(isOperator),
+          senderName: isOperator ? (sessionData.profileName || 'HORACIO') : realClientName,
+          time: timeText || 'Reciente',
+          text: cleanText
+        });
+      }
+    });
+
+    return messages;
+  }
+
+  function buildCurrentMarkdownTranscript(clientName, clientId, bioData) {
+    const messages = parseCurrentChatMessagesBidirectional(clientName);
+    
+    let mdLines = [
+      `# HISTORIAL DE CONVERSACIÓN | RYR TITAN AUDIT`,
+      `- **Operador:** ${sessionData.operator || 'walther'} [${sessionData.shift || 'Mañana'}]`,
+      `- **Perfil Asignado:** ${sessionData.profileName || 'HORACIO'} (ID: ${sessionData.profileId || '118179794'})`,
+      `- **Cliente:** ${clientName}`,
+      `- **ID del Usuario:** ${clientId}`,
+      `- **Ubicación:** ${bioData?.country || 'Brazil'} | **Nacimiento:** ${bioData?.birthDate || '51 años'}`,
+      `- **Fecha:** ${new Date().toLocaleString()}`,
+      `---`,
+      `### Diálogo Transcrito (Ambos Participantes):`
+    ];
+
+    messages.forEach(m => {
+      if (m.isOperator) {
+        mdLines.push(`- 💼 **${sessionData.profileName || 'HORACIO'} [Op: ${sessionData.operator}]** [${m.time}]: ${m.text}`);
+      } else {
+        mdLines.push(`- 👤 **${clientName} [Cliente]** [${m.time}]: ${m.text}`);
+      }
+    });
+
+    return mdLines.join('\n');
+  }
+
+  async function executeExtraction(clientNameParam, explicitNumericId, mode = 'RECENT', btnElement = null) {
+    let finalClientId = explicitNumericId;
+    if (!finalClientId || finalClientId === 'N/A' || isNaN(finalClientId)) {
+      finalClientId = getExactNumericClientId();
     }
 
-    async function fetchAlertsCount() {
-      try {
-        const res = await fetch(\`\${API_URL}/api/alerts/live\`);
-        const data = await res.json();
-        document.getElementById('count-behavior-alerts').innerText = data.alerts ? data.alerts.length : 0;
-      } catch (e) {}
-    }
+    const { clientName, bioData } = getExactClientProfileData();
+    const finalClientName = (clientNameParam && !['Search', 'Cliente'].includes(clientNameParam)) ? sanitizeClientName(clientNameParam) : clientName;
 
-    async function openAlertsCenterModal() {
-      document.getElementById('modal-alerts-hub').style.display = 'flex';
-      const res = await fetch(\`\${API_URL}/api/alerts/live\`);
+    if (btnElement) btnElement.innerText = '⏳';
+
+    const messages = parseCurrentChatMessagesBidirectional(finalClientName);
+    const targetMessages = mode === 'RECENT' ? messages.slice(-100) : messages;
+    const markdownDoc = buildCurrentMarkdownTranscript(finalClientName, finalClientId, bioData);
+
+    try {
+      const res = await fetch(`${API_URL}/api/chats/audit-deep`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operator: sessionData.operator,
+          profile: sessionData.profileName || 'HORACIO',
+          clientName: finalClientName,
+          clientId: String(finalClientId).trim(),
+          bioData: bioData,
+          markdown: markdownDoc,
+          messages: targetMessages
+        })
+      });
+
       const data = await res.json();
-      const container = document.getElementById('alerts-hub-list');
-      if (!data.alerts || data.alerts.length === 0) {
-        container.innerHTML = '<p style="color:#10b981;">✅ No hay alertas de conducta ni Travel Misleading pendientes.</p>';
+      if (data.success) {
+        syncedChatsMemory.add(String(finalClientId).trim().toLowerCase());
+        syncedChatsMemory.add(finalClientName.toLowerCase());
+        persistSyncedChatsToStorage();
+      }
+
+      if (btnElement) {
+        btnElement.style.setProperty('background', '#334155', 'important');
+        btnElement.style.setProperty('color', '#94a3b8', 'important');
+        btnElement.innerText = '⚡';
+      }
+
+      loadActiveDossier();
+    } catch (err) {
+      if (btnElement) {
+        btnElement.style.setProperty('background', '#1d4ed8', 'important');
+        btnElement.style.setProperty('color', '#ffffff', 'important');
+        btnElement.innerText = '⚡';
+      }
+    }
+  }
+
+  // 11. CONTROL DE FILAS Y CANDADO ESTRICTO DE 💬 0 (SIN CRONÓMETRO SI NO HAY MENSAJES)
+  function handleInboxTimersAndExtractionButtons() {
+    if (!isStorageLoaded) return;
+
+    // Detectar 💬 0 en la cabecera activa
+    const activeHeader = document.querySelector('div[data-test-id="dialog-header-title"], div[class*="dialog-header"], div[class*="chat-header"]');
+    const activeHeaderText = activeHeader ? activeHeader.innerText : '';
+    const openChatHasZeroCredits = /💬\s*0\b/i.test(activeHeaderText);
+
+    const openChatNumericId = getExactNumericClientId();
+    const openChatCleanName = getExactClientProfileData().clientName.toLowerCase();
+
+    const allMatches = document.querySelectorAll('div[data-test-id*="dialog-item"], div[class*="dialog-item"], div[class*="item-wrap"], .tab-content-item');
+
+    const rootRows = Array.from(allMatches).filter(el => {
+      return !el.parentElement.closest('div[data-test-id*="dialog-item"], div[class*="dialog-item"], div[class*="item-wrap"], .tab-content-item');
+    });
+
+    rootRows.forEach(row => {
+      const fullText = row.innerText || '';
+      if (fullText.length < 3) return;
+
+      const lines = fullText.split('\n').map(l => l.trim()).filter(Boolean);
+      const contactName = sanitizeClientName(lines[0]);
+      const cleanSimpleName = contactName.split(',')[0].trim().toLowerCase();
+      
+      let rowNumericId = 'N/A';
+      const userLink = row.querySelector('a[href*="/chat/"], a[href*="/user/"]');
+      if (userLink) {
+        const href = userLink.getAttribute('href');
+        rowNumericId = getExactNumericClientId(href);
+      }
+
+      row.style.position = 'relative';
+
+      const nameKey = `name_${cleanSimpleName.replace(/[^a-z0-9]/g, '')}`;
+      const idKey = (rowNumericId && rowNumericId !== 'N/A') ? `id_${rowNumericId}` : null;
+
+      // Purga de borradores
+      const allTextNodes = row.querySelectorAll('span, div, p, b');
+      allTextNodes.forEach(el => {
+        if (el.children.length === 0 && el.textContent.toLowerCase().includes('draft:')) {
+          el.textContent = '';
+          el.style.setProperty('display', 'none', 'important');
+          if (el.parentElement) el.parentElement.style.setProperty('display', 'none', 'important');
+        }
+      });
+
+      const isThisRowSynced = syncedChatsMemory.has(contactName.toLowerCase()) || 
+                              syncedChatsMemory.has(cleanSimpleName) ||
+                              (rowNumericId !== 'N/A' && syncedChatsMemory.has(rowNumericId.toLowerCase()));
+
+      let btnExtract = row.querySelector('.ryr-row-extract-btn');
+      if (!btnExtract) {
+        btnExtract = document.createElement('button');
+        btnExtract.className = 'ryr-row-extract-btn';
+        btnExtract.innerText = '⚡';
+        btnExtract.onclick = (e) => {
+          e.stopPropagation();
+          document.querySelectorAll('.ryr-extract-menu').forEach(m => m.remove());
+
+          const menu = document.createElement('div');
+          menu.className = 'ryr-extract-menu';
+          menu.innerHTML = `
+            <button id="btn-opt-100">📄 Últimos 100</button>
+            <button id="btn-opt-full">📜 Historial Completo (Día 1)</button>
+          `;
+
+          menu.querySelector('#btn-opt-100').onclick = (ev) => {
+            ev.stopPropagation();
+            menu.remove();
+            executeExtraction(contactName, rowNumericId, 'RECENT', btnExtract);
+          };
+
+          menu.querySelector('#btn-opt-full').onclick = (ev) => {
+            ev.stopPropagation();
+            menu.remove();
+            executeExtraction(contactName, rowNumericId, 'FULL', btnExtract);
+          };
+
+          row.appendChild(menu);
+
+          setTimeout(() => {
+            window.addEventListener('click', () => menu.remove(), { once: true });
+          }, 100);
+        };
+        row.appendChild(btnExtract);
+      }
+
+      if (isThisRowSynced) {
+        btnExtract.style.setProperty('background', '#334155', 'important');
+        btnExtract.style.setProperty('color', '#94a3b8', 'important');
+        btnExtract.style.setProperty('border', '1px solid #475569', 'important');
+        btnExtract.innerText = '⚡';
+      } else {
+        btnExtract.style.setProperty('background', '#1d4ed8', 'important');
+        btnExtract.style.setProperty('color', '#ffffff', 'important');
+        btnExtract.style.setProperty('border', '1px solid #60a5fa', 'important');
+        btnExtract.innerText = '⚡';
+      }
+
+      // EVALUACIÓN DE TEMPORIZADOR
+      const hasOperatorSent = /(?:you|tú|tu|você)\s*:/i.test(fullText) || 
+                              row.querySelector('svg[class*="check"]') !== null ||
+                              fullText.includes('✔');
+
+      const isTyping = fullText.toLowerCase().includes('typing') || row.querySelector('[class*="typing"]');
+      const isLiked = fullText.toLowerCase().includes('liked');
+
+      // CANDADO: Si la clienta tiene 💬 0 (como Ka, 51), NO poner cronómetro
+      const isThisActiveChatZero = openChatHasZeroCredits && (rowNumericId === openChatNumericId || cleanSimpleName === openChatCleanName);
+      const hasZeroMessagesInRow = /💬\s*0\b/i.test(fullText);
+
+      const isPendingClientMessage = (!hasOperatorSent && !isThisActiveChatZero && !hasZeroMessagesInRow) || isTyping || isLiked;
+
+      const existingTimer = row.querySelector('.ryr-inbox-timer');
+
+      if (!isPendingClientMessage) {
+        if (existingTimer) existingTimer.remove();
+        if (activeSlaTimers[nameKey] || (idKey && activeSlaTimers[idKey])) {
+          delete activeSlaTimers[nameKey];
+          if (idKey) delete activeSlaTimers[idKey];
+          persistTimersToStorage();
+          sendTelemetry(true);
+        }
         return;
       }
-      container.innerHTML = data.alerts.map(a => \`
-        <div style="background:#060913; border:1px solid #ef4444; border-radius:8px; padding:12px; margin-bottom:8px;" id="alert-item-\${a.id}">
-          <div style="display:flex; justify-content:space-between; font-weight:bold; color:#f87171;">
-            <span>\${a.category}</span>
-            <span style="font-size:11px; color:#94a3b8;">👤 \${a.operatorName} | 🎯 \${a.profileName} | 💬 \${a.clientName} (ID: \${a.clientId})</span>
-          </div>
-          <div style="margin:6px 0; color:#fca5a5; font-size:12px; background:rgba(239,68,68,0.1); padding:6px; border-left:3px solid #ef4444;">⚠️ \${a.snippet}</div>
-          <div class="chat-transcript">\${a.markdown}</div>
-          <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
-            <button class="btn-action" style="background:#064e3b; color:#34d399;" onclick="resolveAlert('\${a.id}')">✅ Atender / Resolver</button>
-            <button class="btn-action" style="background:#450a0a; color:#f87171;" onclick="dismissAlert('\${a.id}')">🗑️ Borrar</button>
-          </div>
+
+      // RECUPERAR TIMESTAMP INMUTABLE
+      let existingTimestamp = activeSlaTimers[nameKey] || (idKey ? activeSlaTimers[idKey] : null);
+
+      if (!existingTimestamp) {
+        existingTimestamp = Date.now();
+        activeSlaTimers[nameKey] = existingTimestamp;
+        if (idKey) activeSlaTimers[idKey] = existingTimestamp;
+        persistTimersToStorage();
+      } else {
+        activeSlaTimers[nameKey] = existingTimestamp;
+        if (idKey) activeSlaTimers[idKey] = existingTimestamp;
+      }
+
+      const elapsedSeconds = Math.floor((Date.now() - existingTimestamp) / 1000);
+      const remainingSeconds = Math.max(0, 120 - elapsedSeconds);
+
+      const min = Math.floor(remainingSeconds / 60);
+      const sec = remainingSeconds % 60;
+      const formatted = `${min < 10 ? '0' : ''}${min}:${sec < 10 ? '0' : ''}${sec}`;
+
+      let badge = existingTimer;
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'ryr-inbox-timer';
+        row.appendChild(badge);
+      }
+
+      if (remainingSeconds > 60) {
+        badge.className = 'ryr-inbox-timer ryr-timer-green';
+        badge.innerText = `⏱️ ${formatted}`;
+      } else if (remainingSeconds > 0) {
+        badge.className = 'ryr-inbox-timer ryr-timer-orange';
+        badge.innerText = `⚠️ ${formatted}`;
+      } else {
+        badge.className = 'ryr-inbox-timer ryr-timer-red';
+        badge.innerText = `🚨 00:00`;
+
+        if (!finedTimerKeys.has(nameKey)) {
+          finedTimerKeys.add(nameKey);
+          triggerAutomaticFine(contactName, rowNumericId);
+        }
+      }
+    });
+  }
+
+  async function triggerAutomaticFine(clientName, clientId) {
+    showFineAlertBanner(clientName);
+    try {
+      await fetch(`${API_URL}/api/fines/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operator: sessionData.operator || 'walther',
+          shift: sessionData.shift || 'Mañana',
+          profile: sessionData.profileName || 'HORACIO',
+          clientName: clientName,
+          clientId: clientId,
+          reason: `Demora mayor a 2 minutos en responder a ${clientName}`
+        })
+      });
+    } catch (e) {}
+    sendTelemetry(true);
+  }
+
+  function showFineAlertBanner(clientName) {
+    const existing = document.getElementById('ryr-fine-toast');
+    if (existing) existing.remove();
+
+    const toast = document.createElement('div');
+    toast.id = 'ryr-fine-toast';
+    toast.style.cssText = 'position:fixed; bottom:20px; left:20px; background:#450a0a; border:2px solid #ef4444; color:#f87171; padding:12px 18px; border-radius:8px; font-weight:bold; font-size:13px; z-index:2147483647; box-shadow:0 6px 25px rgba(239,68,68,0.6); animation:ryr-pulse 1s infinite; font-family:system-ui,sans-serif;';
+    toast.innerHTML = `🚨 MULTA DE $10.000 COP GENERADA<br><span style="font-size:11px; color:#fca5a5; font-weight:normal;">Superaste los 2 minutos sin responder a <b>${clientName}</b>.</span>`;
+    document.body.appendChild(toast);
+
+    setTimeout(() => toast.remove(), 8000);
+  }
+
+  // 12. PANEL DE INTELIGENCIA DE USUARIOS
+  function injectIntelPanel() {
+    if (document.getElementById('ryr-intel-panel')) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'ryr-intel-panel';
+    panel.innerHTML = `
+      <div class="intel-header">
+        <span>🧠 ASISTENTE IA & ESTRATEGA DE CHAT</span>
+        <button id="ryr-close-intel" style="background:none; border:none; color:#fff; font-size:16px; cursor:pointer;">✕</button>
+      </div>
+      <div class="intel-body">
+        <div id="intel-dossier-box" class="intel-dossier">
+          <p style="color:#94a3b8;">Abre un chat para ver el expediente...</p>
         </div>
-      \`).join('');
-    }
+        
+        <div class="intel-quick-actions">
+          <button class="intel-quick-btn" onclick="window.sendQuickPrompt('de donde es')">📍 Ubicación</button>
+          <button class="intel-quick-btn" onclick="window.sendQuickPrompt('cuantos años tiene')">🎂 Edad</button>
+          <button class="intel-quick-btn" onclick="window.sendQuickPrompt('dame un mensaje para enamorarla')">💌 Mensaje</button>
+        </div>
 
-    async function resolveAlert(id) { await fetch(\`\${API_URL}/api/alerts/\${id}/resolve\`, { method: 'POST' }); document.getElementById('alert-item-' + id)?.remove(); fetchAlertsCount(); }
-    async function dismissAlert(id) { await fetch(\`\${API_URL}/api/alerts/\${id}/dismiss\`, { method: 'POST' }); document.getElementById('alert-item-' + id)?.remove(); fetchAlertsCount(); }
+        <div id="intel-messages-stream" class="intel-chat-stream">
+          <div class="chat-bubble-ai">👋 ¡Hola! Soy tu Co-Piloto. Pregúntame sobre la clienta o pídeme mensajes de ataque y conquista personalizados.</div>
+        </div>
+      </div>
+      <div class="intel-input-box">
+        <input type="text" id="input-intel-query" placeholder="Pregunta algo o pide un mensaje...">
+        <button id="btn-send-intel-query">Consultar</button>
+      </div>
+    `;
 
-    async function openBannedWordsModal() {
-      document.getElementById('modal-banned').style.display = 'flex';
-      const res = await fetch(\`\${API_URL}/api/banned-words\`);
+    document.body.appendChild(panel);
+
+    document.getElementById('ryr-close-intel').onclick = () => {
+      panel.classList.remove('open');
+    };
+
+    window.sendQuickPrompt = (promptText) => {
+      document.getElementById('input-intel-query').value = promptText;
+      askIntelligenceQuery();
+    };
+
+    document.getElementById('btn-send-intel-query').onclick = askIntelligenceQuery;
+    document.getElementById('input-intel-query').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') askIntelligenceQuery();
+    });
+  }
+
+  async function askIntelligenceQuery() {
+    const input = document.getElementById('input-intel-query');
+    const query = input.value.trim();
+    if (!query) return;
+
+    const stream = document.getElementById('intel-messages-stream');
+
+    const userBubble = document.createElement('div');
+    userBubble.className = 'chat-bubble-user';
+    userBubble.innerText = query;
+    stream.appendChild(userBubble);
+    input.value = '';
+
+    const aiBubble = document.createElement('div');
+    aiBubble.className = 'chat-bubble-ai';
+    aiBubble.innerText = '🤖 Analizando en tiempo real...';
+    stream.appendChild(aiBubble);
+    stream.scrollTop = stream.scrollHeight;
+
+    const { clientName, bioData } = getExactClientProfileData();
+    const clientId = getExactNumericClientId();
+    const liveMarkdown = buildCurrentMarkdownTranscript(clientName, clientId, bioData);
+
+    try {
+      const res = await fetch(`${API_URL}/api/intelligence/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: query,
+          clientName: clientName,
+          profileName: sessionData.profileName,
+          clientId: clientId,
+          bioData: bioData,
+          liveMarkdown: liveMarkdown
+        })
+      });
       const data = await res.json();
-      document.getElementById('banned-words-list').innerHTML = (data.words || []).map(w => \`
-        <div style="background:#1c2541; border:1px solid #ef4444; color:#fca5a5; padding:3px 6px; border-radius:4px; font-size:11px;">
-          \${w} <span style="cursor:pointer; font-weight:bold; margin-left:4px;" onclick="delWord('\${w}')">✕</span>
-        </div>\`).join('');
+      const rawAnswer = data.answer || 'No se pudo generar respuesta.';
+
+      const englishMatch = rawAnswer.match(/"([^"]+)"/);
+      const englishToCopy = englishMatch ? englishMatch[1] : '';
+
+      aiBubble.innerHTML = `<div>${rawAnswer}</div>` + (englishToCopy ? `
+        <button class="copy-msg-btn" onclick="navigator.clipboard.writeText('${englishToCopy.replace(/'/g, "\\'")}'); this.innerText='✅ Copiado!'; setTimeout(()=>this.innerText='📋 Copiar Inglés', 1500);">
+          📋 Copiar Inglés
+        </button>
+      ` : '');
+
+      stream.scrollTop = stream.scrollHeight;
+    } catch (e) {
+      aiBubble.innerText = '⚠️ Error de conexión con el servidor.';
+    }
+  }
+
+  async function loadActiveDossier() {
+    const box = document.getElementById('intel-dossier-box');
+    const { clientName, bioData } = getExactClientProfileData();
+    const clientId = getExactNumericClientId();
+
+    if (!clientId || clientId === 'N/A') {
+      box.innerHTML = '<p style="color:#94a3b8;">Abre una conversación en Talkytimes para ver los datos del cliente.</p>';
+      return;
     }
 
-    async function addBannedWord() {
-      const word = document.getElementById('input-new-word').value.trim();
-      if (!word) return;
-      await fetch(\`\${API_URL}/api/banned-words\`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word }) });
-      document.getElementById('input-new-word').value = '';
-      openBannedWordsModal();
+    box.innerHTML = `
+      <div style="font-weight:bold; color:#00ffcc; margin-bottom:4px;">👤 ${clientName} (ID: ${clientId})</div>
+      <div>📍 <b>Ubicación:</b> ${bioData.country}</div>
+      <div>🎂 <b>Nacimiento:</b> ${bioData.birthDate}</div>
+      <div>💍 <b>Estado Civil:</b> ${bioData.maritalStatus}</div>
+    `;
+  }
+
+  // 13. CRAWLER DE ACTIVE LIMITS (SOLO CARTAS READ)
+  function countReadInDocument(targetDoc) {
+    if (!targetDoc) return { count: 0, names: [] };
+    let count = 0;
+    const names = [];
+
+    const mailRows = targetDoc.querySelectorAll('[data-test-id*="mail-box-item"], div[class*="wrt-G4Ni"]');
+
+    mailRows.forEach(row => {
+      const rowText = (row.innerText || '').toLowerCase();
+      if (rowText.includes('deactivated user')) return;
+
+      let isStrictlyRead = false;
+      let isUnread = false;
+
+      const allElements = row.querySelectorAll('span, div, button, a');
+      for (let el of allElements) {
+        const txt = el.innerText.trim().toLowerCase();
+        if (txt === 'unread' || txt === 'no leído' || txt === 'no leido') {
+          isUnread = true;
+          break;
+        } else if (txt === 'read' || txt === 'leído' || txt === 'leido') {
+          isStrictlyRead = true;
+        }
+      }
+
+      if (isStrictlyRead && !isUnread) {
+        count++;
+        const nameEl = row.querySelector('h1, h2, h3, h4, [class*="name"], b, strong');
+        const nameText = nameEl ? nameEl.innerText.trim() : (row.innerText || '').split('\n')[0].trim();
+        if (nameText && nameText.length > 1) {
+          names.push(nameText.split(',')[0].trim());
+        }
+      }
+    });
+
+    return { count, names };
+  }
+
+  async function runBackgroundPaginationCrawler() {
+    if (!window.location.href.includes('/mails/has_limits')) return;
+
+    const pageMatch = window.location.href.match(/has_limits\/all\/(\d+)/);
+    const currentPage = pageMatch ? parseInt(pageMatch[1], 10) : 1;
+    const currentDetails = countReadInDocument(document);
+
+    const paginationLinks = document.querySelectorAll('ul.pagination li a, ul.pagination li button, .pagination a, [class*="pagination"] a, [class*="pagination"] button');
+    let maxPage = 1;
+
+    paginationLinks.forEach(el => {
+      const txt = el.innerText.trim();
+      if (/^\d+$/.test(txt)) {
+        const num = parseInt(txt, 10);
+        if (num > maxPage && num <= 30) {
+          maxPage = num;
+        }
+      }
+    });
+
+    if (maxPage <= 1) {
+      totalGlobalReadLetters = currentDetails.count;
+      renderFloatingBar();
+      return;
     }
 
-    async function delWord(word) {
-      await fetch(\`\${API_URL}/api/banned-words/delete\`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word }) });
-      openBannedWordsModal();
+    const now = Date.now();
+    if (isCrawlerRunning || (now - lastCrawlerRunTime < 20000)) {
+      renderFloatingBar();
+      return;
     }
 
-    function closeModals() {
-      if (supChatPollingInterval) clearInterval(supChatPollingInterval);
-      document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none');
+    isCrawlerRunning = true;
+    lastCrawlerRunTime = now;
+
+    let crawlerIframe = document.getElementById('ryr-silent-crawler');
+    if (!crawlerIframe) {
+      crawlerIframe = document.createElement('iframe');
+      crawlerIframe.id = 'ryr-silent-crawler';
+      crawlerIframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:10px;height:10px;visibility:hidden;pointer-events:none;opacity:0;';
+      document.body.appendChild(crawlerIframe);
     }
 
-    setInterval(fetchLive, 2000);
-    fetchLive();
-  </script>
-</body>
-</html>`;
+    const pageReadCountsMap = new Map();
+    pageReadCountsMap.set(currentPage, currentDetails.count);
 
-app.get('/', (req, res) => res.send(DASHBOARD_HTML));
-app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
-app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
+    for (let p = 1; p <= maxPage; p++) {
+      if (p !== currentPage) {
+        await new Promise(resolve => {
+          crawlerIframe.src = `https://talkytimes.com/mails/has_limits/all/${p}`;
+          let attempts = 0;
+          const checkInterval = setInterval(() => {
+            attempts++;
+            try {
+              const iframeDoc = crawlerIframe.contentDocument || crawlerIframe.contentWindow?.document;
+              if (iframeDoc) {
+                const rows = iframeDoc.querySelectorAll('[data-test-id*="mail-box-item"], div[class*="wrt-G4Ni"]');
+                if (rows.length > 0 || attempts >= 15) {
+                  const pDetails = countReadInDocument(iframeDoc);
+                  pageReadCountsMap.set(p, pDetails.count);
+                  clearInterval(checkInterval);
+                  resolve();
+                }
+              }
+            } catch (err) {}
+            if (attempts >= 15) {
+              clearInterval(checkInterval);
+              resolve();
+            }
+          }, 100);
+        });
+      }
+    }
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V49.0 activo en puerto ${PORT}`));
+    let sum = 0;
+    for (let val of pageReadCountsMap.values()) sum += val;
+    totalGlobalReadLetters = sum;
+    isCrawlerRunning = false;
+    renderFloatingBar();
+  }
+
+  // 14. BARRA SUPERIOR
+  function renderFloatingBar() {
+    let bar = document.getElementById('ryr-titan-bar');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'ryr-titan-bar';
+      document.body.prepend(bar);
+    }
+
+    document.body.style.setProperty('margin-top', '38px', 'important');
+    bar.style.setProperty('z-index', '2147483647', 'important');
+
+    const idleSec = getIdleSeconds();
+    const isAfk = isOperatorAfk();
+    const afkText = isAfk ? `💤 INACTIVO (${Math.floor(idleSec / 60)}m)` : `⚡ Activo`;
+    const afkClass = isAfk ? 'ryr-badge-afk' : 'primary';
+
+    const prospect = evaluateProspectingCycle();
+    const prospectClass = prospect.isCompleted ? 'green-letters' : 'primary';
+    const prospectTimeText = prospect.isCompleted ? 'OK' : prospect.formattedTime;
+
+    bar.innerHTML = `
+      <div class="ryr-section">
+        <span class="ryr-dot"></span>
+        <span class="ryr-title">TITAN APEX</span>
+        <span class="ryr-badge primary">👤 ${sessionData.operator || 'walther'} [${sessionData.shift || 'Mañana'}]</span>
+        <span class="ryr-badge">🎯 ${sessionData.profileName || 'HORACIO'}</span>
+        <span class="ryr-badge ${afkClass}">${afkText}</span>
+        <span class="ryr-badge ${prospectClass}">🎯 Seguimiento: ${prospectTimeText} [${prospect.count}/${prospect.quota}]</span>
+        <button id="ryr-btn-open-intel" class="ryr-btn-intel">🧠 Investigar Usuario</button>
+      </div>
+      <div class="ryr-section">
+        <span class="ryr-badge green-letters">✉️ Cartas Pendientes (Read): ${totalGlobalReadLetters}</span>
+        <button id="ryr-btn-disconnect" class="ryr-btn-logout">🔴 Desconectar</button>
+      </div>
+    `;
+
+    const btnOpenIntel = document.getElementById('ryr-btn-open-intel');
+    if (btnOpenIntel) {
+      btnOpenIntel.onclick = () => {
+        const panel = document.getElementById('ryr-intel-panel');
+        if (panel) {
+          panel.classList.toggle('open');
+          loadActiveDossier();
+        }
+      };
+    }
+
+    const btnLogout = document.getElementById('ryr-btn-disconnect');
+    if (btnLogout) {
+      btnLogout.onclick = () => {
+        if (confirm('¿Deseas finalizar tu turno y desconectar el monitoreo?')) {
+          fetch(`${API_URL}/api/telemetry`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              operator: sessionData.operator,
+              shift: sessionData.shift,
+              profile: sessionData.profileName,
+              status: 'OFFLINE',
+              timestamp: Date.now()
+            })
+          }).catch(() => {});
+
+          if (isContextValid()) {
+            chrome.storage.local.set({ monitoringActive: false }, () => {
+              removeFloatingBar();
+            });
+          }
+        }
+      };
+    }
+  }
+
+  function removeFloatingBar() {
+    const bar = document.getElementById('ryr-titan-bar');
+    if (bar) bar.remove();
+    document.body.style.removeProperty('margin-top');
+    document.querySelectorAll('.ryr-inbox-timer, .ryr-row-extract-btn, .ryr-extract-menu').forEach(el => el.remove());
+    const panel = document.getElementById('ryr-intel-panel');
+    if (panel) panel.remove();
+    const crawler = document.getElementById('ryr-silent-crawler');
+    if (crawler) crawler.remove();
+  }
+
+  // 15. TELEMETRÍA (SEGUNDEROS DE CHATS EN VIVO CON AUTO-PURGA DE VENCIDOS)
+  let lastTelemetryTime = 0;
+  function sendTelemetry(isImmediateAlert = false) {
+    const now = Date.now();
+    if (isImmediateAlert && now - lastTelemetryTime < 250) return;
+    lastTelemetryTime = now;
+
+    const activeTimersList = [];
+    const processedKeys = new Set();
+
+    for (let [key, startTime] of Object.entries(activeSlaTimers)) {
+      const cleanName = key.replace(/^id_/, '').replace(/^name_/, '');
+
+      if (/deleted|eliminado|search|messages|cliente/i.test(cleanName)) {
+        delete activeSlaTimers[key];
+        persistTimersToStorage();
+        continue;
+      }
+
+      const elapsed = Math.floor((now - startTime) / 1000);
+
+      if (elapsed > 300) {
+        delete activeSlaTimers[key];
+        persistTimersToStorage();
+        continue;
+      }
+
+      if (processedKeys.has(cleanName)) continue;
+      processedKeys.add(cleanName);
+
+      const remaining = Math.max(0, 120 - elapsed);
+      activeTimersList.push({
+        contact: cleanName,
+        elapsed: elapsed,
+        remaining: remaining,
+        isExpired: elapsed >= 120
+      });
+    }
+
+    const prospect = evaluateProspectingCycle();
+
+    fetch(`${API_URL}/api/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        operator: sessionData.operator,
+        shift: sessionData.shift,
+        profile: sessionData.profileName,
+        profileId: sessionData.profileId,
+        pendingReadLetters: totalGlobalReadLetters,
+        unansweredChatsCount: activeTimersList.length,
+        hasExpiredSla: activeTimersList.some(t => t.isExpired),
+        activeChatTimersList: activeTimersList,
+        prospectingProgress: {
+          count: prospect.count,
+          quota: prospect.quota,
+          remainingSeconds: prospect.remainingSeconds,
+          isCompleted: prospect.isCompleted
+        },
+        isAfk: isOperatorAfk(),
+        idleSeconds: getIdleSeconds(),
+        timestamp: now
+      })
+    }).catch(() => {});
+  }
+
+  const mainLoop = setInterval(() => {
+    if (!isContextValid()) {
+      clearInterval(mainLoop);
+      return;
+    }
+    if (sessionData.monitoringActive) {
+      renderFloatingBar();
+      enforceFirewall();
+      handleInboxTimersAndExtractionButtons();
+      runBackgroundPaginationCrawler();
+    }
+  }, 1000);
+
+  const heartbeatLoop = setInterval(() => {
+    if (!isContextValid()) {
+      clearInterval(heartbeatLoop);
+      return;
+    }
+    if (sessionData.monitoringActive) {
+      sendTelemetry(false);
+      syncServerKnownChats();
+      checkSupervisorDirectMessages();
+    }
+  }, 2500);
+})();
