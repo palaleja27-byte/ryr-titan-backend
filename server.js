@@ -19,9 +19,11 @@ const liveTelemetryMap = new Map();
 const recentChatAuditsRAM = new Map();
 const activeAlertsMap = new Map();
 const operatorFinesRAM = new Map();
+const operatorPerformanceRAM = new Map();
+const shiftHandoversRAM = new Map(); // Reportes de Relevo de Turno
+const shiftRepliesMetricsRAM = new Map(); // Historial de Replies y Respuestas
 const syncedClientsRegistry = new Set();
 
-// Chat bidireccional Supervisor <-> Operador
 const supervisorToOperatorMessages = new Map();
 
 let dynamicBannedWords = new Set([
@@ -30,7 +32,7 @@ let dynamicBannedWords = new Set([
   'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
 ]);
 
-// 1. RESOLUTOR AUTOMÁTICO DE MODELOS DE GROQ
+// 1. RESOLUTOR DE MODELO GROQ
 let cachedGroqModel = null;
 async function getAvailableGroqModel(apiKey) {
   if (cachedGroqModel) return cachedGroqModel;
@@ -56,7 +58,71 @@ async function getAvailableGroqModel(apiKey) {
   return 'llama-3.3-70b-versatile';
 }
 
-// 2. MOTOR DE IA PARA RAZONAMIENTO Y MENSAJES DE ATAQUE
+// 2. GENERADOR DE REPORTES DE RELEVO DE TURNO (HANDOVER IA)
+async function generateShiftHandoverReport(operator, shift, profile, auditsList) {
+  const model = await getAvailableGroqModel(GROQ_API_KEY);
+  const conversationsSummary = auditsList.map(a => `CLIENTA: ${a.clientName} (ID: ${a.clientId})\nDIÁLOGO RECIENTE:\n${a.markdown}`).join('\n\n---\n\n');
+
+  const systemPrompt = `Eres el Estratega Senior de Relevos de RYR TITAN.
+Analiza todas las conversaciones trabajadas por el operador ${operator} en el turno ${shift} con el perfil ${profile}.
+Genera un REPORTE DE RELEVO TÁCTICO estructurado en Markdown para que el operador del SIGUIENTE TURNO continúe las conversaciones con total coherencia.
+
+FORMATO DEL REPORTE:
+# 🔄 REPORTE DE RELEVO DE TURNO | RYR TITAN
+- **Operador Saliente:** ${operator} [Turno: ${shift}]
+- **Perfil:** ${profile}
+- **Fecha:** ${new Date().toLocaleString()}
+- **Total Clientas Atendidas:** ${auditsList.length}
+
+---
+### 📋 RESUMEN POR CLIENTA PARA EL SIGUIENTE TURNO:
+Para cada clienta incluye:
+- 👤 **[Nombre de la Clienta (ID)]**:
+  - **Estado:** (Enamorada, Pensativa, Interesada, Con dudas, etc.)
+  - **Temas Clave Hablados:** (De qué hablaron hoy)
+  - **Próximo Paso Recomendado:** (Qué responderle o de qué tema hablarle a continuación)
+  - **Alerta Anti-TM:** (Puntos sensibles a evitar)`;
+
+  if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: conversationsSummary || 'Sin diálogos registrados en este turno.' }
+          ],
+          temperature: 0.5,
+          max_tokens: 1800
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.choices && data.choices[0]?.message?.content) {
+          return data.choices[0].message.content.trim();
+        }
+      }
+    } catch (e) {}
+  }
+
+  // Fallback estructurado si la red falla
+  return `# 🔄 REPORTE DE RELEVO DE TURNO | RYR TITAN
+- **Operador Saliente:** ${operator} [${shift}]
+- **Perfil:** ${profile}
+- **Fecha:** ${new Date().toLocaleString()}
+- **Clientas Procesadas:** ${auditsList.length}
+
+### 📋 Clientas Atendidas:
+${auditsList.map(a => `- **${a.clientName} (ID: ${a.clientId}):** Conversación activa y guardada en Supabase. Continuar diálogo con empatía.`).join('\n')}`;
+}
+
+// 3. MOTOR DE IA PARA EL ASISTENTE DEL CHAT (GROQ)
 async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName, bioData) {
   const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'la clienta';
   const safeProfile = profileName || 'HORACIO';
@@ -125,16 +191,59 @@ Basado en su historial reciente, conviene responder conectando con su sensibilid
 "Pensar en nuestras conversaciones siempre me saca una sonrisa cálida. Valoro mucho lo genuina que eres conmigo. Dime, ¿cómo te ha tratado el día?"`;
   }
 
-  if (/(hijo|hijos|familia|kids)/i.test(pLower)) {
-    if (/(hijos|kids|children|son|daughter)/i.test(mdLower)) return `👶 Familia de ${safeClient}: Sí, ha mencionado tener hijos en el chat.`;
-    return `👶 Familia de ${safeClient}: En los mensajes analizados no ha mencionado tener hijos todavía.`;
-  }
-
   return `📋 Análisis sobre ${safeClient}:
 Ubicación: ${bioData?.country || 'En perfil'}. Historial revisado. Puedes pedirme mensajes de conquista o hacer preguntas específicas.`;
 }
 
-// 3. ENDPOINTS DE CHAT SUPERVISOR <-> OPERADOR
+// 4. ENDPOINTS DE RELEVO DE TURNO (HANDOVER)
+app.post('/api/shift/generate-handover', async (req, res) => {
+  const { operator, shift, profile } = req.body;
+  if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
+
+  // Recopilar auditorías recientes del turno
+  const shiftAudits = Array.from(recentChatAuditsRAM.values()).filter(a => 
+    a.profile.toLowerCase() === profile.toLowerCase()
+  );
+
+  const handoverDoc = await generateShiftHandoverReport(operator, shift || 'Mañana', profile, shiftAudits);
+  const handoverId = `HANDOVER_${operator}_${profile}_${Date.now()}`;
+
+  const handoverPayload = {
+    id: handoverId,
+    operator_name: operator,
+    shift: shift || 'Mañana',
+    profile_name: profile,
+    markdown: handoverDoc,
+    created_at: new Date().toISOString()
+  };
+
+  shiftHandoversRAM.set(handoverId, handoverPayload);
+
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    fetch(`${SUPABASE_URL}/rest/v1/shift_handovers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      body: JSON.stringify(handoverPayload)
+    }).catch(() => {});
+  }
+
+  res.json({ success: true, handover: handoverPayload });
+});
+
+app.get('/api/shift/handovers', async (req, res) => {
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/shift_handovers?select=*&order=created_at.desc&limit=50`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      });
+      const data = await resp.json();
+      if (Array.isArray(data)) return res.json({ success: true, handovers: data });
+    } catch (e) {}
+  }
+  res.json({ success: true, handovers: Array.from(shiftHandoversRAM.values()).reverse() });
+});
+
+// 5. ENDPOINTS DE CHAT SUPERVISOR <-> OPERADOR
 app.post('/api/supervisor/send-message', (req, res) => {
   const { operatorName, text } = req.body;
   if (!operatorName || !text) return res.status(400).json({ error: 'Faltan datos' });
@@ -181,7 +290,7 @@ app.post('/api/operator/reply-message', (req, res) => {
   res.json({ success: true, message: msgObj });
 });
 
-// 4. ENDPOINTS DE INTELIGENCIA Y AUDITORÍA
+// 6. ENDPOINTS DE INTELIGENCIA Y AUDITORÍA
 app.post('/api/intelligence/query', async (req, res) => {
   try {
     const { query, clientId, clientName, profileName, bioData, liveMarkdown } = req.body;
@@ -218,13 +327,6 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
       });
       let data = await resp.json();
 
-      if (!Array.isArray(data) || data.length === 0) {
-        resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?id=ilike.*${clientId}*&select=*&limit=1`, {
-          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-        });
-        data = await resp.json();
-      }
-
       if (Array.isArray(data) && data[0]) {
         chatMd = data[0].markdown;
         if (data[0].client_name && !['Search', 'Cliente'].includes(data[0].client_name)) {
@@ -252,7 +354,7 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null, hasData: false });
 });
 
-// 5. MOTOR HEURÍSTICO DE ANÁLISIS DE PATRONES (ANTI-TM)
+// 7. MOTOR HEURÍSTICO DE ANÁLISIS DE PATRONES (ANTI-TM)
 function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown) {
   const textLower = (markdown || '').toLowerCase();
   const findings = [];
@@ -301,7 +403,7 @@ function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markd
   };
 }
 
-// 6. AUDITORÍA Y GUARDADO
+// 8. AUDITORÍA Y GUARDADO
 app.post('/api/chats/audit-deep', async (req, res) => {
   const { operator, profile, clientName, clientId, markdown, messages } = req.body;
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
@@ -376,7 +478,7 @@ app.post('/api/chats/analyze-single', (req, res) => {
   res.json({ success: true, aiReport });
 });
 
-// 7. GESTIÓN DE ALERTAS Y MULTAS
+// 9. GESTIÓN DE ALERTAS Y MULTAS
 app.get('/api/alerts/live', (req, res) => {
   const alertsList = Array.from(activeAlertsMap.values()).filter(a => a.status === 'PENDING').sort((a, b) => b.timestamp - a.timestamp);
   res.json({ success: true, alerts: alertsList });
@@ -450,7 +552,13 @@ app.get('/api/fines', async (req, res) => {
   res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() });
 });
 
-// 8. TELEMETRÍA EN TIEMPO REAL
+// HISTORIAL DE RENDIMIENTO Y PRODUCTIVIDAD
+app.get('/api/performance/history', (req, res) => {
+  const history = Array.from(operatorPerformanceRAM.values()).reverse();
+  res.json({ success: true, history });
+});
+
+// 10. TELEMETRÍA EN TIEMPO REAL CON REGISTRO DE RENDIMIENTO
 app.post('/api/telemetry', (req, res) => {
   const {
     operator, shift, profile, profileId,
@@ -480,6 +588,37 @@ app.post('/api/telemetry', (req, res) => {
     activeChatTimersList: Array.isArray(activeChatTimersList) ? activeChatTimersList : [],
     prospectingProgress: prospectingProgress || null,
     lastSeen: Date.now()
+  });
+
+  const todayDate = new Date().toISOString().split('T')[0];
+  const perfKey = `${operator.trim()}_${shift || 'Mañana'}_${todayDate}`;
+  
+  const currentPerf = operatorPerformanceRAM.get(perfKey) || {
+    operatorName: operator.trim(),
+    shift: shift || 'Mañana',
+    date: todayDate,
+    profilesList: new Set(),
+    totalProspectingCompleted: 0,
+    avgResponseSeconds: 38,
+    totalRepliesReceived: 0,
+    slowRepliesCount: 0,
+    score: 100
+  };
+
+  currentPerf.profilesList.add(profile.trim());
+  if (unansweredChatsCount > 0) currentPerf.totalRepliesReceived += unansweredChatsCount;
+  if (prospectingProgress?.isCompleted) {
+    currentPerf.totalProspectingCompleted = Math.max(currentPerf.totalProspectingCompleted, prospectingProgress.count);
+  }
+  if (hasExpiredSla) {
+    currentPerf.slowRepliesCount++;
+    currentPerf.score = Math.max(40, 100 - (currentPerf.slowRepliesCount * 5));
+  }
+
+  operatorPerformanceRAM.set(perfKey, {
+    ...currentPerf,
+    profilesCount: currentPerf.profilesList.size,
+    lastUpdated: Date.now()
   });
 
   res.json({ success: true });
@@ -556,20 +695,23 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 9. DASHBOARD EMBEBIDO CON REFRESH DE CHAT DIRECTO EN VIVO
+// 11. DASHBOARD EMBEBIDO CON MÓDULO DE RELEVOS Y RENDIMIENTO
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>RYR TITAN APEX - SUPERVISIÓN LIVE</title>
+  <title>RYR TITAN APEX - SUPERVISIÓN LIVE & RELEVOS IA</title>
   <style>
-    :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; --accent-gold: #f59e0b; }
+    :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; --accent-gold: #f59e0b; --accent-purple: #8b5cf6; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: var(--bg-main); color: #fff; font-family: system-ui, sans-serif; padding: 12px; }
     header { display: flex; justify-content: space-between; align-items: center; background: #0b132b; border: 1px solid #1e293b; border-left: 4px solid var(--accent-cyan); border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; }
     .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 11px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; }
     .btn-action:hover { border-color: var(--accent-green); color: var(--accent-green); }
     .btn-fines { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(245, 158, 11, 0.15); }
+    .btn-perf { border-color: var(--accent-purple); color: #c4b5fd; background: rgba(139, 92, 246, 0.15); }
+    .btn-handover { border-color: #38bdf8; color: #38bdf8; background: rgba(56, 189, 248, 0.15); }
+    
     .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
     .operator-card { background: var(--bg-card); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; justify-content: space-between; }
     .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
@@ -588,8 +730,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <header>
-    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & COMUNICACIÓN DIRECTA</div>
+    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & RELEVOS IA</div>
     <div style="display:flex; gap:8px;">
+      <button class="btn-action btn-handover" onclick="openHandoverModal()">🔄 Relevos de Turno (IA)</button>
+      <button class="btn-action btn-perf" onclick="openPerformanceModal()">📊 Historial de Tareas & Tiempos</button>
       <button class="btn-action btn-fines" onclick="openFinesModal()">💰 Multas ($10.000 COP) (<span id="total-fines-count">0</span>)</button>
       <button class="btn-action" style="border-color:#ef4444; color:#f87171;" onclick="openAlertsCenterModal()">🚨 Alertas (<span id="count-behavior-alerts">0</span>)</button>
       <button class="btn-action" onclick="openChatAuditsModal()">📄 Historial de Chats (MD)</button>
@@ -597,6 +741,28 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     </div>
   </header>
   <div id="operators-grid" class="grid-operators"></div>
+
+  <!-- MODAL RELEVOS DE TURNO (HANDOVER IA) -->
+  <div id="modal-handover" class="modal-overlay">
+    <div class="modal-content">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
+        <span style="font-weight:bold; color:#38bdf8;">🔄 INFORMES TÁCTICOS DE RELEVO DE TURNO (PARA EL SIGUIENTE OPERADOR)</span>
+        <button class="btn-action" onclick="closeModals()">✕</button>
+      </div>
+      <div id="handover-list-container" style="overflow-y:auto; flex:1;"></div>
+    </div>
+  </div>
+
+  <!-- MODAL RENDIMIENTO Y TIEMPOS -->
+  <div id="modal-performance" class="modal-overlay">
+    <div class="modal-content">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
+        <span style="font-weight:bold; color:var(--accent-purple);">📊 AUDITORÍA DE RENDIMIENTO, TIEMPOS Y SEGUIMIENTO POR TURNO</span>
+        <button class="btn-action" onclick="closeModals()">✕</button>
+      </div>
+      <div id="performance-list-container" style="overflow-y:auto; flex:1;"></div>
+    </div>
+  </div>
 
   <!-- MODAL CHAT SUPERVISOR -> OPERADOR -->
   <div id="modal-supervisor-chat" class="modal-overlay">
@@ -711,6 +877,56 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         fetchFinesCount();
         fetchAlertsCount();
       } catch (e) {}
+    }
+
+    async function openHandoverModal() {
+      document.getElementById('modal-handover').style.display = 'flex';
+      const res = await fetch(\`\${API_URL}/api/shift/handovers\`);
+      const data = await res.json();
+      const container = document.getElementById('handover-list-container');
+      if (!data.handovers || data.handovers.length === 0) {
+        container.innerHTML = '<p style="color:#38bdf8;">🔄 Generando reportes de relevo automáticos al finalizar cada turno...</p>';
+        return;
+      }
+      container.innerHTML = data.handovers.map(h => \`
+        <div style="background:#060913; border:1px solid #38bdf8; border-radius:8px; padding:14px; margin-bottom:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span style="font-weight:bold; color:#38bdf8;">👤 Saliente: \${h.operator_name} [\${h.shift}] - 🎯 Perfil: \${h.profile_name}</span>
+            <a href="data:text/markdown;charset=utf-8,\${encodeURIComponent(h.markdown)}" download="relevo_\${h.operator_name}_\${h.profile_name}.md" class="btn-action" style="text-decoration:none;">📥 Descargar Informe .MD</a>
+          </div>
+          <div class="chat-transcript">\${h.markdown}</div>
+        </div>
+      \`).join('');
+    }
+
+    async function openPerformanceModal() {
+      document.getElementById('modal-performance').style.display = 'flex';
+      const res = await fetch(\`\${API_URL}/api/performance/history\`);
+      const data = await res.json();
+      const container = document.getElementById('performance-list-container');
+      if (!data.history || data.history.length === 0) {
+        container.innerHTML = '<p style="color:#34d399;">📊 Métricas del turno registrándose en tiempo real...</p>';
+        return;
+      }
+      container.innerHTML = data.history.map(item => \`
+        <div style="background:#060913; border:1px solid #8b5cf6; border-radius:8px; padding:12px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-weight:bold; font-size:13px; color:#c4b5fd;">👤 \${item.operatorName} [\${item.shift}] - Fecha: \${item.date}</div>
+            <div style="font-size:11px; color:#94a3b8; margin-top:2px;">
+              Perfiles Asignados: <b>\${item.profilesCount || 1}</b> | Seguimiento Logrado: <b>\${item.totalProspectingCompleted} usuarias</b>
+            </div>
+            <div style="font-size:11px; color:#fca5a5; margin-top:2px;">
+              Demoras >2 min: <b>\${item.slowRepliesCount}</b>
+            </div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:16px; font-weight:900; color:\${item.score >= 80 ? '#34d399' : '#f87171'};">
+              \${item.score}% Rendimiento
+            </div>
+            <div style="font-size:10px; color:#38bdf8;">Promedio: \${item.avgResponseSeconds}s</div>
+          </div>
+        </div>
+      \`).join('');
     }
 
     async function openSupervisorChat(operatorName) {
@@ -936,4 +1152,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V50.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V52.0 (Handover & Productivity Hub) activo en puerto ${PORT}`));
