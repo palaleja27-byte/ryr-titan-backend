@@ -500,7 +500,7 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 6. DASHBOARD EMBEBIDO
+// 6. DASHBOARD EMBEBIDO CON MÓDULO DE PRODUCTIVIDAD BLINDADO
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -569,7 +569,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
             </tr>
           </thead>
           <tbody id="productivity-table-body">
-            <tr><td colspan="7" style="color:#64748b;">Cargando métricas...</td></tr>
+            <tr><td colspan="7" style="color:#64748b; text-align:center;">Cargando métricas...</td></tr>
           </tbody>
         </table>
       </div>
@@ -645,51 +645,51 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     async function fetchLive() {
       try {
-        const res = await fetch(\`\${API_URL}/api/telemetry/live\`);
+        const res = await fetch(API_URL + '/api/telemetry/live');
         const data = await res.json();
         cachedLiveOperators = data.operators || [];
         const grid = document.getElementById('operators-grid');
-        grid.innerHTML = cachedLiveOperators.map(op => \`
-          <div class="operator-card">
-            <div>
-              <div style="display:flex; justify-content:space-between; font-weight:bold; border-bottom:1px solid #1e293b; padding-bottom:6px; margin-bottom:8px;">
-                <span>👤 \${op.operatorName} (\${op.profiles.length} Perfiles)</span>
-                <span style="font-size:10px; color:#38bdf8;">\${op.shift}</span>
-              </div>
-              \${op.profiles.map(p => {
-                const timersHtml = (p.activeChatTimersList || []).map(t => {
-                  const min = Math.floor(t.remaining / 60);
-                  const sec = t.remaining % 60;
-                  const timeStr = \`\${min < 10 ? '0' : ''}\${min}:\${sec < 10 ? '0' : ''}\${sec}\`;
-                  return \`<span class="live-chat-timer-badge \${t.isExpired ? 'timer-expired' : 'timer-ok'}">💬 \${t.contact}: \${t.isExpired ? '00:00 (VENCIDO)' : timeStr}</span>\`;
-                }).join('');
+        grid.innerHTML = cachedLiveOperators.map(op => {
+          const profilesHtml = op.profiles.map(p => {
+            const timersHtml = (p.activeChatTimersList || []).map(t => {
+              const min = Math.floor(t.remaining / 60);
+              const sec = t.remaining % 60;
+              const timeStr = (min < 10 ? '0' : '') + min + ':' + (sec < 10 ? '0' : '') + sec;
+              return '<span class="live-chat-timer-badge ' + (t.isExpired ? 'timer-expired' : 'timer-ok') + '">💬 ' + t.contact + ': ' + (t.isExpired ? '00:00 (VENCIDO)' : timeStr) + '</span>';
+            }).join('');
 
-                let trackingHtml = '';
-                if (p.prospectingProgress) {
-                  const pr = p.prospectingProgress;
-                  const min = Math.floor(pr.remainingSeconds / 60);
-                  const sec = pr.remainingSeconds % 60;
-                  const timeStr = \`\${min < 10 ? '0' : ''}\${min}:\${sec < 10 ? '0' : ''}\${sec}\`;
-                  trackingHtml = pr.isCompleted
-                    ? \`<div style="font-size:10px; font-weight:bold; color:#10b981; margin-top:4px;">🎯 Seguimiento: OK [\${pr.count}/\${pr.quota}]</div>\`
-                    : \`<div style="font-size:10px; font-weight:bold; color:#f59e0b; margin-top:4px;">🎯 Seguimiento: \${timeStr} [\${pr.count}/\${pr.quota}]</div>\`;
-                }
+            let trackingHtml = '';
+            if (p.prospectingProgress) {
+              const pr = p.prospectingProgress;
+              const min = Math.floor(pr.remainingSeconds / 60);
+              const sec = pr.remainingSeconds % 60;
+              const timeStr = (min < 10 ? '0' : '') + min + ':' + (sec < 10 ? '0' : '') + sec;
+              trackingHtml = pr.isCompleted
+                ? '<div style="font-size:10px; font-weight:bold; color:#10b981; margin-top:4px;">🎯 Seguimiento: OK [' + pr.count + '/' + pr.quota + ']</div>'
+                : '<div style="font-size:10px; font-weight:bold; color:#f59e0b; margin-top:4px;">🎯 Seguimiento: ' + timeStr + ' [' + pr.count + '/' + pr.quota + ']</div>';
+            }
 
-                return \`
-                  <div class="profile-live-box">
-                    <div style="display:flex; justify-content:space-between;">
-                      <span style="font-weight:bold; color:#00ffcc;">🎯 \${p.profileName}</span>
-                      <span style="font-size:11px; color:#38bdf8;">✉️ \${p.pendingReadLetters} cartas</span>
-                    </div>
-                    \${trackingHtml}
-                    \${timersHtml ? \`<div class="live-timers-container">\${timersHtml}</div>\` : \`<div style="font-size:10px; color:#10b981; margin-top:4px;">⏱️ Todos los chats al día</div>\`}
-                  </div>
-                \`;
-              }).join('')}
-            </div>
-            <button class="btn-chat-op" onclick="openSupervisorChat('\${op.operatorName}')">💬 Chatear con \${op.operatorName}</button>
-          </div>
-        \`).join('');
+            return '<div class="profile-live-box">' +
+              '<div style="display:flex; justify-content:space-between;">' +
+                '<span style="font-weight:bold; color:#00ffcc;">🎯 ' + p.profileName + '</span>' +
+                '<span style="font-size:11px; color:#38bdf8;">✉️ ' + p.pendingReadLetters + ' cartas</span>' +
+              '</div>' +
+              trackingHtml +
+              (timersHtml ? '<div class="live-timers-container">' + timersHtml + '</div>' : '<div style="font-size:10px; color:#10b981; margin-top:4px;">⏱️ Todos los chats al día</div>') +
+            '</div>';
+          }).join('');
+
+          return '<div class="operator-card">' +
+            '<div>' +
+              '<div style="display:flex; justify-content:space-between; font-weight:bold; border-bottom:1px solid #1e293b; padding-bottom:6px; margin-bottom:8px;">' +
+                '<span>👤 ' + op.operatorName + ' (' + op.profiles.length + ' Perfiles)</span>' +
+                '<span style="font-size:10px; color:#38bdf8;">' + op.shift + '</span>' +
+              '</div>' +
+              profilesHtml +
+            '</div>' +
+            '<button class="btn-chat-op" onclick="openSupervisorChat(\'' + op.operatorName + '\')">💬 Chatear con ' + op.operatorName + '</button>' +
+          '</div>';
+        }).join('');
         fetchFinesCount();
         fetchHandoversCount();
       } catch (e) {}
@@ -708,26 +708,24 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         const unansweredChats = op.profiles.reduce((acc, p) => acc + (p.unansweredChatsCount || 0), 0);
         const trackingStatus = op.profiles.map(p => {
           if (!p.prospectingProgress) return 'N/A';
-          return `${p.profileName}: [${p.prospectingProgress.count}/${p.prospectingProgress.quota}]`;
+          return p.profileName + ': [' + p.prospectingProgress.count + '/' + p.prospectingProgress.quota + ']';
         }).join('<br>');
 
-        return `
-          <tr>
-            <td style="font-weight:bold; color:#fff;">👤 ${op.operatorName}</td>
-            <td><span style="color:#38bdf8;">${op.shift}</span></td>
-            <td style="color:#00ffcc;">${profileNames}</td>
-            <td style="color:#34d399; font-weight:bold;">${totalPending}</td>
-            <td style="color:${unansweredChats > 0 ? '#ef4444' : '#10b981'}; font-weight:bold;">${unansweredChats}</td>
-            <td style="font-size:11px;">${trackingStatus}</td>
-            <td>${op.isAfkGlobal ? '<span style="color:#a855f7;">💤 Inactivo</span>' : '<span style="color:#10b981;">⚡ Activo</span>'}</td>
-          </tr>
-        `;
+        return '<tr>' +
+          '<td style="font-weight:bold; color:#fff;">👤 ' + op.operatorName + '</td>' +
+          '<td><span style="color:#38bdf8;">' + op.shift + '</span></td>' +
+          '<td style="color:#00ffcc;">' + profileNames + '</td>' +
+          '<td style="color:#34d399; font-weight:bold;">' + totalPending + '</td>' +
+          '<td style="color:' + (unansweredChats > 0 ? '#ef4444' : '#10b981') + '; font-weight:bold;">' + unansweredChats + '</td>' +
+          '<td style="font-size:11px;">' + trackingStatus + '</td>' +
+          '<td>' + (op.isAfkGlobal ? '<span style="color:#a855f7;">💤 Inactivo</span>' : '<span style="color:#10b981;">⚡ Activo</span>') + '</td>' +
+        '</tr>';
       }).join('');
     }
 
     async function fetchHandoversCount() {
       try {
-        const res = await fetch(\`\${API_URL}/api/handover/all\`);
+        const res = await fetch(API_URL + '/api/handover/all');
         const data = await res.json();
         document.getElementById('total-handovers-count').innerText = data.handovers ? data.handovers.length : 0;
       } catch (e) {}
@@ -738,7 +736,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       const container = document.getElementById('handovers-list-container');
       container.innerHTML = '<p style="color:#c4b5fd;">Cargando relevos de turno...</p>';
 
-      const res = await fetch(\`\${API_URL}/api/handover/all\`);
+      const res = await fetch(API_URL + '/api/handover/all');
       const data = await res.json();
       const handovers = data.handovers || [];
 
@@ -747,17 +745,17 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         return;
       }
 
-      container.innerHTML = handovers.map(h => \`
-        <div style="background:#060913; border:1px solid #8b5cf6; border-radius:6px; padding:12px; margin-bottom:8px;">
-          <div style="font-size:11px; font-weight:bold; color:#c4b5fd; margin-bottom:4px;">👤 Entregado por: \${h.operator_name} [\${h.shift}] - Perfil: \${h.profile_name}</div>
-          <div class="chat-transcript">\${h.report_markdown || h.reportMarkdown}</div>
-        </div>
-      \`).join('');
+      container.innerHTML = handovers.map(h => {
+        return '<div style="background:#060913; border:1px solid #8b5cf6; border-radius:6px; padding:12px; margin-bottom:8px;">' +
+          '<div style="font-size:11px; font-weight:bold; color:#c4b5fd; margin-bottom:4px;">👤 Entregado por: ' + h.operator_name + ' [' + h.shift + '] - Perfil: ' + h.profile_name + '</div>' +
+          '<div class="chat-transcript">' + (h.report_markdown || h.reportMarkdown) + '</div>' +
+        '</div>';
+      }).join('');
     }
 
     async function openSupervisorChat(operatorName) {
       activeChatOperator = operatorName;
-      document.getElementById('sup-chat-title').innerText = \`💬 COMUNICACIÓN DIRECTA CON: \${operatorName.toUpperCase()}\`;
+      document.getElementById('sup-chat-title').innerText = '💬 COMUNICACIÓN DIRECTA CON: ' + operatorName.toUpperCase();
       document.getElementById('modal-supervisor-chat').style.display = 'flex';
       loadSupervisorChatHistory();
 
@@ -768,20 +766,20 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     async function loadSupervisorChatHistory() {
       if (!activeChatOperator) return;
       try {
-        const res = await fetch(\`\${API_URL}/api/supervisor/messages/\${activeChatOperator}\`);
+        const res = await fetch(API_URL + '/api/supervisor/messages/' + activeChatOperator);
         const data = await res.json();
         const container = document.getElementById('sup-chat-history');
         if (!data.messages || data.messages.length === 0) {
           container.innerHTML = '<p style="color:#64748b;">No hay mensajes previos. Escribe para llamar la atención del operador.</p>';
           return;
         }
-        container.innerHTML = data.messages.map(m => \`
-          <div style="margin-bottom:6px; text-align:\${m.sender === 'SUPERVISOR' ? 'right' : 'left'};">
-            <span style="background:\${m.sender === 'SUPERVISOR' ? '#1e1b4b' : '#064e3b'}; border:1px solid \${m.sender === 'SUPERVISOR' ? '#8b5cf6' : '#10b981'}; padding:4px 8px; border-radius:6px; display:inline-block; font-size:11px;">
-              <b>\${m.sender}:</b> \${m.text}
-            </span>
-          </div>
-        \`).join('');
+        container.innerHTML = data.messages.map(m => {
+          return '<div style="margin-bottom:6px; text-align:' + (m.sender === 'SUPERVISOR' ? 'right' : 'left') + ';">' +
+            '<span style="background:' + (m.sender === 'SUPERVISOR' ? '#1e1b4b' : '#064e3b') + '; border:1px solid ' + (m.sender === 'SUPERVISOR' ? '#8b5cf6' : '#10b981') + '; padding:4px 8px; border-radius:6px; display:inline-block; font-size:11px;">' +
+              '<b>' + m.sender + ':</b> ' + m.text +
+            '</span>' +
+          '</div>';
+        }).join('');
         container.scrollTop = container.scrollHeight;
       } catch (e) {}
     }
@@ -791,10 +789,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       const text = input.value.trim();
       if (!text || !activeChatOperator) return;
 
-      await fetch(\`\${API_URL}/api/supervisor/send-message\`, {
+      await fetch(API_URL + '/api/supervisor/send-message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ operatorName: activeChatOperator, text })
+        body: JSON.stringify({ operatorName: activeChatOperator, text: text })
       });
 
       input.value = '';
@@ -812,7 +810,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     async function fetchFinesCount() {
       try {
-        const res = await fetch(\`\${API_URL}/api/fines\`);
+        const res = await fetch(API_URL + '/api/fines');
         const data = await res.json();
         document.getElementById('total-fines-count').innerText = data.fines ? data.fines.length : 0;
       } catch (e) {}
@@ -820,65 +818,66 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     async function openFinesModal() {
       document.getElementById('modal-fines').style.display = 'flex';
-      const res = await fetch(\`\${API_URL}/api/fines\`);
+      const res = await fetch(API_URL + '/api/fines');
       const data = await res.json();
       const container = document.getElementById('fines-list-container');
       if (!data.fines || data.fines.length === 0) {
         container.innerHTML = '<p style="color:#10b981;">✅ No hay multas registradas en este turno.</p>';
         return;
       }
-      container.innerHTML = data.fines.map(f => \`
-        <div style="background:#060913; border:1px solid #f59e0b; border-radius:6px; padding:10px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
-          <div>
-            <div style="font-weight:bold; color:#fde68a;">👤 \${f.operator_name} [\${f.shift}] - 🎯 \${f.profile_name}</div>
-            <div style="font-size:11px; color:#94a3b8;">Cliente: \${f.client_name} | Motivo: \${f.reason}</div>
-            <div style="font-size:9px; color:#64748b;">\${new Date(f.created_at).toLocaleString()}</div>
-          </div>
-          <div style="font-size:14px; font-weight:900; color:#ef4444;">-\$\${Number(f.amount).toLocaleString('es-CO')} COP</div>
-        </div>
-      \`).join('');
+      container.innerHTML = data.fines.map(f => {
+        return '<div style="background:#060913; border:1px solid #f59e0b; border-radius:6px; padding:10px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">' +
+          '<div>' +
+            '<div style="font-weight:bold; color:#fde68a;">👤 ' + f.operator_name + ' [' + f.shift + '] - 🎯 ' + f.profile_name + '</div>' +
+            '<div style="font-size:11px; color:#94a3b8;">Cliente: ' + f.client_name + ' | Motivo: ' + f.reason + '</div>' +
+            '<div style="font-size:9px; color:#64748b;">' + new Date(f.created_at).toLocaleString() + '</div>' +
+          '</div>' +
+          '<div style="font-size:14px; font-weight:900; color:#ef4444;">-$' + Number(f.amount).toLocaleString('es-CO') + ' COP</div>' +
+        '</div>';
+      }).join('');
     }
 
     async function openChatAuditsModal() {
       document.getElementById('modal-chats').style.display = 'flex';
-      const res = await fetch(\`\${API_URL}/api/chats/audits\`);
+      const res = await fetch(API_URL + '/api/chats/audits');
       const data = await res.json();
       const container = document.getElementById('chat-audits-list');
       if (!data.audits || data.audits.length === 0) {
         container.innerHTML = '<p style="color:#94a3b8;">No hay conversaciones en Supabase aún. Presiona ⚡ en Talkytimes.</p>';
         return;
       }
-      container.innerHTML = data.audits.map(a => \`
-        <div style="background:#060913; border:1px solid #1e293b; border-radius:6px; padding:12px; margin-bottom:10px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <span style="font-weight:bold; color:var(--accent-cyan);">👤 Op: \${a.operator} | 🎯 Perfil: \${a.profile} | 💬 Cliente: \${a.clientName} (ID: \${a.clientId})</span>
-            <a href="data:text/markdown;charset=utf-8,\${encodeURIComponent(a.markdown)}" download="chat_\${a.profile}_\${a.clientId}.md" class="btn-action" style="text-decoration:none;">📥 Descargar .MD</a>
-          </div>
-          <div class="chat-transcript">\${a.markdown}</div>
-        </div>
-      \`).join('');
+      container.innerHTML = data.audits.map(a => {
+        return '<div style="background:#060913; border:1px solid #1e293b; border-radius:6px; padding:12px; margin-bottom:10px;">' +
+          '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">' +
+            '<span style="font-weight:bold; color:var(--accent-cyan);">👤 Op: ' + a.operator + ' | 🎯 Perfil: ' + a.profile + ' | 💬 Cliente: ' + a.clientName + ' (ID: ' + a.clientId + ')</span>' +
+            '<a href="data:text/markdown;charset=utf-8,' + encodeURIComponent(a.markdown) + '" download="chat_' + a.profile + '_' + a.clientId + '.md" class="btn-action" style="text-decoration:none;">📥 Descargar .MD</a>' +
+          '</div>' +
+          '<div class="chat-transcript">' + a.markdown + '</div>' +
+        '</div>';
+      }).join('');
     }
 
     async function openBannedWordsModal() {
       document.getElementById('modal-banned').style.display = 'flex';
-      const res = await fetch(\`\${API_URL}/api/banned-words\`);
+      const res = await fetch(API_URL + '/api/banned-words');
       const data = await res.json();
-      document.getElementById('banned-words-list').innerHTML = (data.words || []).map(w => \`
-        <div style="background:#1c2541; border:1px solid #ef4444; color:#fca5a5; padding:3px 6px; border-radius:4px; font-size:11px;">
-          \${w} <span style="cursor:pointer; font-weight:bold; margin-left:4px;" onclick="delWord('\${w}')">✕</span>
-        </div>\`).join('');
+      document.getElementById('banned-words-list').innerHTML = (data.words || []).map(w => {
+        return '<div style="background:#1c2541; border:1px solid #ef4444; color:#fca5a5; padding:3px 6px; border-radius:4px; font-size:11px;">' +
+          w + ' <span style="cursor:pointer; font-weight:bold; margin-left:4px;" onclick="delWord(\'' + w + '\')">✕</span>' +
+        '</div>';
+      }).join('');
     }
 
     async function addBannedWord() {
       const word = document.getElementById('input-new-word').value.trim();
       if (!word) return;
-      await fetch(\`\${API_URL}/api/banned-words\`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word }) });
+      await fetch(API_URL + '/api/banned-words', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word: word }) });
       document.getElementById('input-new-word').value = '';
       openBannedWordsModal();
     }
 
     async function delWord(word) {
-      await fetch(\`\${API_URL}/api/banned-words/delete\`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word }) });
+      await fetch(API_URL + '/api/banned-words/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word: word }) });
       openBannedWordsModal();
     }
 
@@ -897,4 +896,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V50.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V51.0 activo en puerto ${PORT}`));
