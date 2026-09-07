@@ -7,6 +7,7 @@ const PORT = process.env.PORT || 3000;
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
 const SUPABASE_KEY = (process.env.SUPABASE_KEY || '').trim();
 
+// Claves de Inteligencia Artificial
 const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim();
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || '').trim();
 const DEEPSEEK_API_KEY = (process.env.DEEPSEEK_API_KEY || '').trim();
@@ -18,7 +19,7 @@ const liveTelemetryMap = new Map();
 const recentChatAuditsRAM = new Map();
 const activeAlertsMap = new Map();
 const operatorFinesRAM = new Map();
-const shiftHandoversRAM = new Map(); // Relevos de turno en memoria
+const shiftHandoversRAM = new Map();
 const syncedClientsRegistry = new Set();
 const supervisorToOperatorMessages = new Map();
 
@@ -118,7 +119,6 @@ app.post('/api/handover/generate-and-save', async (req, res) => {
   const { operator, shift, profileName, profileId } = req.body;
   if (!profileName) return res.status(400).json({ error: 'Falta nombre de perfil' });
 
-  // Recopilar conversaciones recientes del perfil
   const clientSummaries = [];
   for (let audit of recentChatAuditsRAM.values()) {
     if (audit.profile_name?.toLowerCase() === profileName.toLowerCase() || audit.profile?.toLowerCase() === profileName.toLowerCase()) {
@@ -129,7 +129,7 @@ app.post('/api/handover/generate-and-save', async (req, res) => {
   const handoverId = `HANDOVER_${profileName}_${Date.now()}`;
   const reportMarkdown = `📋 INFORME DE RELEVO DE TURNO - ${profileName.toUpperCase()}
 - **Operador Saliente:** ${operator} [Turno: ${shift}]
-- **Fecha y Hora de Entrega:** ${new Date().toLocaleString()}
+- **Fecha y Hora de Entrega:** ${new Date().toLocaleString('es-CO')}
 - **Perfil Entregado:** ${profileName} (ID: ${profileId || 'N/A'})
 
 ---
@@ -152,7 +152,7 @@ ${clientSummaries.length > 0 ? clientSummaries.join('\n') : '- No se registraron
     created_at: new Date().toISOString()
   };
 
-  shiftHandoversRAM.set(profileName.toLowerCase(), { handover: { reportMarkdown }, timestamp: Date.now() });
+  shiftHandoversRAM.set(handoverId, handoverPayload);
 
   if (SUPABASE_URL && SUPABASE_KEY) {
     fetch(`${SUPABASE_URL}/rest/v1/shift_handovers`, {
@@ -179,10 +179,26 @@ app.get('/api/handover/latest', async (req, res) => {
     } catch (e) {}
   }
 
-  const mem = shiftHandoversRAM.get(profileName);
-  if (mem) return res.json({ success: true, handover: mem.handover });
+  for (let h of Array.from(shiftHandoversRAM.values()).reverse()) {
+    if (h.profile_name?.toLowerCase() === profileName) {
+      return res.json({ success: true, handover: { reportMarkdown: h.report_markdown } });
+    }
+  }
 
   res.json({ success: false, handover: null });
+});
+
+app.get('/api/handover/all', async (req, res) => {
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/shift_handovers?select=*&order=created_at.desc&limit=60`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      });
+      const data = await resp.json();
+      if (Array.isArray(data)) return res.json({ success: true, handovers: data });
+    } catch (e) {}
+  }
+  res.json({ success: true, handovers: Array.from(shiftHandoversRAM.values()).reverse() });
 });
 
 // 4. ENDPOINTS DE CHAT SUPERVISOR <-> OPERADOR
@@ -268,6 +284,13 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
         headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
       });
       let data = await resp.json();
+
+      if (!Array.isArray(data) || data.length === 0) {
+        resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?id=ilike.*${clientId}*&select=*&limit=1`, {
+          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+        });
+        data = await resp.json();
+      }
 
       if (Array.isArray(data) && data[0]) {
         chatMd = data[0].markdown;
@@ -477,7 +500,7 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 8. DASHBOARD EMBEBIDO
+// 6. DASHBOARD EMBEBIDO
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -491,6 +514,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 11px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; }
     .btn-action:hover { border-color: var(--accent-green); color: var(--accent-green); }
     .btn-fines { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(245, 158, 11, 0.15); }
+    .btn-productivity { border-color: #38bdf8; color: #38bdf8; background: rgba(56, 189, 248, 0.15); }
     .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
     .operator-card { background: var(--bg-card); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; justify-content: space-between; }
     .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
@@ -505,19 +529,52 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.88); backdrop-filter: blur(5px); z-index: 99999; justify-content: center; align-items: center; }
     .modal-content { background: #0e1526; border: 1px solid var(--accent-cyan); border-radius: 10px; width: 940px; max-width: 95%; max-height: 88vh; padding: 20px; display: flex; flex-direction: column; gap: 12px; color: #fff; }
     .chat-transcript { background: #0b132b; border: 1px solid #1e293b; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 250px; overflow-y: auto; line-height: 1.6; color: #cbd5e1; }
+    
+    table.prod-table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
+    table.prod-table th, table.prod-table td { padding: 8px 10px; border-bottom: 1px solid #1e293b; }
+    table.prod-table th { background: #060913; color: var(--accent-cyan); font-weight: bold; }
   </style>
 </head>
 <body>
   <header>
-    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & RELEVOS IA</div>
+    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & RENDIMIENTO</div>
     <div style="display:flex; gap:8px;">
       <button class="btn-action" style="border-color:#8b5cf6; color:#c4b5fd;" onclick="openAllHandoversModal()">📑 Relevos de Turno (IA) (<span id="total-handovers-count">0</span>)</button>
+      <button class="btn-action btn-productivity" onclick="openProductivityModal()">📊 Productividad & Tiempos</button>
       <button class="btn-action btn-fines" onclick="openFinesModal()">💰 Multas ($10.000 COP) (<span id="total-fines-count">0</span>)</button>
       <button class="btn-action" onclick="openChatAuditsModal()">📄 Historial de Chats (MD)</button>
       <button class="btn-action" onclick="openBannedWordsModal()">🛡️ Palabras Prohibidas</button>
     </div>
   </header>
   <div id="operators-grid" class="grid-operators"></div>
+
+  <!-- MODAL PRODUCTIVIDAD Y TIEMPOS DE RESPUESTA -->
+  <div id="modal-productivity" class="modal-overlay">
+    <div class="modal-content">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
+        <span style="font-weight:bold; color:#38bdf8;">📊 PANEL DE PRODUCTIVIDAD Y TIEMPOS DE RESPUESTA EN VIVO</span>
+        <button class="btn-action" onclick="closeModals()">✕</button>
+      </div>
+      <div style="overflow-y:auto; flex:1;">
+        <table class="prod-table">
+          <thead>
+            <tr>
+              <th>Operador</th>
+              <th>Turno</th>
+              <th>Perfiles</th>
+              <th>Cartas (Read)</th>
+              <th>Chats Pendientes</th>
+              <th>Seguimiento (Tráfico)</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody id="productivity-table-body">
+            <tr><td colspan="7" style="color:#64748b;">Cargando métricas...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 
   <!-- MODAL RELEVOS DE TURNO SUPERVISOR -->
   <div id="modal-handovers-sup" class="modal-overlay">
@@ -545,6 +602,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- MODAL MULTAS -->
   <div id="modal-fines" class="modal-overlay">
     <div class="modal-content">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
@@ -583,12 +641,15 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     const API_URL = window.location.origin;
     let activeChatOperator = '';
     let supChatPollingInterval = null;
+    let cachedLiveOperators = [];
 
     async function fetchLive() {
       try {
         const res = await fetch(\`\${API_URL}/api/telemetry/live\`);
         const data = await res.json();
-        document.getElementById('operators-grid').innerHTML = (data.operators || []).map(op => \`
+        cachedLiveOperators = data.operators || [];
+        const grid = document.getElementById('operators-grid');
+        grid.innerHTML = cachedLiveOperators.map(op => \`
           <div class="operator-card">
             <div>
               <div style="display:flex; justify-content:space-between; font-weight:bold; border-bottom:1px solid #1e293b; padding-bottom:6px; margin-bottom:8px;">
@@ -630,6 +691,45 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           </div>
         \`).join('');
         fetchFinesCount();
+        fetchHandoversCount();
+      } catch (e) {}
+    }
+
+    async function openProductivityModal() {
+      document.getElementById('modal-productivity').style.display = 'flex';
+      const tbody = document.getElementById('productivity-table-body');
+      if (cachedLiveOperators.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="color:#64748b; text-align:center;">No hay operadores conectados en este momento.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = cachedLiveOperators.map(op => {
+        const profileNames = op.profiles.map(p => p.profileName).join(', ');
+        const totalPending = op.profiles.reduce((acc, p) => acc + (p.pendingReadLetters || 0), 0);
+        const unansweredChats = op.profiles.reduce((acc, p) => acc + (p.unansweredChatsCount || 0), 0);
+        const trackingStatus = op.profiles.map(p => {
+          if (!p.prospectingProgress) return 'N/A';
+          return `${p.profileName}: [${p.prospectingProgress.count}/${p.prospectingProgress.quota}]`;
+        }).join('<br>');
+
+        return `
+          <tr>
+            <td style="font-weight:bold; color:#fff;">👤 ${op.operatorName}</td>
+            <td><span style="color:#38bdf8;">${op.shift}</span></td>
+            <td style="color:#00ffcc;">${profileNames}</td>
+            <td style="color:#34d399; font-weight:bold;">${totalPending}</td>
+            <td style="color:${unansweredChats > 0 ? '#ef4444' : '#10b981'}; font-weight:bold;">${unansweredChats}</td>
+            <td style="font-size:11px;">${trackingStatus}</td>
+            <td>${op.isAfkGlobal ? '<span style="color:#a855f7;">💤 Inactivo</span>' : '<span style="color:#10b981;">⚡ Activo</span>'}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function fetchHandoversCount() {
+      try {
+        const res = await fetch(\`\${API_URL}/api/handover/all\`);
+        const data = await res.json();
+        document.getElementById('total-handovers-count').innerText = data.handovers ? data.handovers.length : 0;
       } catch (e) {}
     }
 
@@ -638,7 +738,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       const container = document.getElementById('handovers-list-container');
       container.innerHTML = '<p style="color:#c4b5fd;">Cargando relevos de turno...</p>';
 
-      const handovers = Array.from(shiftHandoversRAM.values());
+      const res = await fetch(\`\${API_URL}/api/handover/all\`);
+      const data = await res.json();
+      const handovers = data.handovers || [];
+
       if (handovers.length === 0) {
         container.innerHTML = '<p style="color:#94a3b8;">No hay relevos generados aún. Los operadores pueden presionar "📋 Entregar Turno" en Talkytimes.</p>';
         return;
@@ -646,7 +749,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
       container.innerHTML = handovers.map(h => \`
         <div style="background:#060913; border:1px solid #8b5cf6; border-radius:6px; padding:12px; margin-bottom:8px;">
-          <div class="chat-transcript">\${h.handover.reportMarkdown}</div>
+          <div style="font-size:11px; font-weight:bold; color:#c4b5fd; margin-bottom:4px;">👤 Entregado por: \${h.operator_name} [\${h.shift}] - Perfil: \${h.profile_name}</div>
+          <div class="chat-transcript">\${h.report_markdown || h.reportMarkdown}</div>
         </div>
       \`).join('');
     }
@@ -793,4 +897,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V48.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V50.0 activo en puerto ${PORT}`));
