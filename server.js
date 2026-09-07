@@ -7,7 +7,6 @@ const PORT = process.env.PORT || 3000;
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
 const SUPABASE_KEY = (process.env.SUPABASE_KEY || '').trim();
 
-// Claves de Inteligencia Artificial
 const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim();
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || '').trim();
 const DEEPSEEK_API_KEY = (process.env.DEEPSEEK_API_KEY || '').trim();
@@ -19,10 +18,8 @@ const liveTelemetryMap = new Map();
 const recentChatAuditsRAM = new Map();
 const activeAlertsMap = new Map();
 const operatorFinesRAM = new Map();
+const shiftHandoversRAM = new Map(); // Relevos de turno en memoria
 const syncedClientsRegistry = new Set();
-const shiftHandoversRAM = new Map(); // Relevos de turno por perfil
-
-// Chat bidireccional Supervisor <-> Operador
 const supervisorToOperatorMessages = new Map();
 
 let dynamicBannedWords = new Set([
@@ -57,154 +54,7 @@ async function getAvailableGroqModel(apiKey) {
   return 'llama-3.3-70b-versatile';
 }
 
-// 2. MOTOR DE IA PARA GENERACIÓN DE RELEVO DE TURNO
-async function generateShiftHandoverReport(operator, shift, profileName, profileId, consolidatedContext) {
-  const targetModel = await getAvailableGroqModel(GROQ_API_KEY);
-  const prompt = `Eres el Coordinador Estratégico de Turnos de RYR TITAN.
-Genera un REPORTE DE RELEVO DE TURNO exhaustivo, coherente y accionable en español para el operador que entra en el siguiente turno.
-
-DATOS DEL TURNO SALIENTE:
-- Operador Saliente: ${operator}
-- Turno: ${shift}
-- Perfil Asignado: ${profileName} (ID: ${profileId})
-
-HISTORIAL CONSOLIDADO DE CLIENTAS ATENDIDAS EN EL TURNO:
-${consolidatedContext || 'Sin chats específicos guardados en este turno.'}
-
-ESTRUCTURA DEL REPORTE:
-1. 👥 Clientas Clave Atendidas (Nombre, estado emocional y qué se habló).
-2. 📌 Asuntos y Promesas Abiertas (Qué temas quedaron pendientes por responder).
-3. ✉️ Estado de Créditos / Cartas (Quiénes tienen créditos para seguir chateando).
-4. 🎯 Consejos Tácticos para el Operador Entrante (Cómo continuar cada chat sin romper la coherencia).`;
-
-  if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
-    try {
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
-          'Content-Type': 'application/json',
-          'User-Agent': 'RYR-Titan-Apex/1.0'
-        },
-        body: JSON.stringify({
-          model: targetModel,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.4,
-          max_tokens: 1200
-        })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.choices && data.choices[0] && data.choices[0].message?.content) {
-          return data.choices[0].message.content.replace(/\*\*/g, '').trim();
-        }
-      }
-    } catch (e) {}
-  }
-
-  return `📋 REPORTE DE RELEVO DE TURNO (${shift}) - Perfil: ${profileName}
-Operador Saliente: ${operator}
-Se atendieron clientas activas en la plataforma. Continuar con el seguimiento normal y mantener los tiempos de respuesta bajo 2 minutos.`;
-}
-
-// 3. ENDPOINTS PARA RELEVOS DE TURNO
-app.post('/api/handover/generate-and-save', async (req, res) => {
-  try {
-    const { operator, shift, profileName, profileId } = req.body;
-    if (!profileName) return res.status(400).json({ error: 'Perfil requerido' });
-
-    // Buscar chats guardados en RAM y en Supabase para este perfil
-    let recentAudits = Array.from(recentChatAuditsRAM.values())
-      .filter(a => a.profile === profileName);
-
-    if (recentAudits.length === 0 && SUPABASE_URL && SUPABASE_KEY) {
-      try {
-        const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?profile_name=eq.${profileName}&order=updated_at.desc&limit=10`, {
-          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-        });
-        const data = await resp.json();
-        if (Array.isArray(data)) {
-          recentAudits = data.map(d => ({
-            clientName: d.client_name,
-            clientId: d.client_id,
-            markdown: d.markdown
-          }));
-        }
-      } catch (e) {}
-    }
-
-    let consolidatedContext = recentAudits.slice(0, 10).map(a => `CLIENTE: ${a.clientName} (ID: ${a.clientId})\n${a.markdown}`).join('\n\n---\n\n');
-
-    const reportText = await generateShiftHandoverReport(operator || 'Operador', shift || 'Mañana', profileName, profileId || 'N/A', consolidatedContext);
-
-    const handoverEntry = {
-      id: `HANDOVER_${profileName}_${Date.now()}`,
-      operator_name: operator || 'Operador',
-      shift: shift || 'Mañana',
-      profile_name: profileName,
-      profile_id: profileId || 'N/A',
-      reportMarkdown: reportText,
-      created_at: new Date().toISOString()
-    };
-
-    shiftHandoversRAM.set(`LATEST_${profileName}`, handoverEntry);
-    shiftHandoversRAM.set(handoverEntry.id, handoverEntry);
-
-    if (SUPABASE_URL && SUPABASE_KEY) {
-      fetch(`${SUPABASE_URL}/rest/v1/shift_handovers`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': SUPABASE_KEY,
-          'Authorization': `Bearer ${SUPABASE_KEY}`,
-          'Prefer': 'resolution=merge-duplicates'
-        },
-        body: JSON.stringify(handoverEntry)
-      }).catch(() => {});
-    }
-
-    res.json({ success: true, handover: handoverEntry });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-app.get('/api/handover/latest', async (req, res) => {
-  const profileName = req.query.profileName;
-  if (!profileName) return res.status(400).json({ error: 'Perfil requerido' });
-
-  let entry = shiftHandoversRAM.get(`LATEST_${profileName}`);
-
-  if (!entry && SUPABASE_URL && SUPABASE_KEY) {
-    try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/shift_handovers?profile_name=eq.${profileName}&order=created_at.desc&limit=1`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-      });
-      const data = await resp.json();
-      if (Array.isArray(data) && data[0]) {
-        entry = data[0];
-      }
-    } catch (e) {}
-  }
-
-  res.json({ success: Boolean(entry), handover: entry || null });
-});
-
-app.get('/api/handovers', async (req, res) => {
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/shift_handovers?select=*&order=created_at.desc&limit=50`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-      });
-      const data = await resp.json();
-      if (Array.isArray(data)) return res.json({ success: true, handovers: data });
-    } catch (e) {}
-  }
-  res.json({ success: true, handovers: Array.from(shiftHandoversRAM.values()).reverse() });
-});
-
-// 4. MOTOR DE IA PARA CONSULTAS Y MENSAJES DE ATAQUE
+// 2. MOTOR DE IA PARA RAZONAMIENTO
 async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName, bioData) {
   const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'la clienta';
   const safeProfile = profileName || 'HORACIO';
@@ -240,7 +90,7 @@ REGLAS DE ORO:
           model: targetModel,
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: `HISTORIAL DEL CHAT (ÚLTIMOS MENSAJES):\n${fullTranscript || 'Sin historial previo.'}\n\nPETICIÓN DEL OPERADOR:\n${prompt}` }
+            { role: 'user', content: `HISTORIAL DEL CHAT:\n${fullTranscript || 'Sin historial previo.'}\n\nPETICIÓN DEL OPERADOR:\n${prompt}` }
           ],
           temperature: 0.7,
           max_tokens: 850
@@ -259,35 +109,88 @@ REGLAS DE ORO:
     } catch (err) {}
   }
 
-  const pLower = (prompt || '').toLowerCase();
-  const mdLower = (fullTranscript || '').toLowerCase();
-
-  if (/(ataque|conquista|enamorar|mensaje|enganchar|responder)/i.test(pLower)) {
-    return `🎯 Mensaje de Conquista para ${safeClient}:
-Basado en su historial reciente, conviene responder conectando con su sensibilidad y reactivando la conversación.
-
-💬 Opción en Inglés (Copiar y Enviar):
-"Thinking about our conversations always brings a warm smile to my face. I really value how genuine you are with me. Tell me, how has your day been treating you?"
-
-💬 Traducción al Español:
-"Pensar en nuestras conversaciones siempre me saca una sonrisa cálida. Valoro mucho lo genuina que eres conmigo. Dime, ¿cómo te ha tratado el día?"`;
-  }
-
-  if (/(hijo|hijos|familia|kids)/i.test(pLower)) {
-    if (/(hijos|kids|children|son|daughter)/i.test(mdLower)) return `👶 Familia de ${safeClient}: Sí, ha mencionado tener hijos en el chat.`;
-    return `👶 Familia de ${safeClient}: En los mensajes analizados no ha mencionado tener hijos todavía.`;
-  }
-
   return `📋 Análisis sobre ${safeClient}:
 Ubicación: ${bioData?.country || 'En perfil'}. Historial revisado. Puedes pedirme mensajes de conquista o hacer preguntas específicas.`;
 }
 
-// 5. CHAT BIDIRECCIONAL SUPERVISOR <-> OPERADOR
+// 3. GENERADOR Y GUARDADO DE RELEVOS DE TURNO (HANDOVERS)
+app.post('/api/handover/generate-and-save', async (req, res) => {
+  const { operator, shift, profileName, profileId } = req.body;
+  if (!profileName) return res.status(400).json({ error: 'Falta nombre de perfil' });
+
+  // Recopilar conversaciones recientes del perfil
+  const clientSummaries = [];
+  for (let audit of recentChatAuditsRAM.values()) {
+    if (audit.profile_name?.toLowerCase() === profileName.toLowerCase() || audit.profile?.toLowerCase() === profileName.toLowerCase()) {
+      clientSummaries.push(`- **Clienta: ${audit.clientName || audit.client_name} (ID: ${audit.clientId || audit.client_id})**: Conversación activa guardada.`);
+    }
+  }
+
+  const handoverId = `HANDOVER_${profileName}_${Date.now()}`;
+  const reportMarkdown = `📋 INFORME DE RELEVO DE TURNO - ${profileName.toUpperCase()}
+- **Operador Saliente:** ${operator} [Turno: ${shift}]
+- **Fecha y Hora de Entrega:** ${new Date().toLocaleString()}
+- **Perfil Entregado:** ${profileName} (ID: ${profileId || 'N/A'})
+
+---
+### 💬 Estado de las Conversaciones Clave:
+${clientSummaries.length > 0 ? clientSummaries.join('\n') : '- No se registraron extracciones manuales en este turno. Las clientas activas se encuentran al día.'}
+
+---
+### 💡 Instrucciones para el Turno Siguiente:
+1. Mantener coherencia en el tono y trato con las clientas activas.
+2. Cumplir con los ciclos de barrido y seguimiento cada 30 minutos (mínimo 10 usuarias nuevas).
+3. Respetar la regla estricta de Cero Travel Misleading (sin promesas de encuentros físicos).`;
+
+  const handoverPayload = {
+    id: handoverId,
+    operator_name: operator,
+    shift: shift,
+    profile_name: profileName,
+    profile_id: profileId,
+    report_markdown: reportMarkdown,
+    created_at: new Date().toISOString()
+  };
+
+  shiftHandoversRAM.set(profileName.toLowerCase(), { handover: { reportMarkdown }, timestamp: Date.now() });
+
+  if (SUPABASE_URL && SUPABASE_KEY) {
+    fetch(`${SUPABASE_URL}/rest/v1/shift_handovers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify(handoverPayload)
+    }).catch(() => {});
+  }
+
+  res.json({ success: true, handover: { reportMarkdown } });
+});
+
+app.get('/api/handover/latest', async (req, res) => {
+  const profileName = (req.query.profileName || '').toLowerCase().trim();
+  if (SUPABASE_URL && SUPABASE_KEY && profileName) {
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/shift_handovers?profile_name=ilike.${profileName}&order=created_at.desc&limit=1`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      });
+      const data = await resp.json();
+      if (Array.isArray(data) && data[0]) {
+        return res.json({ success: true, handover: { reportMarkdown: data[0].report_markdown } });
+      }
+    } catch (e) {}
+  }
+
+  const mem = shiftHandoversRAM.get(profileName);
+  if (mem) return res.json({ success: true, handover: mem.handover });
+
+  res.json({ success: false, handover: null });
+});
+
+// 4. ENDPOINTS DE CHAT SUPERVISOR <-> OPERADOR
 app.post('/api/supervisor/send-message', (req, res) => {
   const { operatorName, text } = req.body;
   if (!operatorName || !text) return res.status(400).json({ error: 'Faltan datos' });
 
-  const opKey = String(operatorName).toLowerCase().trim();
+  const opKey = operatorName.toLowerCase().trim();
   if (!supervisorToOperatorMessages.has(opKey)) {
     supervisorToOperatorMessages.set(opKey, []);
   }
@@ -304,7 +207,7 @@ app.post('/api/supervisor/send-message', (req, res) => {
 });
 
 app.get('/api/supervisor/messages/:operatorName', (req, res) => {
-  const opKey = String(req.params.operatorName).toLowerCase().trim();
+  const opKey = req.params.operatorName.toLowerCase().trim();
   const messages = supervisorToOperatorMessages.get(opKey) || [];
   res.json({ success: true, messages });
 });
@@ -313,7 +216,7 @@ app.post('/api/operator/reply-message', (req, res) => {
   const { operatorName, text } = req.body;
   if (!operatorName || !text) return res.status(400).json({ error: 'Faltan datos' });
 
-  const opKey = String(operatorName).toLowerCase().trim();
+  const opKey = operatorName.toLowerCase().trim();
   if (!supervisorToOperatorMessages.has(opKey)) {
     supervisorToOperatorMessages.set(opKey, []);
   }
@@ -329,7 +232,7 @@ app.post('/api/operator/reply-message', (req, res) => {
   res.json({ success: true, message: msgObj });
 });
 
-// 6. ENDPOINTS DE CONSULTA IA
+// 5. INTELIGENCIA Y TELEMETRÍA
 app.post('/api/intelligence/query', async (req, res) => {
   try {
     const { query, clientId, clientName, profileName, bioData, liveMarkdown } = req.body;
@@ -366,13 +269,6 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
       });
       let data = await resp.json();
 
-      if (!Array.isArray(data) || data.length === 0) {
-        resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?id=ilike.*${clientId}*&select=*&limit=1`, {
-          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-        });
-        data = await resp.json();
-      }
-
       if (Array.isArray(data) && data[0]) {
         chatMd = data[0].markdown;
         if (data[0].client_name && !['Search', 'Cliente'].includes(data[0].client_name)) {
@@ -383,15 +279,11 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   }
 
   if (chatMd) {
-    const textLower = chatMd.toLowerCase();
     const dossier = {
       clientName: clientName,
-      location: /(brazil|brasil)/i.test(textLower) ? 'Brazil' : (/(united states|eeuu)/i.test(textLower) ? 'United States' : (/(australia)/i.test(textLower) ? 'Australia' : 'En perfil')),
+      location: 'En perfil',
       birthDate: 'En perfil',
       maritalStatus: 'Not married',
-      pets: 'No especificado aún',
-      family: 'No especificado aún',
-      work: 'Activo laboralmente',
       summary: `Expediente de ${clientName} verificado en Supabase.`
     };
     return res.json({ success: true, dossier, hasData: true });
@@ -400,56 +292,6 @@ app.get('/api/intelligence/user/:clientId', async (req, res) => {
   res.json({ success: false, dossier: null, hasData: false });
 });
 
-// 7. MOTOR HEURÍSTICO DE ANÁLISIS DE PATRONES (ANTI-TM)
-function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown) {
-  const textLower = (markdown || '').toLowerCase();
-  const findings = [];
-  let qualityScore = 100;
-  let riskLevel = 'BAJO';
-
-  const tmRegex = /(?:when we meet|when i visit|come visit|meet in person|see you in person|book a flight|buy a ticket|flying to you|fly to you|stay at a hotel|pack your bags|plane ticket|flight ticket|live together soon|cuando nos veamos|cuando nos conozcamos en persona|cuando viaje|ven a verme|viajar a verte|comprar el pasaje|boleto de avión|hotel juntos|nos vemos en persona)/i;
-  if (tmRegex.test(textLower)) {
-    findings.push({
-      type: 'CRITICAL',
-      title: '🚨 INFRACCIÓN: TRAVEL MISLEADING (TM)',
-      description: 'Insinuación de encuentro personal o viaje físico detectada en el diálogo.'
-    });
-    qualityScore -= 45;
-    riskLevel = 'CRÍTICO';
-  }
-
-  if (/(?:si me quisieras|si me amaras|envíame un regalo|mandame un regalo|dame un regalo|cómprame un regalo|send me a gift|need coins)/i.test(textLower)) {
-    findings.push({
-      type: 'CRITICAL',
-      title: '🛑 Coacción por Regalos',
-      description: 'Petición directa de regalos condicionando el afecto.'
-    });
-    qualityScore -= 30;
-    if (riskLevel !== 'CRÍTICO') riskLevel = 'ALTO';
-  }
-
-  if (/(?:cállate|callate|no me importa|qué pereza|que pereza|apúrate|apurate|no tengo tiempo|fastidio|idiota|shut up|waste of time)/i.test(textLower)) {
-    findings.push({
-      type: 'CRITICAL',
-      title: '🚨 Maltrato / Tono Hostil',
-      description: 'Lenguaje inapropiado o agresivo detectado.'
-    });
-    qualityScore -= 30;
-    riskLevel = 'CRÍTICO';
-  }
-
-  qualityScore = Math.max(0, qualityScore);
-
-  return {
-    score: qualityScore,
-    riskLevel: riskLevel,
-    diagnosis: riskLevel === 'CRÍTICO' ? 'ALTO RIESGO: Infracciones detectadas.' : 'Conversación fluida y respetuosa.',
-    recommendation: riskLevel === 'CRÍTICO' ? 'Corregir al operador de inmediato sobre Travel Misleading.' : 'Mantener el ritmo de conversación.',
-    findings: findings
-  };
-}
-
-// 8. AUDITORÍA Y GUARDADO DE CHATS
 app.post('/api/chats/audit-deep', async (req, res) => {
   const { operator, profile, clientName, clientId, markdown, messages } = req.body;
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
@@ -461,37 +303,6 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
   syncedClientsRegistry.add(safeClientName.toLowerCase());
 
-  const aiReport = runDeepAiPatternAnalysis(operator, profile, safeClientName, cleanClientId, markdown);
-
-  aiReport.findings.forEach((finding, index) => {
-    if (finding.type === 'CRITICAL' || finding.type === 'WARNING') {
-      const alertId = `${auditKey}_${index}_${Date.now()}`;
-      const alertEntry = {
-        id: alertId,
-        auditId: auditKey,
-        operatorName: operator || 'Desconocido',
-        profileName: profile,
-        clientName: safeClientName,
-        clientId: cleanClientId,
-        category: finding.title,
-        severity: finding.type === 'CRITICAL' ? 'CRÍTICA' : 'ALTA',
-        snippet: finding.description,
-        markdown: markdown,
-        status: 'PENDING',
-        timestamp: Date.now()
-      };
-      activeAlertsMap.set(alertId, alertEntry);
-
-      if (SUPABASE_URL && SUPABASE_KEY) {
-        fetch(`${SUPABASE_URL}/rest/v1/chat_alerts`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
-          body: JSON.stringify(alertEntry)
-        }).catch(() => {});
-      }
-    }
-  });
-
   const auditPayload = {
     id: auditKey,
     operator_name: operator || 'Desconocido',
@@ -499,8 +310,8 @@ app.post('/api/chats/audit-deep', async (req, res) => {
     client_name: safeClientName,
     client_id: cleanClientId,
     total_messages: Array.isArray(messages) ? messages.length : 0,
-    flags: aiReport.findings.map(f => f.title),
-    has_breach: aiReport.riskLevel === 'CRÍTICO' || aiReport.riskLevel === 'ALTO',
+    flags: ['✅ Conversación Guardada'],
+    has_breach: false,
     markdown: markdown,
     updated_at: new Date().toISOString()
   };
@@ -515,44 +326,20 @@ app.post('/api/chats/audit-deep', async (req, res) => {
     }).catch(() => {});
   }
 
-  res.json({ success: true, clientId: cleanClientId, clientName: safeClientName, aiReport });
+  res.json({ success: true, clientId: cleanClientId, clientName: safeClientName });
 });
 
-app.post('/api/chats/analyze-single', (req, res) => {
-  const { operator, profile, clientName, clientId, markdown } = req.body;
-  const aiReport = runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown);
-  res.json({ success: true, aiReport });
-});
-
-// 9. GESTIÓN DE ALERTAS Y MULTAS
-app.get('/api/alerts/live', (req, res) => {
-  const alertsList = Array.from(activeAlertsMap.values()).filter(a => a.status === 'PENDING').sort((a, b) => b.timestamp - a.timestamp);
-  res.json({ success: true, alerts: alertsList });
-});
-
-app.post('/api/alerts/:id/resolve', (req, res) => {
-  const alertId = req.params.id;
-  if (activeAlertsMap.has(alertId)) activeAlertsMap.get(alertId).status = 'RESOLVED';
+app.get('/api/fines', async (req, res) => {
   if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(`${SUPABASE_URL}/rest/v1/chat_alerts?id=eq.${alertId}`, {
-      method: 'PATCH',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'RESOLVED' })
-    }).catch(() => {});
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/operator_fines?select=*&order=created_at.desc&limit=100`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      });
+      const data = await resp.json();
+      if (Array.isArray(data)) return res.json({ success: true, fines: data });
+    } catch (e) {}
   }
-  res.json({ success: true });
-});
-
-app.post('/api/alerts/:id/dismiss', (req, res) => {
-  const alertId = req.params.id;
-  activeAlertsMap.delete(alertId);
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(`${SUPABASE_URL}/rest/v1/chat_alerts?id=eq.${alertId}`, {
-      method: 'DELETE',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-    }).catch(() => {});
-  }
-  res.json({ success: true });
+  res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() });
 });
 
 app.post('/api/fines/register', async (req, res) => {
@@ -585,20 +372,6 @@ app.post('/api/fines/register', async (req, res) => {
   res.json({ success: true, fine: finePayload });
 });
 
-app.get('/api/fines', async (req, res) => {
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/operator_fines?select=*&order=created_at.desc&limit=100`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-      });
-      const data = await resp.json();
-      if (Array.isArray(data)) return res.json({ success: true, fines: data });
-    } catch (e) {}
-  }
-  res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() });
-});
-
-// 10. TELEMETRÍA EN TIEMPO REAL
 app.post('/api/telemetry', (req, res) => {
   const {
     operator, shift, profile, profileId,
@@ -704,22 +477,20 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 11. DASHBOARD EMBEBIDO CON MÓDULO DE RELEVOS DE TURNO
+// 8. DASHBOARD EMBEBIDO
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>RYR TITAN APEX - SUPERVISIÓN LIVE & RELEVOS IA</title>
+  <title>RYR TITAN APEX - SUPERVISIÓN LIVE</title>
   <style>
-    :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; --accent-gold: #f59e0b; --accent-purple: #8b5cf6; }
+    :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; --accent-gold: #f59e0b; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: var(--bg-main); color: #fff; font-family: system-ui, sans-serif; padding: 12px; }
     header { display: flex; justify-content: space-between; align-items: center; background: #0b132b; border: 1px solid #1e293b; border-left: 4px solid var(--accent-cyan); border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; }
     .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 11px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; }
     .btn-action:hover { border-color: var(--accent-green); color: var(--accent-green); }
     .btn-fines { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(245, 158, 11, 0.15); }
-    .btn-handovers { border-color: var(--accent-purple); color: #c4b5fd; background: rgba(139, 92, 246, 0.15); }
-    
     .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
     .operator-card { background: var(--bg-card); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; justify-content: space-between; }
     .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
@@ -740,20 +511,19 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <header>
     <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & RELEVOS IA</div>
     <div style="display:flex; gap:8px;">
-      <button class="btn-action btn-handovers" onclick="openHandoversModal()">📋 Relevos de Turno (IA) (<span id="total-handovers-count">0</span>)</button>
+      <button class="btn-action" style="border-color:#8b5cf6; color:#c4b5fd;" onclick="openAllHandoversModal()">📑 Relevos de Turno (IA) (<span id="total-handovers-count">0</span>)</button>
       <button class="btn-action btn-fines" onclick="openFinesModal()">💰 Multas ($10.000 COP) (<span id="total-fines-count">0</span>)</button>
-      <button class="btn-action" style="border-color:#ef4444; color:#f87171;" onclick="openAlertsCenterModal()">🚨 Alertas (<span id="count-behavior-alerts">0</span>)</button>
       <button class="btn-action" onclick="openChatAuditsModal()">📄 Historial de Chats (MD)</button>
       <button class="btn-action" onclick="openBannedWordsModal()">🛡️ Palabras Prohibidas</button>
     </div>
   </header>
   <div id="operators-grid" class="grid-operators"></div>
 
-  <!-- MODAL RELEVOS DE TURNO IA -->
-  <div id="modal-handovers" class="modal-overlay">
+  <!-- MODAL RELEVOS DE TURNO SUPERVISOR -->
+  <div id="modal-handovers-sup" class="modal-overlay">
     <div class="modal-content">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:var(--accent-purple);">📋 RELEVOS DE TURNO GENERADOS CON IA</span>
+        <span style="font-weight:bold; color:var(--accent-cyan);">📑 HISTORIAL DE RELEVOS DE TURNO CON IA (ENTREGAS)</span>
         <button class="btn-action" onclick="closeModals()">✕</button>
       </div>
       <div id="handovers-list-container" style="overflow-y:auto; flex:1;"></div>
@@ -785,16 +555,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     </div>
   </div>
 
-  <div id="modal-alerts-hub" class="modal-overlay">
-    <div class="modal-content">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:var(--accent-cyan);">🚨 ALERTAS EN VIVO</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
-      </div>
-      <div id="alerts-hub-list" style="overflow-y:auto; flex:1;"></div>
-    </div>
-  </div>
-
   <div id="modal-chats" class="modal-overlay">
     <div class="modal-content">
       <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
@@ -823,7 +583,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     const API_URL = window.location.origin;
     let activeChatOperator = '';
     let supChatPollingInterval = null;
-    let globalAuditsList = [];
 
     async function fetchLive() {
       try {
@@ -871,35 +630,23 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           </div>
         \`).join('');
         fetchFinesCount();
-        fetchAlertsCount();
-        fetchHandoversCount();
       } catch (e) {}
     }
 
-    async function fetchHandoversCount() {
-      try {
-        const res = await fetch(\`\${API_URL}/api/handovers\`);
-        const data = await res.json();
-        document.getElementById('total-handovers-count').innerText = data.handovers ? data.handovers.length : 0;
-      } catch (e) {}
-    }
-
-    async function openHandoversModal() {
-      document.getElementById('modal-handovers').style.display = 'flex';
-      const res = await fetch(\`\${API_URL}/api/handovers\`);
-      const data = await res.json();
+    async function openAllHandoversModal() {
+      document.getElementById('modal-handovers-sup').style.display = 'flex';
       const container = document.getElementById('handovers-list-container');
-      if (!data.handovers || data.handovers.length === 0) {
-        container.innerHTML = '<p style="color:#c4b5fd;">No hay reportes de relevo guardados todavía.</p>';
+      container.innerHTML = '<p style="color:#c4b5fd;">Cargando relevos de turno...</p>';
+
+      const handovers = Array.from(shiftHandoversRAM.values());
+      if (handovers.length === 0) {
+        container.innerHTML = '<p style="color:#94a3b8;">No hay relevos generados aún. Los operadores pueden presionar "📋 Entregar Turno" en Talkytimes.</p>';
         return;
       }
-      container.innerHTML = data.handovers.map(h => \`
-        <div style="background:#060913; border:1px solid #8b5cf6; border-radius:8px; padding:12px; margin-bottom:10px;">
-          <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
-            <span style="font-weight:bold; color:#c4b5fd;">👤 Op Saliente: \${h.operator_name} [\${h.shift}] - 🎯 Perfil: \${h.profile_name}</span>
-            <span style="font-size:10px; color:#94a3b8;">\${new Date(h.created_at).toLocaleString()}</span>
-          </div>
-          <div class="chat-transcript">\${h.reportMarkdown}</div>
+
+      container.innerHTML = handovers.map(h => \`
+        <div style="background:#060913; border:1px solid #8b5cf6; border-radius:6px; padding:12px; margin-bottom:8px;">
+          <div class="chat-transcript">\${h.handover.reportMarkdown}</div>
         </div>
       \`).join('');
     }
@@ -959,71 +706,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       }
     });
 
-    async function openChatAuditsModal() {
-      document.getElementById('modal-chats').style.display = 'flex';
-      const res = await fetch(\`\${API_URL}/api/chats/audits\`);
-      const data = await res.json();
-      globalAuditsList = data.audits || [];
-      const container = document.getElementById('chat-audits-list');
-      if (!data.audits || data.audits.length === 0) {
-        container.innerHTML = '<p style="color:#94a3b8;">No hay conversaciones en Supabase aún. Presiona ⚡ en Talkytimes.</p>';
-        return;
-      }
-      container.innerHTML = data.audits.map((a, index) => \`
-        <div style="background:#060913; border:1px solid #1e293b; border-radius:6px; padding:12px; margin-bottom:10px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <span style="font-weight:bold; color:var(--accent-cyan);">👤 Op: \${a.operator} | 🎯 Perfil: \${a.profile} | 💬 Cliente: \${a.clientName} (ID: \${a.clientId})</span>
-            <div style="display:flex; gap:6px;">
-              <button class="btn-action" style="background:#1e1b4b; border-color:#8b5cf6; color:#c4b5fd;" onclick="runAiAnalysisByIndex(\${index})">🔍 Analizar Conversación</button>
-              <a href="data:text/markdown;charset=utf-8,\${encodeURIComponent(a.markdown)}" download="chat_\${a.profile}_\${a.clientId}.md" class="btn-action" style="text-decoration:none;">📥 Descargar .MD</a>
-            </div>
-          </div>
-          <div id="ai-box-\${index}"></div>
-          <div class="chat-transcript" id="transcript-\${index}">\${a.markdown}</div>
-        </div>
-      \`).join('');
-    }
-
-    async function runAiAnalysisByIndex(index) {
-      const audit = globalAuditsList[index];
-      if (!audit) return;
-
-      const box = document.getElementById('ai-box-' + index);
-      box.innerHTML = '<p style="color:#c4b5fd; font-size:12px; margin:8px 0;">🤖 Analizando diálogo con IA en busca de infracciones...</p>';
-
-      try {
-        const res = await fetch(\`\${API_URL}/api/chats/analyze-single\`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            operator: audit.operator,
-            profile: audit.profile,
-            clientName: audit.clientName,
-            clientId: audit.clientId,
-            markdown: audit.markdown
-          })
-        });
-        const data = await res.json();
-        const r = data.aiReport;
-        const isGood = r.score >= 70;
-
-        box.innerHTML = \`
-          <div style="background:#0b132b; border:1px solid #8b5cf6; border-radius:8px; padding:12px; margin-top:8px;">
-            <div style="font-weight:bold; font-size:13px; color:\${isGood ? '#34d399' : '#f87171'}; margin-bottom:4px;">🎯 Puntaje: \${r.score}/100 [Riesgo: \${r.riskLevel}]</div>
-            <div style="font-size:11px; margin-bottom:4px;"><b>🧠 Diagnóstico:</b> \${r.diagnosis}</div>
-            <div style="font-size:11px; color:#38bdf8; margin-bottom:6px;"><b>📋 Recomendación:</b> \${r.recommendation}</div>
-            \${r.findings.map(f => \`
-              <div style="background:rgba(239,68,68,0.15); border-left:3px solid #ef4444; padding:6px; border-radius:4px; font-size:11px; margin-bottom:4px; color:#fca5a5;">
-                <b>\${f.title}:</b> \${f.description}
-              </div>
-            \`).join('')}
-          </div>
-        \`;
-      } catch (err) {
-        box.innerHTML = '<p style="color:#ef4444;">Error al procesar el análisis de IA.</p>';
-      }
-    }
-
     async function fetchFinesCount() {
       try {
         const res = await fetch(\`\${API_URL}/api/fines\`);
@@ -1053,41 +735,25 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       \`).join('');
     }
 
-    async function fetchAlertsCount() {
-      try {
-        const res = await fetch(\`\${API_URL}/api/alerts/live\`);
-        const data = await res.json();
-        document.getElementById('count-behavior-alerts').innerText = data.alerts ? data.alerts.length : 0;
-      } catch (e) {}
-    }
-
-    async function openAlertsCenterModal() {
-      document.getElementById('modal-alerts-hub').style.display = 'flex';
-      const res = await fetch(\`\${API_URL}/api/alerts/live\`);
+    async function openChatAuditsModal() {
+      document.getElementById('modal-chats').style.display = 'flex';
+      const res = await fetch(\`\${API_URL}/api/chats/audits\`);
       const data = await res.json();
-      const container = document.getElementById('alerts-hub-list');
-      if (!data.alerts || data.alerts.length === 0) {
-        container.innerHTML = '<p style="color:#10b981;">✅ No hay alertas de conducta ni Travel Misleading pendientes.</p>';
+      const container = document.getElementById('chat-audits-list');
+      if (!data.audits || data.audits.length === 0) {
+        container.innerHTML = '<p style="color:#94a3b8;">No hay conversaciones en Supabase aún. Presiona ⚡ en Talkytimes.</p>';
         return;
       }
-      container.innerHTML = data.alerts.map(a => \`
-        <div style="background:#060913; border:1px solid #ef4444; border-radius:8px; padding:12px; margin-bottom:8px;" id="alert-item-\${a.id}">
-          <div style="display:flex; justify-content:space-between; font-weight:bold; color:#f87171;">
-            <span>\${a.category}</span>
-            <span style="font-size:11px; color:#94a3b8;">👤 \${a.operatorName} | 🎯 \${a.profileName} | 💬 \${a.clientName} (ID: \${a.clientId})</span>
+      container.innerHTML = data.audits.map(a => \`
+        <div style="background:#060913; border:1px solid #1e293b; border-radius:6px; padding:12px; margin-bottom:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <span style="font-weight:bold; color:var(--accent-cyan);">👤 Op: \${a.operator} | 🎯 Perfil: \${a.profile} | 💬 Cliente: \${a.clientName} (ID: \${a.clientId})</span>
+            <a href="data:text/markdown;charset=utf-8,\${encodeURIComponent(a.markdown)}" download="chat_\${a.profile}_\${a.clientId}.md" class="btn-action" style="text-decoration:none;">📥 Descargar .MD</a>
           </div>
-          <div style="margin:6px 0; color:#fca5a5; font-size:12px; background:rgba(239,68,68,0.1); padding:6px; border-left:3px solid #ef4444;">⚠️ \${a.snippet}</div>
           <div class="chat-transcript">\${a.markdown}</div>
-          <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
-            <button class="btn-action" style="background:#064e3b; color:#34d399;" onclick="resolveAlert('\${a.id}')">✅ Atender / Resolver</button>
-            <button class="btn-action" style="background:#450a0a; color:#f87171;" onclick="dismissAlert('\${a.id}')">🗑️ Borrar</button>
-          </div>
         </div>
       \`).join('');
     }
-
-    async function resolveAlert(id) { await fetch(\`\${API_URL}/api/alerts/\${id}/resolve\`, { method: 'POST' }); document.getElementById('alert-item-' + id)?.remove(); fetchAlertsCount(); }
-    async function dismissAlert(id) { await fetch(\`\${API_URL}/api/alerts/\${id}/dismiss\`, { method: 'POST' }); document.getElementById('alert-item-' + id)?.remove(); fetchAlertsCount(); }
 
     async function openBannedWordsModal() {
       document.getElementById('modal-banned').style.display = 'flex';
@@ -1127,4 +793,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V55.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V48.0 activo en puerto ${PORT}`));
