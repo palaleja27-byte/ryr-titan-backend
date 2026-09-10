@@ -35,7 +35,7 @@ async function getAvailableGroqModel(apiKey) {
   if (cachedGroqModel) return cachedGroqModel;
   try {
     const res = await fetch('https://api.groq.com/openai/v1/models', {
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'User-Agent': 'RYR-Titan-Apex/1.0' }
+      headers: { 'Authorization': 'Bearer ' + apiKey, 'User-Agent': 'RYR-Titan-Apex/1.0' }
     });
     if (res.ok) {
       const data = await res.json();
@@ -83,7 +83,7 @@ REGLAS DE ORO:
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Authorization': 'Bearer ' + GROQ_API_KEY,
           'Content-Type': 'application/json',
           'User-Agent': 'RYR-Titan-Apex/1.0'
         },
@@ -91,7 +91,7 @@ REGLAS DE ORO:
           model: targetModel,
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: `HISTORIAL DEL CHAT:\n${fullTranscript || 'Sin historial previo.'}\n\nPETICIÓN DEL OPERADOR:\n${prompt}` }
+            { role: 'user', content: 'HISTORIAL DEL CHAT:\n' + (fullTranscript || 'Sin historial previo.') + '\n\nPETICIÓN DEL OPERADOR:\n' + prompt }
           ],
           temperature: 0.7,
           max_tokens: 850
@@ -110,11 +110,10 @@ REGLAS DE ORO:
     } catch (err) {}
   }
 
-  return `📋 Análisis sobre ${safeClient}:
-Ubicación: ${bioData?.country || 'En perfil'}. Historial revisado. Puedes pedirme mensajes de conquista o hacer preguntas específicas.`;
+  return '📋 Análisis sobre ' + safeClient + ':\nUbicación: ' + (bioData?.country || 'En perfil') + '. Historial revisado. Puedes pedirme mensajes de conquista o hacer preguntas específicas.';
 }
 
-// 3. GENERADOR Y GUARDADO DE RELEVOS DE TURNO (HANDOVERS)
+// 3. GENERADOR Y GUARDADO DE RELEVOS DE TURNO
 app.post('/api/handover/generate-and-save', async (req, res) => {
   const { operator, shift, profileName, profileId } = req.body;
   if (!profileName) return res.status(400).json({ error: 'Falta nombre de perfil' });
@@ -122,25 +121,21 @@ app.post('/api/handover/generate-and-save', async (req, res) => {
   const clientSummaries = [];
   for (let audit of recentChatAuditsRAM.values()) {
     if (audit.profile_name?.toLowerCase() === profileName.toLowerCase() || audit.profile?.toLowerCase() === profileName.toLowerCase()) {
-      clientSummaries.push(`- **Clienta: ${audit.clientName || audit.client_name} (ID: ${audit.clientId || audit.client_id})**: Conversación activa guardada.`);
+      clientSummaries.push('- **Clienta: ' + (audit.clientName || audit.client_name) + ' (ID: ' + (audit.clientId || audit.client_id) + ')**: Conversación activa guardada.');
     }
   }
 
-  const handoverId = `HANDOVER_${profileName}_${Date.now()}`;
-  const reportMarkdown = `📋 INFORME DE RELEVO DE TURNO - ${profileName.toUpperCase()}
-- **Operador Saliente:** ${operator} [Turno: ${shift}]
-- **Fecha y Hora de Entrega:** ${new Date().toLocaleString('es-CO')}
-- **Perfil Entregado:** ${profileName} (ID: ${profileId || 'N/A'})
-
----
-### 💬 Estado de las Conversaciones Clave:
-${clientSummaries.length > 0 ? clientSummaries.join('\n') : '- No se registraron extracciones manuales en este turno. Las clientas activas se encuentran al día.'}
-
----
-### 💡 Instrucciones para el Turno Siguiente:
-1. Mantener coherencia en el tono y trato con las clientas activas.
-2. Cumplir con los ciclos de barrido y seguimiento cada 30 minutos (mínimo 10 usuarias nuevas).
-3. Respetar la regla estricta de Cero Travel Misleading (sin promesas de encuentros físicos).`;
+  const handoverId = 'HANDOVER_' + profileName + '_' + Date.now();
+  const reportMarkdown = '📋 INFORME DE RELEVO DE TURNO - ' + profileName.toUpperCase() + '\n' +
+    '- **Operador Saliente:** ' + operator + ' [Turno: ' + shift + ']\n' +
+    '- **Fecha y Hora de Entrega:** ' + new Date().toLocaleString('es-CO') + '\n' +
+    '- **Perfil Entregado:** ' + profileName + ' (ID: ' + (profileId || 'N/A') + ')\n\n' +
+    '---\n### 💬 Estado de las Conversaciones Clave:\n' +
+    (clientSummaries.length > 0 ? clientSummaries.join('\n') : '- No se registraron extracciones manuales en este turno. Las clientas activas se encuentran al día.') + '\n\n' +
+    '---\n### 💡 Instrucciones para el Turno Siguiente:\n' +
+    '1. Mantener coherencia en el tono y trato con las clientas activas.\n' +
+    '2. Cumplir con los ciclos de barrido y seguimiento cada 30 minutos (mínimo 10 usuarias nuevas).\n' +
+    '3. Respetar la regla estricta de Cero Travel Misleading (sin promesas de encuentros físicos).';
 
   const handoverPayload = {
     id: handoverId,
@@ -155,9 +150,9 @@ ${clientSummaries.length > 0 ? clientSummaries.join('\n') : '- No se registraron
   shiftHandoversRAM.set(handoverId, handoverPayload);
 
   if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(`${SUPABASE_URL}/rest/v1/shift_handovers`, {
+    fetch(SUPABASE_URL + '/rest/v1/shift_handovers', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Prefer': 'resolution=merge-duplicates' },
       body: JSON.stringify(handoverPayload)
     }).catch(() => {});
   }
@@ -169,8 +164,8 @@ app.get('/api/handover/latest', async (req, res) => {
   const profileName = (req.query.profileName || '').toLowerCase().trim();
   if (SUPABASE_URL && SUPABASE_KEY && profileName) {
     try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/shift_handovers?profile_name=ilike.${profileName}&order=created_at.desc&limit=1`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      const resp = await fetch(SUPABASE_URL + '/rest/v1/shift_handovers?profile_name=ilike.' + profileName + '&order=created_at.desc&limit=1', {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
       });
       const data = await resp.json();
       if (Array.isArray(data) && data[0]) {
@@ -191,8 +186,8 @@ app.get('/api/handover/latest', async (req, res) => {
 app.get('/api/handover/all', async (req, res) => {
   if (SUPABASE_URL && SUPABASE_KEY) {
     try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/shift_handovers?select=*&order=created_at.desc&limit=60`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      const resp = await fetch(SUPABASE_URL + '/rest/v1/shift_handovers?select=*&order=created_at.desc&limit=60', {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
       });
       const data = await resp.json();
       if (Array.isArray(data)) return res.json({ success: true, handovers: data });
@@ -201,7 +196,7 @@ app.get('/api/handover/all', async (req, res) => {
   res.json({ success: true, handovers: Array.from(shiftHandoversRAM.values()).reverse() });
 });
 
-// 4. ENDPOINTS DE CHAT SUPERVISOR <-> OPERADOR
+// 4. CHAT SUPERVISOR <-> OPERADOR
 app.post('/api/supervisor/send-message', (req, res) => {
   const { operatorName, text } = req.body;
   if (!operatorName || !text) return res.status(400).json({ error: 'Faltan datos' });
@@ -212,7 +207,7 @@ app.post('/api/supervisor/send-message', (req, res) => {
   }
 
   const msgObj = {
-    id: `MSG_${Date.now()}`,
+    id: 'MSG_' + Date.now(),
     sender: 'SUPERVISOR',
     text: text.trim(),
     timestamp: Date.now()
@@ -238,7 +233,7 @@ app.post('/api/operator/reply-message', (req, res) => {
   }
 
   const msgObj = {
-    id: `REPLY_${Date.now()}`,
+    id: 'REPLY_' + Date.now(),
     sender: 'OPERATOR',
     text: text.trim(),
     timestamp: Date.now()
@@ -248,7 +243,7 @@ app.post('/api/operator/reply-message', (req, res) => {
   res.json({ success: true, message: msgObj });
 });
 
-// 5. MOTOR HEURÍSTICO DE ANÁLISIS DE PATRONES
+// 5. ANÁLISIS HEURÍSTICO DE PATRONES
 function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown) {
   const textLower = (markdown || '').toLowerCase();
   const findings = [];
@@ -297,14 +292,14 @@ function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markd
   };
 }
 
-// 6. ENDPOINTS DE AUDITORÍA Y ANÁLISIS
+// 6. ENDPOINTS DE AUDITORÍA
 app.post('/api/chats/audit-deep', async (req, res) => {
   const { operator, profile, clientName, clientId, markdown, messages } = req.body;
   if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
 
   const cleanClientId = String(clientId).trim();
   const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Cliente').trim();
-  const auditKey = `${profile}_${cleanClientId}`;
+  const auditKey = profile + '_' + cleanClientId;
   
   syncedClientsRegistry.add(cleanClientId.toLowerCase());
   syncedClientsRegistry.add(safeClientName.toLowerCase());
@@ -313,7 +308,7 @@ app.post('/api/chats/audit-deep', async (req, res) => {
 
   aiReport.findings.forEach((finding, index) => {
     if (finding.type === 'CRITICAL' || finding.type === 'WARNING') {
-      const alertId = `${auditKey}_${index}_${Date.now()}`;
+      const alertId = auditKey + '_' + index + '_' + Date.now();
       const alertEntry = {
         id: alertId,
         auditId: auditKey,
@@ -331,9 +326,9 @@ app.post('/api/chats/audit-deep', async (req, res) => {
       activeAlertsMap.set(alertId, alertEntry);
 
       if (SUPABASE_URL && SUPABASE_KEY) {
-        fetch(`${SUPABASE_URL}/rest/v1/chat_alerts`, {
+        fetch(SUPABASE_URL + '/rest/v1/chat_alerts', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
+          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Prefer': 'resolution=merge-duplicates' },
           body: JSON.stringify(alertEntry)
         }).catch(() => {});
       }
@@ -356,9 +351,9 @@ app.post('/api/chats/audit-deep', async (req, res) => {
   recentChatAuditsRAM.set(auditKey, { ...auditPayload, operator, profile, clientName: safeClientName, clientId: cleanClientId, timestamp: Date.now() });
 
   if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(`${SUPABASE_URL}/rest/v1/chat_audits`, {
+    fetch(SUPABASE_URL + '/rest/v1/chat_audits', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Prefer': 'resolution=merge-duplicates' },
       body: JSON.stringify(auditPayload)
     }).catch(() => {});
   }
@@ -382,9 +377,9 @@ app.post('/api/alerts/:id/resolve', (req, res) => {
   const alertId = req.params.id;
   if (activeAlertsMap.has(alertId)) activeAlertsMap.get(alertId).status = 'RESOLVED';
   if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(`${SUPABASE_URL}/rest/v1/chat_alerts?id=eq.${alertId}`, {
+    fetch(SUPABASE_URL + '/rest/v1/chat_alerts?id=eq.' + alertId, {
       method: 'PATCH',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'RESOLVED' })
     }).catch(() => {});
   }
@@ -395,9 +390,9 @@ app.post('/api/alerts/:id/dismiss', (req, res) => {
   const alertId = req.params.id;
   activeAlertsMap.delete(alertId);
   if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(`${SUPABASE_URL}/rest/v1/chat_alerts?id=eq.${alertId}`, {
+    fetch(SUPABASE_URL + '/rest/v1/chat_alerts?id=eq.' + alertId, {
       method: 'DELETE',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
     }).catch(() => {});
   }
   res.json({ success: true });
@@ -406,8 +401,8 @@ app.post('/api/alerts/:id/dismiss', (req, res) => {
 app.get('/api/fines', async (req, res) => {
   if (SUPABASE_URL && SUPABASE_KEY) {
     try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/operator_fines?select=*&order=created_at.desc&limit=100`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      const resp = await fetch(SUPABASE_URL + '/rest/v1/operator_fines?select=*&order=created_at.desc&limit=100', {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
       });
       const data = await resp.json();
       if (Array.isArray(data)) return res.json({ success: true, fines: data });
@@ -420,7 +415,7 @@ app.post('/api/fines/register', async (req, res) => {
   const { operator, shift, profile, clientName, clientId, reason } = req.body;
   if (!operator) return res.status(400).json({ error: 'Operador requerido' });
 
-  const fineId = `FINE_${operator}_${clientId}_${Date.now()}`;
+  const fineId = 'FINE_' + operator + '_' + clientId + '_' + Date.now();
   const finePayload = {
     id: fineId,
     operator_name: operator,
@@ -436,9 +431,9 @@ app.post('/api/fines/register', async (req, res) => {
   operatorFinesRAM.set(fineId, finePayload);
 
   if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(`${SUPABASE_URL}/rest/v1/operator_fines`, {
+    fetch(SUPABASE_URL + '/rest/v1/operator_fines', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY },
       body: JSON.stringify(finePayload)
     }).catch(() => {});
   }
@@ -446,7 +441,7 @@ app.post('/api/fines/register', async (req, res) => {
   res.json({ success: true, fine: finePayload });
 });
 
-// 8. TELEMETRÍA Y CONTROL EN VIVO
+// 8. TELEMETRÍA EN VIVO
 app.post('/api/telemetry', (req, res) => {
   const {
     operator, shift, profile, profileId,
@@ -457,7 +452,7 @@ app.post('/api/telemetry', (req, res) => {
 
   if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
 
-  const sessionKey = `${operator.toLowerCase().trim()}_${profile.toLowerCase().trim()}`;
+  const sessionKey = operator.toLowerCase().trim() + '_' + profile.toLowerCase().trim();
   if (status === 'OFFLINE') {
     liveTelemetryMap.delete(sessionKey);
     return res.json({ success: true });
@@ -518,8 +513,8 @@ app.get('/api/chats/synced-ids', async (req, res) => {
   const syncedSet = new Set(syncedClientsRegistry);
   if (SUPABASE_URL && SUPABASE_KEY && profile) {
     try {
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?profile_name=eq.${profile}&select=client_id,client_name`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      const resp = await fetch(SUPABASE_URL + '/rest/v1/chat_audits?profile_name=eq.' + profile + '&select=client_id,client_name', {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
       });
       const data = await resp.json();
       if (Array.isArray(data)) {
@@ -536,8 +531,8 @@ app.get('/api/chats/synced-ids', async (req, res) => {
 app.get('/api/chats/audits', async (req, res) => {
   if (SUPABASE_URL && SUPABASE_KEY) {
     try {
-      const response = await fetch(`${SUPABASE_URL}/rest/v1/chat_audits?select=*&order=updated_at.desc&limit=60`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      const response = await fetch(SUPABASE_URL + '/rest/v1/chat_audits?select=*&order=updated_at.desc&limit=60', {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
       });
       const data = await response.json();
       if (Array.isArray(data)) {
@@ -552,7 +547,7 @@ app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicB
 app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
 
-// 9. DASHBOARD EMBEBIDO CON BOTÓN DE ANALIZAR Y BOTÓN DE ALERTAS ENCABEZADO
+// 9. DASHBOARD EMBEBIDO CON BOTÓN DE ANALIZAR Y BOTÓN DE ALERTAS JUNTO A MULTAS
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -942,7 +937,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     async function resolveAlert(id) { await fetch(API_URL + '/api/alerts/' + id + '/resolve', { method: 'POST' }); document.getElementById('alert-item-' + id)?.remove(); fetchAlertsCount(); }
     async function dismissAlert(id) { await fetch(API_URL + '/api/alerts/' + id + '/dismiss', { method: 'POST' }); document.getElementById('alert-item-' + id)?.remove(); fetchAlertsCount(); }
 
-    // HISTORIAL DE CHATS CON BOTÓN [🔍 Analizar Conversación]
+    // HISTORIAL DE CHATS CON BOTÓN [🔍 Analizar Conversación] JUNTO A [Descargar .MD]
     async function openChatAuditsModal() {
       document.getElementById('modal-chats').style.display = 'flex';
       const res = await fetch(API_URL + '/api/chats/audits');
@@ -1045,4 +1040,4 @@ app.get('/', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
 app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
 
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V60.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V65.0 activo en puerto ${PORT}`));
