@@ -1,86 +1,102 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim();
-const SUPABASE_KEY = (process.env.SUPABASE_KEY || '').trim();
-// CLAVES DE IA (Configura ambas en Render para fallo cero)
-const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-
 app.use(cors());
-app.use(express.json({ limit: '20mb' }));
+app.use(express.json({ limit: '25mb' }));
 
+// Memoria centralizada de telemetría (Volátil para máxima velocidad)
 const liveTelemetryMap = new Map();
 const recentChatAuditsRAM = new Map();
+const operatorFinesRAM = new Map();
 
-// 1. MOTOR DE IA MAESTRO (GROQ con Fallback a OpenAI)
-async function callAiEngine(systemPrompt, userPrompt) {
-  // Intento 1: GROQ (Ultra rápido)
-  if (GROQ_API_KEY) {
-    try {
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: "llama3-70b-8192",
-          messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
-          temperature: 0.7
-        })
-      });
-      const data = await res.json();
-      if (data.choices?.[0]?.message?.content) return data.choices[0].message.content;
-    } catch (e) { console.error("Fallo Groq, saltando a OpenAI..."); }
-  }
+// --- RUTAS DE LA API ---
 
-  // Intento 2: OpenAI (Máxima confiabilidad)
-  if (OPENAI_API_KEY) {
-    try {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }]
-        })
-      });
-      const data = await res.json();
-      return data.choices?.[0]?.message?.content || "Error: Motores de IA fuera de línea.";
-    } catch (e) { return "Error crítico de conexión."; }
-  }
-  return "Configure las API Keys en el servidor.";
-}
+// 1. Recibir datos de la extensión (Heartbeat)
+app.post('/api/telemetry', (req, res) => {
+  const data = req.body;
+  if (!data.operator || !data.profile) return res.status(400).json({ error: 'Incompleto' });
 
-// 2. ENDPOINT: ASISTENTE ESTRATEGA (Para el operador)
-app.post('/api/intelligence/query', async (req, res) => {
-  const { query, liveMarkdown, clientName, profileName } = req.body;
+  // Llave única por operador y perfil
+  const sessionKey = `${data.operator.toLowerCase().trim()}_${data.profile.toLowerCase().trim()}`;
   
-  const systemPrompt = `Eres un experto estratega en dating de la agencia RYR TITAN. 
-  Tu objetivo: Analizar el chat y ayudar al operador a FACTURAR MÁS moviendo al usuario de CHAT a CARTAS.
-  - Identifica si el usuario está emocionado, solo o tiene curiosidad profunda: ¡Esa es la señal para CARTA!
-  - REGLA: Nunca Travel Misleading (prometer verse).
-  - Si detectas oportunidad de carta, di: "🚨 ¡OPORTUNIDAD DE CARTA DETECTADA!" y da el mensaje gancho.
-  - Usa el historial adjunto para ser coherente.`;
+  if (data.status === 'OFFLINE') {
+    liveTelemetryMap.delete(sessionKey);
+    return res.json({ success: true });
+  }
 
-  const answer = await callAiEngine(systemPrompt, `Contexto: Perfil ${profileName} hablando con ${clientName}.\nHistorial:\n${liveMarkdown}\nPregunta: ${query}`);
-  res.json({ answer });
+  // Guardar con marca de tiempo actual
+  liveTelemetryMap.set(sessionKey, {
+    ...data,
+    lastSeen: Date.now(),
+    pendingReadLetters: parseInt(data.pendingReadLetters || 0, 10),
+    idleSeconds: parseInt(data.idleSeconds || 0, 10)
+  });
+
+  res.json({ success: true });
 });
 
-// 3. ENDPOINT: ANALIZADOR DE PATRONES (Para el monitor)
-app.post('/api/chats/analyze-patterns', async (req, res) => {
-  const { markdown } = req.body;
-  const systemPrompt = `Eres un auditor forense de chats de dating. Analiza este historial y busca errores del operador:
-  1. Manipulación agresiva para regalos (pedir directamente sin mérito).
-  2. Error de identidad (llamar al perfil por otro nombre).
-  3. Pérdida de hilo/contexto (no responder a lo que el cliente pregunta).
-  4. Mal trato.
-  Responde con un puntaje de 0 a 100 y una lista de alertas ROJAS.`;
+// 2. Enviar datos consolidados al Monitor (IFRAME)
+app.get('/api/telemetry/live', (req, res) => {
+  const now = Date.now();
+  const operatorsMap = new Map();
 
-  const report = await callAiEngine(systemPrompt, markdown);
-  res.json({ report });
+  for (const [key, data] of liveTelemetryMap.entries()) {
+    // Si no ha enviado señal en 40 segundos, lo borramos (Desconectado)
+    if (now - data.lastSeen > 40000) {
+      liveTelemetryMap.delete(key);
+      continue;
+    }
+
+    const opKey = data.operator.toLowerCase().trim();
+    if (!operatorsMap.has(opKey)) {
+      operatorsMap.set(opKey, {
+        operatorName: data.operator,
+        shift: data.shift || 'Tarde',
+        lastSeen: data.lastSeen,
+        hasExpiredSlaGlobal: false,
+        totalLetters: 0,
+        profiles: []
+      });
+    }
+
+    const opEntry = operatorsMap.get(opKey);
+    opEntry.profiles.push(data);
+    opEntry.totalLetters += data.pendingReadLetters;
+    if (data.hasExpiredSla) opEntry.hasExpiredSlaGlobal = true;
+    if (data.lastSeen > opEntry.lastSeen) opEntry.lastSeen = data.lastSeen;
+  }
+
+  res.json({ success: true, operators: Array.from(operatorsMap.values()) });
 });
 
-// ... (Demás endpoints de telemetría y multas que ya tenías)
+// 3. Multas e Historial
+app.post('/api/fines/register', (req, res) => {
+  const fineId = `FINE_${Date.now()}`;
+  operatorFinesRAM.set(fineId, { ...req.body, created_at: new Date().toISOString() });
+  res.json({ success: true });
+});
 
-app.listen(PORT, () => console.log(`🚀 Master AI Engine V3.0 activo en puerto ${PORT}`));
+app.get('/api/fines', (req, res) => res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() }));
+
+// 4. Auditoría de Chats
+app.post('/api/chats/audit-deep', (req, res) => {
+  recentChatAuditsRAM.set(`${req.body.profile}_${req.body.clientId}`, { ...req.body, timestamp: Date.now() });
+  res.json({ success: true });
+});
+
+app.get('/api/chats/audits', (req, res) => res.json({ success: true, audits: Array.from(recentChatAuditsRAM.values()).reverse() }));
+
+// 5. Palabras Prohibidas
+app.get('/api/banned-words', (req, res) => res.json({ words: ['whatsapp', 'skype', 'email', 'instagram', 'telegram', 'facebook', 'prometo'] }));
+
+// --- SERVIR MONITOR HTML ---
+// Importante: Definir monitor.html al final para no interferir con la API
+app.get(['/', '/monitor', '/monitor.html'], (req, res) => {
+  res.sendFile(path.join(__dirname, 'monitor.html'));
+});
+
+app.listen(PORT, () => console.log(`🚀 RYR TITAN ENGINE V39 activo en puerto ${PORT}`));
