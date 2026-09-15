@@ -2,464 +2,113 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RYR TITAN APEX - COMMAND & AUDIT CENTER</title>
+  <title>RYR TITAN APEX - SUPERVISIÓN LIVE</title>
   <style>
     :root {
-      --bg-main: #060913;
-      --bg-card: #0e1526;
-      --bg-card-hover: #151f38;
-      --accent-green: #10b981;
-      --accent-cyan: #00ffcc;
-      --accent-orange: #f59e0b;
-      --accent-red: #ef4444;
-      --accent-purple: #a855f7;
-      --accent-gold: #fbbf24;
-      --text-main: #f8fafc;
-      --text-muted: #94a3b8;
-      --border-color: #1e293b;
+      --bg-main: #060913; --bg-card: #0e1526; --accent-cyan: #00ffcc;
+      --accent-red: #ef4444; --accent-blue: #38bdf8;
     }
-
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      background-color: var(--bg-main);
-      color: var(--text-main);
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      padding: 12px;
-      overflow-x: hidden;
-    }
-
+    body { background: var(--bg-main); color: #fff; font-family: 'Segoe UI', sans-serif; margin: 0; padding: 15px; }
+    
     header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: #0b132b;
-      border: 1px solid var(--border-color);
-      border-left: 4px solid var(--accent-cyan);
-      border-radius: 8px;
-      padding: 10px 16px;
-      margin-bottom: 12px;
+      display: flex; justify-content: space-between; align-items: center;
+      background: #0b132b; padding: 12px 20px; border-radius: 10px;
+      border: 1px solid #1e293b; border-left: 4px solid var(--accent-cyan); margin-bottom: 20px;
     }
 
-    .brand-title {
-      font-size: 14px;
-      font-weight: 900;
-      letter-spacing: 1.5px;
-      color: var(--accent-cyan);
+    .btn-group { display: flex; gap: 8px; }
+    .btn-nav {
+      background: #1c2541; color: #fff; border: 1px solid #3a506b;
+      padding: 7px 14px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer;
     }
-
-    .metrics-bar {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
-
-    .metric-pill {
-      background: #1c2541;
-      padding: 5px 12px;
-      border-radius: 6px;
-      font-size: 11px;
-      font-weight: bold;
-      border: 1px solid #3a506b;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .metric-pill.danger {
-      border-color: var(--accent-red);
-      color: var(--accent-red);
-      background: rgba(239, 68, 68, 0.15);
-      animation: alertPulse 1.5s infinite;
-    }
-
-    .metric-pill.afk-pill {
-      border-color: var(--accent-purple);
-      color: var(--accent-purple);
-      background: rgba(168, 85, 247, 0.15);
-    }
-
-    .btn-action {
-      background: #1e293b;
-      color: #fff;
-      border: 1px solid #3a506b;
-      padding: 5px 11px;
-      border-radius: 6px;
-      font-size: 11px;
-      font-weight: bold;
-      cursor: pointer;
-      transition: 0.2s;
-    }
-    .btn-action:hover { border-color: var(--accent-green); color: var(--accent-green); }
-    .btn-fines { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(245, 158, 11, 0.1); }
-
-    .filters-bar {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 12px;
-      align-items: center;
-    }
-
-    .filter-btn {
-      background: #1c2541;
-      color: var(--text-muted);
-      border: 1px solid var(--border-color);
-      padding: 4px 10px;
-      border-radius: 4px;
-      font-size: 11px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-
-    .filter-btn.active, .filter-btn:hover {
-      background: var(--accent-green);
-      color: #000;
-      border-color: var(--accent-green);
-    }
+    .btn-nav:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
 
     .grid-operators {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-      gap: 12px;
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 15px;
     }
 
     .operator-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
-      padding: 12px;
-      transition: transform 0.2s;
-      position: relative;
+      background: var(--bg-card); border: 1px solid #1e293b;
+      border-radius: 12px; padding: 15px; transition: 0.3s;
+    }
+    .operator-card.in-breach { border-color: var(--accent-red); box-shadow: 0 0 15px rgba(239, 68, 68, 0.2); }
+
+    .op-header {
+      display: flex; justify-content: space-between; border-bottom: 1px solid #1e293b;
+      padding-bottom: 10px; margin-bottom: 12px;
     }
 
-    .operator-card.in-breach { border-color: var(--accent-red) !important; animation: alertPulse 1.5s infinite; }
-    .operator-card.is-afk { border-color: var(--accent-purple) !important; }
-
-    .operator-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 1px solid var(--border-color);
-      padding-bottom: 8px;
-      margin-bottom: 10px;
+    .profile-row {
+      background: #060913; border: 1px solid #1e293b; border-radius: 8px;
+      padding: 10px; margin-bottom: 8px;
     }
 
-    .operator-name { font-size: 13px; font-weight: 800; color: #fff; }
-    .shift-tag { font-size: 10px; background: #1e293b; color: #38bdf8; padding: 2px 6px; border-radius: 4px; font-weight: bold; }
-
-    /* FILA DE CRONÓMETROS EN VIVO */
-    .profile-live-box {
-      background: #060913;
-      border: 1px solid #1e293b;
-      border-radius: 6px;
-      padding: 8px;
-      margin-bottom: 8px;
-    }
-    .live-timers-container {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px;
-      margin-top: 6px;
-    }
-    .live-chat-timer-badge {
-      font-size: 10px;
-      font-weight: bold;
-      font-family: monospace;
-      padding: 2px 6px;
-      border-radius: 4px;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-    }
-    .timer-ok { background: #064e3b; color: #34d399; border: 1px solid #10b981; }
-    .timer-expired { background: #450a0a; color: #f87171; border: 1px solid #ef4444; animation: alertPulse 1s infinite; }
-
-    /* MODALES */
-    .modal-overlay {
-      display: none;
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0,0,0,0.88);
-      backdrop-filter: blur(5px);
-      z-index: 99999;
-      justify-content: center;
-      align-items: center;
-    }
-    .modal-content {
-      background: #0e1526;
-      border: 1px solid var(--accent-cyan);
-      border-radius: 10px;
-      width: 900px;
-      max-width: 95%;
-      max-height: 88vh;
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      color: #fff;
-    }
-    .chat-transcript {
-      background: #0b132b;
-      border: 1px solid #1e293b;
-      border-radius: 6px;
-      padding: 12px;
-      font-family: monospace;
-      font-size: 12px;
-      white-space: pre-wrap;
-      max-height: 250px;
-      overflow-y: auto;
-      line-height: 1.6;
-      color: #cbd5e1;
+    .timer-pill {
+      display: inline-block; font-size: 10px; font-weight: bold;
+      padding: 2px 6px; border-radius: 4px; margin: 2px;
+      background: #450a0a; color: #f87171; border: 1px solid #ef4444;
     }
 
-    .ai-report-box {
-      background: #0b132b;
-      border: 1px solid var(--accent-purple);
-      border-radius: 8px;
-      padding: 14px;
-      margin-top: 10px;
-    }
-
-    @keyframes alertPulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+    .stat-badge { font-size: 11px; color: var(--accent-blue); font-weight: bold; }
   </style>
 </head>
 <body>
 
-  <header>
-    <div class="brand-title">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & AUDITORÍA</div>
-    <div class="metrics-bar">
-      <div class="metric-pill">👥 Ops: <span id="total-operators">0</span></div>
-      <div class="metric-pill">✉️ Cartas: <span id="total-letters">0</span></div>
-      <div id="alert-pill" class="metric-pill danger" style="display:none;">🚨 SLA: <span id="total-alerts">0</span></div>
-      <button class="btn-action btn-fines" onclick="openFinesModal()">💰 Multas COP (<span id="total-fines-count">0</span>)</button>
-      <button class="btn-action" onclick="openChatAuditsModal()">📄 Historial de Chats (MD)</button>
-      <button class="btn-action" onclick="openBannedWordsModal()">🛡️ Palabras Prohibidas</button>
-      <button id="btn-sound" class="btn-action" onclick="toggleAudio()">🔇 Sonido: OFF</button>
-    </div>
-  </header>
-
-  <div class="filters-bar">
-    <button class="filter-btn active" onclick="setShiftFilter('ALL')">TODOS</button>
-    <button class="filter-btn" onclick="setShiftFilter('Mañana')">Mañana</button>
-    <button class="filter-btn" onclick="setShiftFilter('Tarde')">Tarde</button>
-    <button class="filter-btn" onclick="setShiftFilter('Noche')">Noche</button>
+<header>
+  <div style="font-weight: 900; letter-spacing: 1px; color: var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & RENDIMIENTO</div>
+  <div class="btn-group">
+    <button class="btn-nav">📋 Relevos de Turno</button>
+    <button class="btn-nav">📊 Productividad</button>
+    <button class="btn-nav" style="color: #fbbf24;">💰 Multas ($10.000)</button>
+    <button class="btn-nav">📄 Historial de Chats</button>
+    <button class="btn-nav">🛡️ Palabras</button>
   </div>
+</header>
 
-  <div id="operators-grid" class="grid-operators"></div>
+<div id="operators-grid" class="grid-operators">
+    <!-- Cargando operadores... -->
+</div>
 
-  <!-- MODAL MULTAS -->
-  <div id="modal-fines" class="modal-overlay">
-    <div class="modal-content">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:var(--accent-gold);">💰 HISTORIAL DE MULTAS GENERADAS ($10.000 COP)</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
-      </div>
-      <div id="fines-list-container" style="overflow-y:auto; flex:1;"></div>
-    </div>
-  </div>
+<script>
+  async function refresh() {
+    try {
+      const res = await fetch('/api/telemetry/live');
+      const data = await res.json();
+      const grid = document.getElementById('operators-grid');
+      
+      if (!data.operators || data.operators.length === 0) {
+        grid.innerHTML = '<p style="color: #64748b; padding: 20px;">No hay operadores conectados con la extensión activa...</p>';
+        return;
+      }
 
-  <!-- MODAL CHATS -->
-  <div id="modal-chats" class="modal-overlay">
-    <div class="modal-content">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:var(--accent-cyan);">📄 AUDITORÍA HISTÓRICA & ANÁLISIS DE PATRONES IA</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
-      </div>
-      <div id="chat-audits-list" style="overflow-y:auto; flex:1;"></div>
-    </div>
-  </div>
-
-  <!-- MODAL PALABRAS -->
-  <div id="modal-banned" class="modal-overlay">
-    <div class="modal-content" style="width:500px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:var(--accent-cyan);">🛡️ PALABRAS PROHIBIDAS</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
-      </div>
-      <div style="display:flex; gap:8px;">
-        <input type="text" id="input-new-word" placeholder="Nueva palabra..." style="flex:1; padding:8px; background:#060913; border:1px solid #3a506b; color:#fff; border-radius:6px;">
-        <button class="btn-action" style="background:#10b981; color:#000;" onclick="addBannedWord()">+ Agregar</button>
-      </div>
-      <div id="banned-words-list" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;"></div>
-    </div>
-  </div>
-
-  <script>
-    let activeFilter = 'ALL';
-    let soundEnabled = false;
-    let audioCtx = null;
-    let globalAuditsList = [];
-    const API_URL = window.location.origin;
-
-    function toggleAudio() {
-      soundEnabled = !soundEnabled;
-      const btn = document.getElementById('btn-sound');
-      btn.innerText = soundEnabled ? '🔊 Sonido: ON' : '🔇 Sonido: OFF';
-      if (soundEnabled && !audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
-
-    function playBeep() {
-      if (!soundEnabled || !audioCtx) return;
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      osc.frequency.value = 880;
-      gain.gain.value = 0.1;
-      osc.start();
-      osc.stop(audioCtx.currentTime + 0.2);
-    }
-
-    function setShiftFilter(shift) {
-      activeFilter = shift;
-      document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.toggle('active', btn.innerText === shift || (shift === 'ALL' && btn.innerText === 'TODOS')));
-      fetchLive();
-    }
-
-    async function fetchLive() {
-      try {
-        const res = await fetch(`${API_URL}/api/telemetry/live`);
-        const data = await res.json();
-        const grid = document.getElementById('operators-grid');
-        grid.innerHTML = '';
-        let totalL = 0, totalA = 0;
-
-        const filtered = (data.operators || []).filter(op => activeFilter === 'ALL' || op.shift === activeFilter);
-
-        filtered.forEach(op => {
-          let profilesHtml = op.profiles.map(p => {
-            totalL += p.pendingReadLetters;
-            const timersHtml = (p.activeChatTimersList || []).map(t => {
-              if (t.isExpired) totalA++;
-              return `<span class="live-chat-timer-badge ${t.isExpired ? 'timer-expired' : 'timer-ok'}">💬 ${t.contact}: ${t.remaining}s</span>`;
-            }).join('');
-
-            return `
-              <div class="profile-live-box">
-                <div style="display:flex; justify-content:space-between; font-size:12px;">
-                  <span style="font-weight:bold; color:#00ffcc;">🎯 ${p.profileName}</span>
-                  <span style="color:#38bdf8;">✉️ ${p.pendingReadLetters} cartas</span>
-                </div>
-                <div class="live-timers-container">${timersHtml || '<span style="font-size:10px; color:#94a3b8;">Sin chats pendientes</span>'}</div>
-              </div>`;
-          }).join('');
-
-          grid.innerHTML += `
-            <div class="operator-card ${op.hasExpiredSlaGlobal ? 'in-breach' : ''}">
-              <div class="operator-header">
-                <span class="operator-name">👤 ${op.operatorName}</span>
-                <span class="shift-tag">${op.shift}</span>
+      grid.innerHTML = data.operators.map(op => `
+        <div class="operator-card ${op.hasExpiredSlaGlobal ? 'in-breach' : ''}">
+          <div class="op-header">
+            <span style="font-weight: 800;">👤 ${op.operatorName}</span>
+            <span style="font-size: 10px; color: #38bdf8;">${op.shift}</span>
+          </div>
+          ${op.profiles.map(p => `
+            <div class="profile-row">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size: 12px; font-weight: bold; color: var(--accent-cyan);">🎯 ${p.profileName}</span>
+                <span class="stat-badge">✉️ ${p.pendingReadLetters} cartas</span>
               </div>
-              <div class="profiles-list">${profilesHtml}</div>
-            </div>`;
-        });
-
-        document.getElementById('total-operators').innerText = filtered.length;
-        document.getElementById('total-letters').innerText = totalL;
-        const alertPill = document.getElementById('alert-pill');
-        if (totalA > 0) {
-          alertPill.style.display = 'flex';
-          document.getElementById('total-alerts').innerText = totalA;
-          playBeep();
-        } else alertPill.style.display = 'none';
-
-      } catch (e) {}
-    }
-
-    async function openFinesModal() {
-      document.getElementById('modal-fines').style.display = 'flex';
-      const res = await fetch(`${API_URL}/api/fines`);
-      const data = await res.json();
-      document.getElementById('fines-list-container').innerHTML = (data.fines || []).map(f => `
-        <div style="background:#060913; border:1px solid #f59e0b; border-radius:8px; padding:12px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
-          <div>
-            <div style="font-weight:bold; color:#fde68a;">👤 ${f.operator_name} - 🎯 ${f.profile_name}</div>
-            <div style="font-size:11px; color:#94a3b8;">${f.reason}</div>
-          </div>
-          <div style="color:#ef4444; font-weight:900;">-$10.000 COP</div>
-        </div>`).join('');
-    }
-
-    async function openChatAuditsModal() {
-      document.getElementById('modal-chats').style.display = 'flex';
-      const res = await fetch(`${API_URL}/api/chats/audits`);
-      const data = await res.json();
-      globalAuditsList = data.audits || [];
-      document.getElementById('chat-audits-list').innerHTML = globalAuditsList.map((a, index) => `
-        <div style="background:#060913; border:1px solid #1e293b; border-radius:8px; padding:12px; margin-bottom:12px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <span style="font-weight:bold; color:#00ffcc;">👤 Op: ${a.operator} | 🎯 Perfil: ${a.profile} | 💬 Cliente: ${a.clientName}</span>
-            <div style="display:flex; gap:8px;">
-              <button class="btn-action" style="border-color:#8b5cf6; color:#c4b5fd;" onclick="runAiAnalysis(${index})">🔍 Analizar con IA</button>
-              <a href="data:text/markdown;charset=utf-8,${encodeURIComponent(a.markdown)}" download="chat_${a.profile}.md" class="btn-action" style="text-decoration:none;">📥 Descargar .MD</a>
+              <div style="margin-top: 8px;">
+                ${(p.activeChatTimersList || []).map(t => `
+                  <span class="timer-pill" title="Mensaje de ${t.contact}">💬 ${t.contact}: ${t.remaining}s</span>
+                `).join('')}
+              </div>
             </div>
-          </div>
-          <div id="ai-box-${index}"></div>
-          <div class="chat-transcript" id="transcript-${index}">${a.markdown}</div>
-        </div>`).join('');
-    }
+          `).join('')}
+          <div style="text-align:right; font-size:9px; color:#475569; margin-top:5px;">Visto hace ${Math.floor((Date.now() - op.lastSeen)/1000)}s</div>
+        </div>
+      `).join('');
 
-    async function runAiAnalysis(index) {
-      const audit = globalAuditsList[index];
-      const box = document.getElementById('ai-box-' + index);
-      box.innerHTML = '<p style="color:#c4b5fd; font-size:11px;">🤖 Analizando patrones de conducta con IA...</p>';
+    } catch (e) { console.error("Error UI:", e); }
+  }
 
-      try {
-        const res = await fetch(`${API_URL}/api/chats/analyze-single`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ operator: audit.operator, profile: audit.profile, clientName: audit.clientName, clientId: audit.clientId, markdown: audit.markdown })
-        });
-        const data = await res.json();
-        const r = data.aiReport;
-        box.innerHTML = `
-          <div class="ai-report-box">
-            <div style="font-weight:bold; color:${r.score > 70 ? '#10b981' : '#ef4444'};">Puntaje: ${r.score}/100 [Riesgo: ${r.riskLevel}]</div>
-            <div style="font-size:11px; margin-top:4px;"><b>Diagnóstico:</b> ${r.diagnosis}</div>
-            <div style="font-size:11px; color:#38bdf8; margin-top:4px;"><b>Recomendación:</b> ${r.recommendation}</div>
-          </div>`;
-      } catch (e) { box.innerHTML = '<p style="color:#ef4444;">Error en análisis.</p>'; }
-    }
-
-    async function openBannedWordsModal() {
-      document.getElementById('modal-banned').style.display = 'flex';
-      const res = await fetch(`${API_URL}/api/banned-words`);
-      const data = await res.json();
-      document.getElementById('banned-words-list').innerHTML = (data.words || []).map(w => `
-        <div style="background:#1c2541; border:1px solid #ef4444; color:#fca5a5; padding:3px 8px; border-radius:4px; font-size:11px;">
-          ${w} <span style="cursor:pointer; font-weight:bold; margin-left:5px;" onclick="delWord('${w}')">✕</span>
-        </div>`).join('');
-    }
-
-    async function addBannedWord() {
-      const word = document.getElementById('input-new-word').value.trim();
-      if (!word) return;
-      await fetch(`${API_URL}/api/banned-words`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word }) });
-      document.getElementById('input-new-word').value = '';
-      openBannedWordsModal();
-    }
-
-    async function delWord(word) {
-      await fetch(`${API_URL}/api/banned-words/delete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word }) });
-      openBannedWordsModal();
-    }
-
-    async function fetchFinesCount() {
-      try {
-        const res = await fetch(`${API_URL}/api/fines`);
-        const data = await res.json();
-        document.getElementById('total-fines-count').innerText = data.fines ? data.fines.length : 0;
-      } catch (e) {}
-    }
-
-    function closeModals() { document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none'); }
-
-    setInterval(fetchLive, 2000);
-    fetchLive();
-  </script>
+  setInterval(refresh, 2000);
+  refresh();
+</script>
 </body>
 </html>
