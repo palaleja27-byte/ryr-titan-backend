@@ -2,113 +2,47 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>RYR TITAN APEX - SUPERVISIÓN LIVE</title>
+  <title>RYR TITAN - MONITOR ESTABLE</title>
   <style>
-    :root {
-      --bg-main: #060913; --bg-card: #0e1526; --accent-cyan: #00ffcc;
-      --accent-red: #ef4444; --accent-blue: #38bdf8;
-    }
-    body { background: var(--bg-main); color: #fff; font-family: 'Segoe UI', sans-serif; margin: 0; padding: 15px; }
-    
-    header {
-      display: flex; justify-content: space-between; align-items: center;
-      background: #0b132b; padding: 12px 20px; border-radius: 10px;
-      border: 1px solid #1e293b; border-left: 4px solid var(--accent-cyan); margin-bottom: 20px;
-    }
-
-    .btn-group { display: flex; gap: 8px; }
-    .btn-nav {
-      background: #1c2541; color: #fff; border: 1px solid #3a506b;
-      padding: 7px 14px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer;
-    }
-    .btn-nav:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
-
-    .grid-operators {
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 15px;
-    }
-
-    .operator-card {
-      background: var(--bg-card); border: 1px solid #1e293b;
-      border-radius: 12px; padding: 15px; transition: 0.3s;
-    }
-    .operator-card.in-breach { border-color: var(--accent-red); box-shadow: 0 0 15px rgba(239, 68, 68, 0.2); }
-
-    .op-header {
-      display: flex; justify-content: space-between; border-bottom: 1px solid #1e293b;
-      padding-bottom: 10px; margin-bottom: 12px;
-    }
-
-    .profile-row {
-      background: #060913; border: 1px solid #1e293b; border-radius: 8px;
-      padding: 10px; margin-bottom: 8px;
-    }
-
-    .timer-pill {
-      display: inline-block; font-size: 10px; font-weight: bold;
-      padding: 2px 6px; border-radius: 4px; margin: 2px;
-      background: #450a0a; color: #f87171; border: 1px solid #ef4444;
-    }
-
-    .stat-badge { font-size: 11px; color: var(--accent-blue); font-weight: bold; }
+    body { background: #060913; color: #fff; font-family: sans-serif; padding: 20px; }
+    header { background: #0b132b; padding: 15px; border-radius: 8px; border-bottom: 2px solid #00ffcc; margin-bottom: 20px; display: flex; justify-content: space-between; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px; }
+    .card { background: #0e1526; border: 1px solid #1e293b; border-radius: 10px; padding: 15px; }
+    .card.alert { border-color: #ef4444; box-shadow: 0 0 10px rgba(239, 68, 68, 0.2); }
+    .badge { font-size: 11px; padding: 3px 8px; border-radius: 4px; background: #1c2541; color: #00ffcc; }
+    .status-alert { color: #ef4444; font-weight: bold; }
   </style>
 </head>
 <body>
+  <header>
+    <div style="font-weight: 900;">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE</div>
+    <div id="stats">Cargando...</div>
+  </header>
+  <div id="operators-grid" class="grid"></div>
 
-<header>
-  <div style="font-weight: 900; letter-spacing: 1px; color: var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & RENDIMIENTO</div>
-  <div class="btn-group">
-    <button class="btn-nav">📋 Relevos de Turno</button>
-    <button class="btn-nav">📊 Productividad</button>
-    <button class="btn-nav" style="color: #fbbf24;">💰 Multas ($10.000)</button>
-    <button class="btn-nav">📄 Historial de Chats</button>
-    <button class="btn-nav">🛡️ Palabras</button>
-  </div>
-</header>
-
-<div id="operators-grid" class="grid-operators">
-    <!-- Cargando operadores... -->
-</div>
-
-<script>
-  async function refresh() {
-    try {
-      const res = await fetch('/api/telemetry/live');
-      const data = await res.json();
-      const grid = document.getElementById('operators-grid');
-      
-      if (!data.operators || data.operators.length === 0) {
-        grid.innerHTML = '<p style="color: #64748b; padding: 20px;">No hay operadores conectados con la extensión activa...</p>';
-        return;
-      }
-
-      grid.innerHTML = data.operators.map(op => `
-        <div class="operator-card ${op.hasExpiredSlaGlobal ? 'in-breach' : ''}">
-          <div class="op-header">
-            <span style="font-weight: 800;">👤 ${op.operatorName}</span>
-            <span style="font-size: 10px; color: #38bdf8;">${op.shift}</span>
-          </div>
-          ${op.profiles.map(p => `
-            <div class="profile-row">
-              <div style="display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-size: 12px; font-weight: bold; color: var(--accent-cyan);">🎯 ${p.profileName}</span>
-                <span class="stat-badge">✉️ ${p.pendingReadLetters} cartas</span>
-              </div>
-              <div style="margin-top: 8px;">
-                ${(p.activeChatTimersList || []).map(t => `
-                  <span class="timer-pill" title="Mensaje de ${t.contact}">💬 ${t.contact}: ${t.remaining}s</span>
-                `).join('')}
-              </div>
+  <script>
+    async function update() {
+      try {
+        const res = await fetch('/api/telemetry/live');
+        const data = await res.json();
+        const grid = document.getElementById('operators-grid');
+        grid.innerHTML = data.operators.map(op => `
+          <div class="card ${op.hasExpiredSla ? 'alert' : ''}">
+            <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+              <b>👤 ${op.operatorName}</b>
+              <span style="font-size:10px;">${op.shift}</span>
             </div>
-          `).join('')}
-          <div style="text-align:right; font-size:9px; color:#475569; margin-top:5px;">Visto hace ${Math.floor((Date.now() - op.lastSeen)/1000)}s</div>
-        </div>
-      `).join('');
-
-    } catch (e) { console.error("Error UI:", e); }
-  }
-
-  setInterval(refresh, 2000);
-  refresh();
-</script>
+            <div style="font-size:13px; color:#00ffcc;">🎯 Perfil: ${op.profileName}</div>
+            <div style="font-size:12px; margin-top:5px;">✉️ Cartas: ${op.pendingReadLetters}</div>
+            ${op.hasExpiredSla ? '<div class="status-alert">🚨 SLA VENCIDO (+2m)</div>' : ''}
+            <div style="font-size:9px; color:#475569; margin-top:10px;">Visto hace: ${Math.floor((Date.now()-op.lastSeen)/1000)}s</div>
+          </div>
+        `).join('');
+        document.getElementById('stats').innerText = `Conectados: ${data.operators.length}`;
+      } catch (e) {}
+    }
+    setInterval(update, 2000);
+    update();
+  </script>
 </body>
 </html>
