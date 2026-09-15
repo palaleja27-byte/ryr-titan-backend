@@ -2,47 +2,423 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>RYR TITAN - MONITOR ESTABLE</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RYR TITAN APEX - LIVE MONITOR</title>
   <style>
-    body { background: #060913; color: #fff; font-family: sans-serif; padding: 20px; }
-    header { background: #0b132b; padding: 15px; border-radius: 8px; border-bottom: 2px solid #00ffcc; margin-bottom: 20px; display: flex; justify-content: space-between; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px; }
-    .card { background: #0e1526; border: 1px solid #1e293b; border-radius: 10px; padding: 15px; }
-    .card.alert { border-color: #ef4444; box-shadow: 0 0 10px rgba(239, 68, 68, 0.2); }
-    .badge { font-size: 11px; padding: 3px 8px; border-radius: 4px; background: #1c2541; color: #00ffcc; }
-    .status-alert { color: #ef4444; font-weight: bold; }
+    :root {
+      --bg-main: #060913;
+      --bg-card: #0e1526;
+      --bg-card-hover: #151f38;
+      --accent-green: #10b981;
+      --accent-cyan: #00ffcc;
+      --accent-orange: #f59e0b;
+      --accent-red: #ef4444;
+      --accent-purple: #a855f7;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --border-color: #1e293b;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+      padding: 12px;
+      overflow-x: hidden;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #0b132b;
+      border: 1px solid var(--border-color);
+      border-left: 4px solid var(--accent-cyan);
+      border-radius: 8px;
+      padding: 10px 16px;
+      margin-bottom: 12px;
+    }
+
+    .brand-title {
+      font-size: 14px;
+      font-weight: 900;
+      letter-spacing: 1.5px;
+      color: var(--accent-cyan);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .metrics-bar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .metric-pill {
+      background: #1c2541;
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: bold;
+      border: 1px solid #3a506b;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .metric-pill.danger {
+      border-color: var(--accent-red);
+      color: var(--accent-red);
+      background: rgba(239, 68, 68, 0.15);
+      animation: alertPulse 1.5s infinite;
+    }
+
+    .metric-pill.afk-pill {
+      border-color: var(--accent-purple);
+      color: var(--accent-purple);
+      background: rgba(168, 85, 247, 0.15);
+    }
+
+    .audio-btn {
+      background: #1e293b;
+      color: #fff;
+      border: 1px solid #3a506b;
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .audio-btn.active {
+      border-color: var(--accent-green);
+      color: var(--accent-green);
+    }
+
+    .filters-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      align-items: center;
+    }
+
+    .filter-btn {
+      background: #1c2541;
+      color: var(--text-muted);
+      border: 1px solid var(--border-color);
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .filter-btn.active, .filter-btn:hover {
+      background: var(--accent-green);
+      color: #000;
+      border-color: var(--accent-green);
+    }
+
+    .grid-operators {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+    }
+
+    .operator-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 12px;
+      transition: transform 0.2s;
+      position: relative;
+    }
+
+    .operator-card:hover {
+      background: var(--bg-card-hover);
+      transform: translateY(-2px);
+    }
+
+    .operator-card.in-breach {
+      border-color: var(--accent-red) !important;
+      box-shadow: 0 0 16px rgba(239, 68, 68, 0.4);
+      animation: alertPulse 1s infinite;
+    }
+
+    .operator-card.is-afk {
+      border-color: var(--accent-purple) !important;
+      box-shadow: 0 0 16px rgba(168, 85, 247, 0.3);
+    }
+
+    .operator-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 8px;
+      margin-bottom: 10px;
+    }
+
+    .operator-name {
+      font-size: 13px;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .shift-tag {
+      font-size: 10px;
+      background: #1e293b;
+      color: #38bdf8;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: bold;
+    }
+
+    .profiles-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .profile-item {
+      background: #060913;
+      border: 1px solid #1e293b;
+      border-radius: 6px;
+      padding: 8px 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .profile-item.alert-profile {
+      border-color: var(--accent-red);
+      background: rgba(239, 68, 68, 0.08);
+    }
+
+    .profile-name {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--accent-cyan);
+    }
+
+    .profile-stats {
+      display: flex;
+      gap: 8px;
+      font-size: 11px;
+    }
+
+    .stat-letters {
+      color: #38bdf8;
+      font-weight: bold;
+    }
+
+    .stat-sla {
+      font-weight: bold;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+    }
+
+    .stat-sla.ok { background: #064e3b; color: #34d399; }
+    .stat-sla.breach { background: #7f1d1d; color: #fca5a5; animation: alertPulse 1s infinite; }
+    .stat-sla.afk { background: #581c87; color: #d8b4fe; }
+
+    .last-seen {
+      font-size: 9px;
+      color: var(--text-muted);
+      margin-top: 6px;
+      text-align: right;
+    }
+
+    @keyframes alertPulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.5; }
+      100% { opacity: 1; }
+    }
   </style>
 </head>
 <body>
+
   <header>
-    <div style="font-weight: 900;">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE</div>
-    <div id="stats">Cargando...</div>
+    <div class="brand-title">
+      ⚡ RYR TITAN APEX - SUPERVISIÓN LIVE
+    </div>
+    <div class="metrics-bar">
+      <div class="metric-pill">👥 Operadores: <span id="total-operators">0</span></div>
+      <div class="metric-pill">✉️ Cartas Totales: <span id="total-letters">0</span></div>
+      <div id="afk-pill" class="metric-pill afk-pill" style="display:none;">💤 Inactivos (+5m): <span id="total-afk">0</span></div>
+      <div id="alert-pill" class="metric-pill danger" style="display:none;">🚨 Alertas SLA (+2m): <span id="total-alerts">0</span></div>
+      <button id="btn-sound" class="audio-btn" onclick="toggleAudio()">🔇 Sonido: OFF</button>
+    </div>
   </header>
-  <div id="operators-grid" class="grid"></div>
+
+  <div class="filters-bar">
+    <span style="font-size: 11px; color: var(--text-muted); font-weight: bold;">TURNO:</span>
+    <button class="filter-btn active" onclick="setShiftFilter('ALL')">TODOS</button>
+    <button class="filter-btn" onclick="setShiftFilter('Mañana')">Mañana</button>
+    <button class="filter-btn" onclick="setShiftFilter('Tarde')">Tarde</button>
+    <button class="filter-btn" onclick="setShiftFilter('Noche')">Noche</button>
+    <button class="filter-btn" onclick="setShiftFilter('Trasnocho')">Trasnocho</button>
+  </div>
+
+  <div id="operators-grid" class="grid-operators"></div>
 
   <script>
-    async function update() {
+    let activeFilter = 'ALL';
+    let soundEnabled = false;
+    let audioCtx = null;
+    let lastAlertState = false;
+    const API_URL = window.location.origin;
+
+    function toggleAudio() {
+      soundEnabled = !soundEnabled;
+      const btn = document.getElementById('btn-sound');
+      if (soundEnabled) {
+        btn.innerText = '🔊 Sonido: ON';
+        btn.classList.add('active');
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        playBeep(600, 0.1);
+      } else {
+        btn.innerText = '🔇 Sonido: OFF';
+        btn.classList.remove('active');
+      }
+    }
+
+    function playBeep(freq = 880, duration = 0.2) {
+      if (!soundEnabled) return;
       try {
-        const res = await fetch('/api/telemetry/live');
-        const data = await res.json();
-        const grid = document.getElementById('operators-grid');
-        grid.innerHTML = data.operators.map(op => `
-          <div class="card ${op.hasExpiredSla ? 'alert' : ''}">
-            <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
-              <b>👤 ${op.operatorName}</b>
-              <span style="font-size:10px;">${op.shift}</span>
-            </div>
-            <div style="font-size:13px; color:#00ffcc;">🎯 Perfil: ${op.profileName}</div>
-            <div style="font-size:12px; margin-top:5px;">✉️ Cartas: ${op.pendingReadLetters}</div>
-            ${op.hasExpiredSla ? '<div class="status-alert">🚨 SLA VENCIDO (+2m)</div>' : ''}
-            <div style="font-size:9px; color:#475569; margin-top:10px;">Visto hace: ${Math.floor((Date.now()-op.lastSeen)/1000)}s</div>
-          </div>
-        `).join('');
-        document.getElementById('stats').innerText = `Conectados: ${data.operators.length}`;
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
       } catch (e) {}
     }
-    setInterval(update, 2000);
-    update();
+
+    function setShiftFilter(shift) {
+      activeFilter = shift;
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.innerText.includes(shift) || (shift === 'ALL' && btn.innerText === 'TODOS'));
+      });
+      fetchLiveTelemetry();
+    }
+
+    async function fetchLiveTelemetry() {
+      try {
+        const res = await fetch(`${API_URL}/api/telemetry/live`);
+        const data = await res.json();
+        renderDashboard(data.operators || []);
+      } catch (err) {
+        console.error("Error conectando con backend:", err);
+      }
+    }
+
+    function renderDashboard(operatorsList) {
+      const grid = document.getElementById('operators-grid');
+      grid.innerHTML = '';
+
+      let globalLettersCount = 0;
+      let globalAlertsCount = 0;
+      let globalAfkCount = 0;
+
+      const filtered = operatorsList.filter(op => {
+        if (activeFilter === 'ALL') return true;
+        return op.shift === activeFilter;
+      });
+
+      filtered.forEach(op => {
+        let opHasBreach = false;
+        let opIsAfk = op.isAfkGlobal;
+        let profilesHtml = '';
+
+        globalLettersCount += op.totalLetters;
+        if (op.hasExpiredSlaGlobal) opHasBreach = true;
+        if (opIsAfk) globalAfkCount++;
+
+        op.profiles.forEach(p => {
+          if (p.hasExpiredSla) {
+            globalAlertsCount++;
+          }
+
+          let slaBadgeClass = 'ok';
+          let slaBadgeText = '⏱️ AL DÍA';
+
+          if (p.hasExpiredSla) {
+            slaBadgeClass = 'breach';
+            slaBadgeText = '🚨 +2 MIN';
+          } else if (p.isAfk) {
+            slaBadgeClass = 'afk';
+            slaBadgeText = `💤 ${Math.floor(p.idleSeconds / 60)}m AFK`;
+          }
+
+          profilesHtml += `
+            <div class="profile-item ${p.hasExpiredSla ? 'alert-profile' : ''}">
+              <div class="profile-info">
+                <span class="profile-name">🎯 ${p.profileName}</span>
+                <span class="profile-stats">
+                  <span class="stat-letters">✉️ ${p.pendingReadLetters || 0} cartas</span>
+                  ${p.unansweredChatsCount > 0 ? `<span style="color:#f59e0b;">💬 ${p.unansweredChatsCount}</span>` : ''}
+                </span>
+              </div>
+              <div>
+                <span class="stat-sla ${slaBadgeClass}">${slaBadgeText}</span>
+              </div>
+            </div>
+          `;
+        });
+
+        const card = document.createElement('div');
+        card.className = `operator-card ${opHasBreach ? 'in-breach' : ''} ${opIsAfk ? 'is-afk' : ''}`;
+        card.innerHTML = `
+          <div class="operator-header">
+            <span class="operator-name">👤 ${op.operatorName}</span>
+            <span class="shift-tag">${op.shift}</span>
+          </div>
+          <div class="profiles-list">
+            ${profilesHtml}
+          </div>
+          <div class="last-seen">Activo hace ${Math.floor((Date.now() - op.lastSeen) / 1000)}s</div>
+        `;
+        grid.appendChild(card);
+      });
+
+      document.getElementById('total-operators').innerText = filtered.length;
+      document.getElementById('total-letters').innerText = globalLettersCount;
+
+      const alertPill = document.getElementById('alert-pill');
+      if (globalAlertsCount > 0) {
+        alertPill.style.display = 'flex';
+        document.getElementById('total-alerts').innerText = globalAlertsCount;
+        if (!lastAlertState) {
+          playBeep(880, 0.4);
+        }
+        lastAlertState = true;
+      } else {
+        alertPill.style.display = 'none';
+        lastAlertState = false;
+      }
+
+      const afkPill = document.getElementById('afk-pill');
+      if (globalAfkCount > 0) {
+        afkPill.style.display = 'flex';
+        document.getElementById('total-afk').innerText = globalAfkCount;
+      } else {
+        afkPill.style.display = 'none';
+      }
+    }
+
+    setInterval(fetchLiveTelemetry, 2000);
+    fetchLiveTelemetry();
   </script>
 </body>
 </html>
