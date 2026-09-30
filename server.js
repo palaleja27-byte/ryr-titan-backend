@@ -285,6 +285,29 @@ app.post('/api/intelligence/generate-letter', async (req, res) => {
 });
 
 // ====================================================================
+// 7.1 ENDPOINT: TRADUCCIÓN INSTANTÁNEA MULTI-IDIOMA
+// ====================================================================
+app.post('/api/translate', async (req, res) => {
+  try {
+    const { text, targetLang } = req.body;
+    if (!text || text.trim().length === 0) {
+      return res.json({ success: true, translatedText: '' });
+    }
+    const tl = targetLang || 'en';
+    const googleUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(text)}`;
+    const resp = await fetch(googleUrl);
+    const data = await resp.json();
+    let translated = '';
+    if (Array.isArray(data) && Array.isArray(data[0])) {
+      translated = data[0].map(item => item[0]).join('');
+    }
+    res.json({ success: true, translatedText: translated || text, targetLang: tl });
+  } catch (err) {
+    res.json({ success: true, translatedText: req.body.text || '', error: err.message });
+  }
+});
+
+// ====================================================================
 // 8. ENDPOINT: FIREWALL DE 3 CAPAS (GESTIÓN DE PALABRAS PROHIBIDAS & TM)
 // ====================================================================
 app.get('/api/banned-words', async (req, res) => {
