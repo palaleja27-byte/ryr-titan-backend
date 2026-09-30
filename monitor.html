@@ -383,9 +383,9 @@
   </div>
 
   <script>
-    const API_URL = window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1')
+    const API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '3000'
       ? 'http://localhost:3000'
-      : window.location.origin;
+      : 'https://ryr-titan-backend.onrender.com';
 
     let activeChatOperator = null;
 
@@ -412,7 +412,7 @@
       const opsCountBadge = document.getElementById('active-ops-count');
       const slaAlertBadge = document.getElementById('sla-alert-count');
 
-      const onlineOps = operators.filter(o => o.status !== 'OFFLINE');
+      const onlineOps = (operators || []).filter(o => o.status !== 'OFFLINE');
       opsCountBadge.innerText = `🟢 ${onlineOps.length} OPERADORES EN LÍNEA`;
 
       let totalExpired = 0;
@@ -425,10 +425,43 @@
         slaAlertBadge.style.display = 'none';
       }
 
-      if (operators.length === 0) {
+      if (!operators || operators.length === 0) {
         grid.innerHTML = '<div style="color:var(--text-muted); padding:30px; text-align:center; grid-column:1/-1;">Esperando conexión de operadores en Talkytimes...</div>';
         return;
       }
+
+      grid.innerHTML = operators.map(op => {
+        let cardClass = 'operator-card';
+        if (op.status !== 'OFFLINE') cardClass += ' active-card';
+        if (op.hasExpiredSla) cardClass += ' sla-expired';
+
+        let statusPill = 'OFFLINE';
+        if (op.isAfk) statusPill = '💤 AFK (>3m)';
+        else if (op.status === 'ONLINE') statusPill = '🟢 ACTIVO';
+
+        let timersHtml = '';
+        if (op.activeSlaTimers) {
+          const timerEntries = Object.entries(op.activeSlaTimers);
+          timersHtml = timerEntries.map(([targetName, timestamp]) => {
+            const elapsed = Math.floor((Date.now() - timestamp) / 1000);
+            const remain = Math.max(0, 120 - elapsed);
+            const m = Math.floor(remain / 60);
+            const s = remain % 60;
+            const timeStr = `${m}:${s < 10 ? '0' : ''}${s}`;
+            const cleanTarget = targetName.replace(/^(name_|id_)/, '');
+
+            let timerClass = 'timer-ok';
+            if (remain <= 0) timerClass = 'timer-danger';
+            else if (remain < 60) timerClass = 'timer-warning';
+
+            return `
+              <div class="timer-pill ${timerClass}">
+                <span>💬 ${cleanTarget}</span>
+                <span>${remain <= 0 ? '🚨 VENCIDO' : `⏱️ ${timeStr}`}</span>
+              </div>
+            `;
+          }).join('');
+        }
 
         const syncAudit = op.syncAudit || { syncedCount: 0, pendingCount: 0, isUpToDate: true, pendingClients: [] };
         const syncStatusBadge = syncAudit.pendingCount > 0 
@@ -439,19 +472,21 @@
           ? `<div style="font-size:9.5px; color:#cbd5e1; background:rgba(245, 158, 11, 0.1); padding:4px 6px; border-radius:4px; border:1px dashed #f59e0b; margin-top:4px;"><b>Pendientes:</b> ${syncAudit.pendingClients.join(', ')}</div>`
           : '';
 
+        const quotaInfo = op.prospectingProgress || { count: 0, quota: 10 };
+
         return `
           <div class="${cardClass}">
             <div class="card-header">
               <div>
-                <div class="op-name">👤 ${op.operator} [${op.shift}]</div>
-                <div class="op-profile">🎯 Perfil: ${op.profile}</div>
+                <div class="op-name">👤 ${op.operator || 'Operador'} [${op.shift || 'Mañana'}]</div>
+                <div class="op-profile">🎯 Perfil: ${op.profile || 'Sin Asignar'}</div>
               </div>
               <span class="badge-status ${op.isAfk ? 'badge-alert' : 'badge-online'}" style="font-size:10px;">${statusPill}</span>
             </div>
 
             <div class="card-metrics">
-              <div class="metric-box">✉️ Read Deuda: <b>${op.pendingReadLetters}</b></div>
-              <div class="metric-box">🎯 Tráfico: <b>${op.prospectingProgress.count}/${op.prospectingProgress.quota}</b></div>
+              <div class="metric-box">✉️ Read Deuda: <b>${op.pendingReadLetters || 0}</b></div>
+              <div class="metric-box">🎯 Tráfico: <b>${quotaInfo.count}/${quotaInfo.quota}</b></div>
               <div class="metric-box">🛡️ Infracciones: <b>${op.firewallInfractionsCount || 0}</b></div>
               <div class="metric-box">💎 Fidelizados: <b style="color:#f472b6;">${op.fidelizedCount || 0}</b></div>
             </div>
