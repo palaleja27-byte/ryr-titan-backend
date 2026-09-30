@@ -430,23 +430,14 @@
         return;
       }
 
-      grid.innerHTML = operators.map(op => {
-        const isExpired = op.hasExpiredSla;
-        const cardClass = op.status === 'OFFLINE' ? '' : (isExpired ? 'operator-card active-card sla-expired' : 'operator-card active-card');
-        const statusPill = op.status === 'OFFLINE' ? '🔴 OFFLINE' : (op.isAfk ? `💤 AFK (${Math.floor(op.idleSeconds / 60)}m)` : '🟢 ACTIVO');
+        const syncAudit = op.syncAudit || { syncedCount: 0, pendingCount: 0, isUpToDate: true, pendingClients: [] };
+        const syncStatusBadge = syncAudit.pendingCount > 0 
+          ? `<span style="color:#fbbf24; font-weight:bold; font-size:10.5px;">🟡 ${syncAudit.pendingCount} Chats Por Subir</span>` 
+          : `<span style="color:#34d399; font-weight:bold; font-size:10.5px;">🟢 Al Día (${syncAudit.syncedCount} sinc)</span>`;
 
-        const timersHtml = (op.activeChatTimersList || []).map(t => {
-          const min = Math.floor(t.remaining / 60);
-          const sec = t.remaining % 60;
-          const fmt = `${min < 10 ? '0' : ''}${min}:${sec < 10 ? '0' : ''}${sec}`;
-          const pillClass = t.isExpired ? 'timer-pill timer-danger' : (t.remaining < 60 ? 'timer-pill timer-warning' : 'timer-pill timer-ok');
-          return `
-            <div class="${pillClass}">
-              <span>👤 ${t.contact}</span>
-              <span>${t.isExpired ? '🚨 VENCIDO' : `⏱️ ${fmt}`}</span>
-            </div>
-          `;
-        }).join('');
+        const pendingListPreview = (syncAudit.pendingClients && syncAudit.pendingClients.length > 0)
+          ? `<div style="font-size:9.5px; color:#cbd5e1; background:rgba(245, 158, 11, 0.1); padding:4px 6px; border-radius:4px; border:1px dashed #f59e0b; margin-top:4px;"><b>Pendientes:</b> ${syncAudit.pendingClients.join(', ')}</div>`
+          : '';
 
         return `
           <div class="${cardClass}">
@@ -462,7 +453,16 @@
               <div class="metric-box">✉️ Read Deuda: <b>${op.pendingReadLetters}</b></div>
               <div class="metric-box">🎯 Tráfico: <b>${op.prospectingProgress.count}/${op.prospectingProgress.quota}</b></div>
               <div class="metric-box">🛡️ Infracciones: <b>${op.firewallInfractionsCount || 0}</b></div>
-              <div class="metric-box">⚡ Lag: <b>${op.domLagMs || 0}ms</b></div>
+              <div class="metric-box">💎 Fidelizados: <b style="color:#f472b6;">${op.fidelizedCount || 0}</b></div>
+            </div>
+
+            <!-- AUDITORÍA DE CONVERSACIONES DEL PERFIL -->
+            <div style="background:rgba(6,9,19,0.7); border:1px solid #1e293b; border-radius:6px; padding:6px 8px;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:10.5px; color:#94a3b8;">📂 Auditoría Chats:</span>
+                ${syncStatusBadge}
+              </div>
+              ${pendingListPreview}
             </div>
 
             <div class="card-timers">
@@ -470,11 +470,22 @@
             </div>
 
             <div class="card-footer-btns">
-              <button class="card-btn" onclick="openDirectComms('${op.operator}')">💬 Chatear</button>
+              <button class="card-btn" onclick="openDirectComms('${op.operator}')">💬 Chatear con ${op.operator}</button>
+              <button class="card-btn" style="background:#064e3b; color:#34d399; border-color:#10b981;" onclick="triggerSyncOperator('${op.shift}', '${op.operator}')">⚡ Subir Chats</button>
             </div>
           </div>
         `;
       }).join('');
+    }
+
+    async function triggerSyncOperator(shift, opName) {
+      const res = await fetch(`${API_URL}/api/chats/extract-all-shift`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shift: shift || 'Mañana', operator: opName })
+      });
+      const data = await res.json();
+      alert(`⚡ Orden de sincronización emitida para ${opName} [${shift}].`);
     }
 
     // 2. EXTRACCIÓN MASIVA DE TURNO (NUKE SYNC)

@@ -59,6 +59,9 @@ app.post('/api/telemetry', async (req, res) => {
       activeChatTimersList: payload.activeChatTimersList || [],
       prospectingProgress: payload.prospectingProgress || { count: 0, quota: 10, remainingSeconds: 1800, isCompleted: false },
       firewallInfractionsCount: payload.firewallInfractionsCount || 0,
+      syncAudit: payload.syncAudit || { syncedCount: 0, pendingCount: 0, isUpToDate: true, pendingClients: [] },
+      fidelizedCount: payload.fidelizedCount || (payload.fidelizedList ? payload.fidelizedList.length : 0),
+      fidelizedList: payload.fidelizedList || [],
       domLagMs: payload.performance?.domLagMs || 0.0,
       lastSeen: Date.now()
     };
