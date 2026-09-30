@@ -3,237 +3,312 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RYR TITAN APEX - LIVE MONITOR</title>
+  <title>APEX CYBERPUNK COMMAND MATRIX | AGENCIA</title>
   <style>
     :root {
-      --bg-main: #060913;
-      --bg-card: #0e1526;
-      --bg-card-hover: #151f38;
-      --accent-green: #10b981;
-      --accent-cyan: #00ffcc;
-      --accent-orange: #f59e0b;
-      --accent-red: #ef4444;
-      --accent-purple: #a855f7;
+      --bg-dark: #050811;
+      --bg-card: rgba(11, 19, 43, 0.85);
+      --border-neon: #10b981;
+      --neon-emerald: #10b981;
+      --neon-violet: #8b5cf6;
+      --neon-cyan: #06b6d4;
+      --neon-red: #ef4444;
+      --neon-amber: #f59e0b;
       --text-main: #f8fafc;
       --text-muted: #94a3b8;
-      --border-color: #1e293b;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      background-color: var(--bg-main);
+      background-color: var(--bg-dark);
+      background-image: radial-gradient(rgba(16, 185, 129, 0.08) 1px, transparent 0);
+      background-size: 24px 24px;
       color: var(--text-main);
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
-      padding: 12px;
-      overflow-x: hidden;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace, system-ui, sans-serif;
+      padding: 16px;
+      min-height: 100vh;
     }
 
+    /* HEADER CYBERPUNK */
     header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      background: #0b132b;
-      border: 1px solid var(--border-color);
-      border-left: 4px solid var(--accent-cyan);
+      padding: 12px 20px;
+      background: rgba(11, 19, 43, 0.95);
+      border: 1px solid var(--neon-emerald);
       border-radius: 8px;
-      padding: 10px 16px;
-      margin-bottom: 12px;
+      box-shadow: 0 0 20px rgba(16, 185, 129, 0.25);
+      margin-bottom: 16px;
     }
 
-    .brand-title {
-      font-size: 14px;
+    .matrix-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 16px;
       font-weight: 900;
       letter-spacing: 1.5px;
-      color: var(--accent-cyan);
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      color: var(--neon-emerald);
+      text-transform: uppercase;
     }
 
-    .metrics-bar {
+    .matrix-status-bar {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-size: 12px;
+    }
+
+    .badge-status {
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-weight: bold;
+      border: 1px solid;
+    }
+    .badge-online { background: rgba(16, 185, 129, 0.15); border-color: var(--neon-emerald); color: var(--neon-emerald); }
+    .badge-alert { background: rgba(239, 68, 68, 0.15); border-color: var(--neon-red); color: var(--neon-red); animation: pulseAlert 1.2s infinite; }
+
+    /* BOTONERA MAESTRA */
+    .master-actions {
       display: flex;
       gap: 10px;
-      align-items: center;
+      margin-bottom: 16px;
     }
 
-    .metric-pill {
-      background: #1c2541;
-      padding: 5px 12px;
+    .btn-nuke {
+      flex: 1;
+      background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+      color: #060913;
+      border: 1px solid var(--neon-emerald);
+      padding: 12px;
       border-radius: 6px;
+      font-weight: 900;
+      font-size: 13px;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
+      transition: all 0.2s;
+    }
+
+    .btn-nuke:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 0 25px rgba(16, 185, 129, 0.7);
+    }
+
+    .btn-broadcast {
+      background: rgba(139, 92, 246, 0.2);
+      color: var(--neon-violet);
+      border: 1px solid var(--neon-violet);
+      padding: 0 20px;
+      border-radius: 6px;
+      font-weight: 800;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-broadcast:hover {
+      background: var(--neon-violet);
+      color: #060913;
+    }
+
+    /* GRID TÁCTICO DE OPERADORES */
+    .tactical-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+
+    .operator-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(10px);
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 14px;
+      position: relative;
+      transition: all 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .operator-card.active-card {
+      border-color: var(--neon-emerald);
+      box-shadow: 0 4px 20px rgba(16, 185, 129, 0.15);
+    }
+
+    .operator-card.sla-expired {
+      border-color: var(--neon-red) !important;
+      box-shadow: 0 0 20px rgba(239, 68, 68, 0.4) !important;
+      animation: pulseAlert 1s infinite;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding-bottom: 8px;
+    }
+
+    .op-name { font-weight: 900; color: #fff; font-size: 13px; }
+    .op-profile { color: var(--neon-cyan); font-size: 11px; }
+
+    .card-metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
       font-size: 11px;
+    }
+
+    .metric-box {
+      background: rgba(6, 9, 19, 0.6);
+      padding: 6px 8px;
+      border-radius: 4px;
+      border: 1px solid #1e293b;
+    }
+    .metric-box b { color: var(--neon-amber); }
+
+    .card-timers {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .timer-pill {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 10.5px;
       font-weight: bold;
-      border: 1px solid #3a506b;
+    }
+    .timer-ok { background: rgba(16, 185, 129, 0.15); color: var(--neon-emerald); border: 1px solid var(--neon-emerald); }
+    .timer-warning { background: rgba(245, 158, 11, 0.15); color: var(--neon-amber); border: 1px solid var(--neon-amber); }
+    .timer-danger { background: rgba(239, 68, 68, 0.25); color: var(--neon-red); border: 1px solid var(--neon-red); }
+
+    .card-footer-btns {
+      display: flex;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .card-btn {
+      flex: 1;
+      padding: 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: bold;
+      cursor: pointer;
+      border: 1px solid #334155;
+      background: #1c2541;
+      color: #cbd5e1;
+      text-align: center;
+      transition: all 0.15s;
+    }
+    .card-btn:hover { background: var(--neon-violet); color: #fff; border-color: var(--neon-violet); }
+
+    /* PANEL INFERIOR: FIREWALL Y AUDITORÍA */
+    .bottom-matrix {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 14px;
+    }
+
+    .matrix-panel {
+      background: var(--bg-card);
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .panel-header {
+      font-weight: 900;
+      color: var(--neon-cyan);
+      font-size: 12.5px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #1e293b;
+      padding-bottom: 8px;
+    }
+
+    /* TAG CLOUD FIREWALL */
+    .tag-cloud {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      max-height: 180px;
+      overflow-y: auto;
+      padding: 4px;
+    }
+
+    .firewall-tag {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid var(--neon-red);
+      color: #fca5a5;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 10.5px;
       display: flex;
       align-items: center;
       gap: 6px;
     }
 
-    .metric-pill.danger {
-      border-color: var(--accent-red);
-      color: var(--accent-red);
-      background: rgba(239, 68, 68, 0.15);
-      animation: alertPulse 1.5s infinite;
-    }
+    .firewall-tag span { cursor: pointer; color: #fff; font-weight: bold; }
+    .firewall-tag span:hover { color: var(--neon-red); }
 
-    .metric-pill.afk-pill {
-      border-color: var(--accent-purple);
-      color: var(--accent-purple);
-      background: rgba(168, 85, 247, 0.15);
-    }
-
-    .audio-btn {
-      background: #1e293b;
-      color: #fff;
-      border: 1px solid #3a506b;
-      padding: 5px 10px;
-      border-radius: 6px;
-      font-size: 11px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-
-    .audio-btn.active {
-      border-color: var(--accent-green);
-      color: var(--accent-green);
-    }
-
-    .filters-bar {
+    .firewall-input-wrap {
       display: flex;
       gap: 8px;
-      margin-bottom: 12px;
-      align-items: center;
     }
 
-    .filter-btn {
-      background: #1c2541;
-      color: var(--text-muted);
-      border: 1px solid var(--border-color);
-      padding: 4px 10px;
-      border-radius: 4px;
-      font-size: 11px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-
-    .filter-btn.active, .filter-btn:hover {
-      background: var(--accent-green);
-      color: #000;
-      border-color: var(--accent-green);
-    }
-
-    .grid-operators {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-      gap: 12px;
-    }
-
-    .operator-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
-      padding: 12px;
-      transition: transform 0.2s;
-      position: relative;
-    }
-
-    .operator-card:hover {
-      background: var(--bg-card-hover);
-      transform: translateY(-2px);
-    }
-
-    .operator-card.in-breach {
-      border-color: var(--accent-red) !important;
-      box-shadow: 0 0 16px rgba(239, 68, 68, 0.4);
-      animation: alertPulse 1s infinite;
-    }
-
-    .operator-card.is-afk {
-      border-color: var(--accent-purple) !important;
-      box-shadow: 0 0 16px rgba(168, 85, 247, 0.3);
-    }
-
-    .operator-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 1px solid var(--border-color);
-      padding-bottom: 8px;
-      margin-bottom: 10px;
-    }
-
-    .operator-name {
-      font-size: 13px;
-      font-weight: 800;
-      color: #fff;
-    }
-
-    .shift-tag {
-      font-size: 10px;
-      background: #1e293b;
-      color: #38bdf8;
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-weight: bold;
-    }
-
-    .profiles-list {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .profile-item {
+    .firewall-input-wrap input {
+      flex: 1;
       background: #060913;
-      border: 1px solid #1e293b;
+      border: 1px solid #334155;
+      color: #fff;
+      padding: 8px 12px;
       border-radius: 6px;
-      padding: 8px 10px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+      font-size: 11px;
+      outline: none;
     }
 
-    .profile-item.alert-profile {
-      border-color: var(--accent-red);
-      background: rgba(239, 68, 68, 0.08);
-    }
-
-    .profile-name {
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--accent-cyan);
-    }
-
-    .profile-stats {
-      display: flex;
-      gap: 8px;
+    .firewall-input-wrap button {
+      background: var(--neon-red);
+      color: #fff;
+      border: none;
+      padding: 0 16px;
+      border-radius: 6px;
+      font-weight: bold;
+      cursor: pointer;
       font-size: 11px;
     }
 
-    .stat-letters {
-      color: #38bdf8;
-      font-weight: bold;
+    /* MODAL DE CHAT SUPERVISOR */
+    #live-chat-drawer {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      width: 380px;
+      height: 480px;
+      background: rgba(11, 19, 43, 0.98);
+      backdrop-filter: blur(16px);
+      border: 2px solid var(--neon-violet);
+      border-radius: 10px;
+      display: none;
+      flex-direction: column;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.9);
+      z-index: 99999;
     }
 
-    .stat-sla {
-      font-weight: bold;
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 10px;
-    }
-
-    .stat-sla.ok { background: #064e3b; color: #34d399; }
-    .stat-sla.breach { background: #7f1d1d; color: #fca5a5; animation: alertPulse 1s infinite; }
-    .stat-sla.afk { background: #581c87; color: #d8b4fe; }
-
-    .last-seen {
-      font-size: 9px;
-      color: var(--text-muted);
-      margin-top: 6px;
-      text-align: right;
-    }
-
-    @keyframes alertPulse {
+    @keyframes pulseAlert {
       0% { opacity: 1; }
       50% { opacity: 0.5; }
       100% { opacity: 1; }
@@ -242,183 +317,308 @@
 </head>
 <body>
 
+  <!-- HEADER DE MANDO -->
   <header>
-    <div class="brand-title">
-      ⚡ RYR TITAN APEX - SUPERVISIÓN LIVE
+    <div class="matrix-title">
+      <span>⚡ APEX CYBERPUNK COMMAND MATRIX</span>
     </div>
-    <div class="metrics-bar">
-      <div class="metric-pill">👥 Operadores: <span id="total-operators">0</span></div>
-      <div class="metric-pill">✉️ Cartas Totales: <span id="total-letters">0</span></div>
-      <div id="afk-pill" class="metric-pill afk-pill" style="display:none;">💤 Inactivos (+5m): <span id="total-afk">0</span></div>
-      <div id="alert-pill" class="metric-pill danger" style="display:none;">🚨 Alertas SLA (+2m): <span id="total-alerts">0</span></div>
-      <button id="btn-sound" class="audio-btn" onclick="toggleAudio()">🔇 Sonido: OFF</button>
+    <div class="matrix-status-bar">
+      <span id="active-ops-count" class="badge-status badge-online">🟢 0 OPERADORES EN LÍNEA</span>
+      <span id="sla-alert-count" class="badge-status badge-alert" style="display:none;">🚨 0 VENCIDOS</span>
+      <span id="clock" style="color:var(--text-muted);">00:00:00</span>
     </div>
   </header>
 
-  <div class="filters-bar">
-    <span style="font-size: 11px; color: var(--text-muted); font-weight: bold;">TURNO:</span>
-    <button class="filter-btn active" onclick="setShiftFilter('ALL')">TODOS</button>
-    <button class="filter-btn" onclick="setShiftFilter('Mañana')">Mañana</button>
-    <button class="filter-btn" onclick="setShiftFilter('Tarde')">Tarde</button>
-    <button class="filter-btn" onclick="setShiftFilter('Noche')">Noche</button>
-    <button class="filter-btn" onclick="setShiftFilter('Trasnocho')">Trasnocho</button>
+  <!-- BOTONERA MAESTRA -->
+  <div class="master-actions">
+    <button id="btn-nuke-sync" class="btn-nuke">⚡ EXTRAER & AUDITAR TODAS LAS CONVERSACIONES DEL TURNO (NUKE SYNC)</button>
+    <button id="btn-open-broadcast" class="btn-broadcast">📢 ANUNCIO GENERAL</button>
   </div>
 
-  <div id="operators-grid" class="grid-operators"></div>
+  <!-- RADAR TÁCTICO DE OPERADORES -->
+  <div id="tactical-radar-grid" class="tactical-grid">
+    <!-- Render dinámico de tarjetas -->
+  </div>
+
+  <!-- PANEL INFERIOR -->
+  <div class="bottom-matrix">
+    <!-- GESTIÓN DE SEGURIDAD (FIREWALL 3 CAPAS) -->
+    <div class="matrix-panel">
+      <div class="panel-header">
+        <span>🛡️ GESTIÓN DE SEGURIDAD & ANTI-TRAVEL MISLEADING (FIREWALL)</span>
+        <span id="total-tags-count" style="font-size:11px; color:var(--text-muted);">0 Reglas Activas</span>
+      </div>
+      <div class="firewall-input-wrap">
+        <input type="text" id="input-banned-word" placeholder="Ej: when we meet, hotel, whatsapp, promet...">
+        <button id="btn-add-banned">Bloquear Raíz</button>
+      </div>
+      <div id="tag-cloud-container" class="tag-cloud">
+        <!-- Tags dinámicos con ✕ -->
+      </div>
+    </div>
+
+    <!-- GESTIÓN DE MULTAS Y AUDITORÍA -->
+    <div class="matrix-panel">
+      <div class="panel-header">
+        <span>⚖️ AUDITORÍA DE MULTAS AUTOMÁTICAS ($10.000 COP)</span>
+        <button id="btn-refresh-fines" style="background:none; border:none; color:var(--neon-emerald); cursor:pointer; font-size:11px;">🔄 Actualizar</button>
+      </div>
+      <div id="fines-container" style="max-height:220px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;">
+        <div style="color:var(--text-muted); font-size:11px; text-align:center; padding:15px;">Cargando registro de multas...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DRAWER DE CHAT CON OPERADOR -->
+  <div id="live-chat-drawer">
+    <div style="background:#1e1b4b; padding:10px 14px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #3730a3;">
+      <span id="chat-target-name" style="font-weight:bold; color:var(--neon-violet); font-size:12px;">💬 COMMS CON OPERADOR</span>
+      <span style="cursor:pointer; font-size:16px;" onclick="document.getElementById('live-chat-drawer').style.display='none'">✕</span>
+    </div>
+    <div id="chat-stream-box" style="flex:1; padding:12px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; font-size:11.5px;"></div>
+    <div style="padding:10px; border-top:1px solid #1e293b; display:flex; gap:6px;">
+      <input type="text" id="input-chat-msg" placeholder="Escribe al operador..." style="flex:1; padding:8px; background:#060913; border:1px solid #334155; color:#fff; border-radius:4px; font-size:11px;">
+      <button id="btn-send-chat-msg" style="background:var(--neon-violet); color:#fff; border:none; padding:0 14px; border-radius:4px; font-weight:bold; cursor:pointer;">Enviar</button>
+    </div>
+  </div>
 
   <script>
-    let activeFilter = 'ALL';
-    let soundEnabled = false;
-    let audioCtx = null;
-    let lastAlertState = false;
-    const API_URL = window.location.origin;
+    const API_URL = window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1')
+      ? 'http://localhost:3000'
+      : window.location.origin;
 
-    function toggleAudio() {
-      soundEnabled = !soundEnabled;
-      const btn = document.getElementById('btn-sound');
-      if (soundEnabled) {
-        btn.innerText = '🔊 Sonido: ON';
-        btn.classList.add('active');
-        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        playBeep(600, 0.1);
-      } else {
-        btn.innerText = '🔇 Sonido: OFF';
-        btn.classList.remove('active');
-      }
-    }
+    let activeChatOperator = null;
 
-    function playBeep(freq = 880, duration = 0.2) {
-      if (!soundEnabled) return;
+    // RELOJ
+    setInterval(() => {
+      document.getElementById('clock').innerText = new Date().toLocaleTimeString();
+    }, 1000);
+
+    // 1. POLLING DEL GRID TÁCTICO (CADA 1.5s)
+    async function refreshTacticalGrid() {
       try {
-        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === 'suspended') audioCtx.resume();
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = 'sine';
-        osc.frequency.value = freq;
-        gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start();
-        osc.stop(audioCtx.currentTime + duration);
+        const res = await fetch(`${API_URL}/api/telemetry/live-grid`);
+        const data = await res.json();
+        if (data.success) {
+          renderGrid(data.operators);
+        }
       } catch (e) {}
     }
+    setInterval(refreshTacticalGrid, 1500);
+    refreshTacticalGrid();
 
-    function setShiftFilter(shift) {
-      activeFilter = shift;
-      document.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.innerText.includes(shift) || (shift === 'ALL' && btn.innerText === 'TODOS'));
-      });
-      fetchLiveTelemetry();
-    }
+    function renderGrid(operators) {
+      const grid = document.getElementById('tactical-radar-grid');
+      const opsCountBadge = document.getElementById('active-ops-count');
+      const slaAlertBadge = document.getElementById('sla-alert-count');
 
-    async function fetchLiveTelemetry() {
-      try {
-        const res = await fetch(`${API_URL}/api/telemetry/live`);
-        const data = await res.json();
-        renderDashboard(data.operators || []);
-      } catch (err) {
-        console.error("Error conectando con backend:", err);
+      const onlineOps = operators.filter(o => o.status !== 'OFFLINE');
+      opsCountBadge.innerText = `🟢 ${onlineOps.length} OPERADORES EN LÍNEA`;
+
+      let totalExpired = 0;
+      onlineOps.forEach(o => { if (o.hasExpiredSla) totalExpired++; });
+
+      if (totalExpired > 0) {
+        slaAlertBadge.style.display = 'inline-block';
+        slaAlertBadge.innerText = `🚨 ${totalExpired} CHATS VENCIDOS`;
+      } else {
+        slaAlertBadge.style.display = 'none';
       }
-    }
 
-    function renderDashboard(operatorsList) {
-      const grid = document.getElementById('operators-grid');
-      grid.innerHTML = '';
+      if (operators.length === 0) {
+        grid.innerHTML = '<div style="color:var(--text-muted); padding:30px; text-align:center; grid-column:1/-1;">Esperando conexión de operadores en Talkytimes...</div>';
+        return;
+      }
 
-      let globalLettersCount = 0;
-      let globalAlertsCount = 0;
-      let globalAfkCount = 0;
+      grid.innerHTML = operators.map(op => {
+        const isExpired = op.hasExpiredSla;
+        const cardClass = op.status === 'OFFLINE' ? '' : (isExpired ? 'operator-card active-card sla-expired' : 'operator-card active-card');
+        const statusPill = op.status === 'OFFLINE' ? '🔴 OFFLINE' : (op.isAfk ? `💤 AFK (${Math.floor(op.idleSeconds / 60)}m)` : '🟢 ACTIVO');
 
-      const filtered = operatorsList.filter(op => {
-        if (activeFilter === 'ALL') return true;
-        return op.shift === activeFilter;
-      });
-
-      filtered.forEach(op => {
-        let opHasBreach = false;
-        let opIsAfk = op.isAfkGlobal;
-        let profilesHtml = '';
-
-        globalLettersCount += op.totalLetters;
-        if (op.hasExpiredSlaGlobal) opHasBreach = true;
-        if (opIsAfk) globalAfkCount++;
-
-        op.profiles.forEach(p => {
-          if (p.hasExpiredSla) {
-            globalAlertsCount++;
-          }
-
-          let slaBadgeClass = 'ok';
-          let slaBadgeText = '⏱️ AL DÍA';
-
-          if (p.hasExpiredSla) {
-            slaBadgeClass = 'breach';
-            slaBadgeText = '🚨 +2 MIN';
-          } else if (p.isAfk) {
-            slaBadgeClass = 'afk';
-            slaBadgeText = `💤 ${Math.floor(p.idleSeconds / 60)}m AFK`;
-          }
-
-          profilesHtml += `
-            <div class="profile-item ${p.hasExpiredSla ? 'alert-profile' : ''}">
-              <div class="profile-info">
-                <span class="profile-name">🎯 ${p.profileName}</span>
-                <span class="profile-stats">
-                  <span class="stat-letters">✉️ ${p.pendingReadLetters || 0} cartas</span>
-                  ${p.unansweredChatsCount > 0 ? `<span style="color:#f59e0b;">💬 ${p.unansweredChatsCount}</span>` : ''}
-                </span>
-              </div>
-              <div>
-                <span class="stat-sla ${slaBadgeClass}">${slaBadgeText}</span>
-              </div>
+        const timersHtml = (op.activeChatTimersList || []).map(t => {
+          const min = Math.floor(t.remaining / 60);
+          const sec = t.remaining % 60;
+          const fmt = `${min < 10 ? '0' : ''}${min}:${sec < 10 ? '0' : ''}${sec}`;
+          const pillClass = t.isExpired ? 'timer-pill timer-danger' : (t.remaining < 60 ? 'timer-pill timer-warning' : 'timer-pill timer-ok');
+          return `
+            <div class="${pillClass}">
+              <span>👤 ${t.contact}</span>
+              <span>${t.isExpired ? '🚨 VENCIDO' : `⏱️ ${fmt}`}</span>
             </div>
           `;
-        });
+        }).join('');
 
-        const card = document.createElement('div');
-        card.className = `operator-card ${opHasBreach ? 'in-breach' : ''} ${opIsAfk ? 'is-afk' : ''}`;
-        card.innerHTML = `
-          <div class="operator-header">
-            <span class="operator-name">👤 ${op.operatorName}</span>
-            <span class="shift-tag">${op.shift}</span>
+        return `
+          <div class="${cardClass}">
+            <div class="card-header">
+              <div>
+                <div class="op-name">👤 ${op.operator} [${op.shift}]</div>
+                <div class="op-profile">🎯 Perfil: ${op.profile}</div>
+              </div>
+              <span class="badge-status ${op.isAfk ? 'badge-alert' : 'badge-online'}" style="font-size:10px;">${statusPill}</span>
+            </div>
+
+            <div class="card-metrics">
+              <div class="metric-box">✉️ Read Deuda: <b>${op.pendingReadLetters}</b></div>
+              <div class="metric-box">🎯 Tráfico: <b>${op.prospectingProgress.count}/${op.prospectingProgress.quota}</b></div>
+              <div class="metric-box">🛡️ Infracciones: <b>${op.firewallInfractionsCount || 0}</b></div>
+              <div class="metric-box">⚡ Lag: <b>${op.domLagMs || 0}ms</b></div>
+            </div>
+
+            <div class="card-timers">
+              ${timersHtml || '<div style="color:var(--text-muted); font-size:10px;">Sin chats pendientes de SLA</div>'}
+            </div>
+
+            <div class="card-footer-btns">
+              <button class="card-btn" onclick="openDirectComms('${op.operator}')">💬 Chatear</button>
+            </div>
           </div>
-          <div class="profiles-list">
-            ${profilesHtml}
-          </div>
-          <div class="last-seen">Activo hace ${Math.floor((Date.now() - op.lastSeen) / 1000)}s</div>
         `;
-        grid.appendChild(card);
-      });
-
-      document.getElementById('total-operators').innerText = filtered.length;
-      document.getElementById('total-letters').innerText = globalLettersCount;
-
-      const alertPill = document.getElementById('alert-pill');
-      if (globalAlertsCount > 0) {
-        alertPill.style.display = 'flex';
-        document.getElementById('total-alerts').innerText = globalAlertsCount;
-        if (!lastAlertState) {
-          playBeep(880, 0.4);
-        }
-        lastAlertState = true;
-      } else {
-        alertPill.style.display = 'none';
-        lastAlertState = false;
-      }
-
-      const afkPill = document.getElementById('afk-pill');
-      if (globalAfkCount > 0) {
-        afkPill.style.display = 'flex';
-        document.getElementById('total-afk').innerText = globalAfkCount;
-      } else {
-        afkPill.style.display = 'none';
-      }
+      }).join('');
     }
 
-    setInterval(fetchLiveTelemetry, 2000);
-    fetchLiveTelemetry();
+    // 2. EXTRACCIÓN MASIVA DE TURNO (NUKE SYNC)
+    document.getElementById('btn-nuke-sync').onclick = async () => {
+      if (confirm('⚡ ¿Deseas emitir la orden de EXTRACCIÓN MASIVA para que todas las extensiones activas cosechen todas las conversaciones hacia Supabase?')) {
+        const res = await fetch(`${API_URL}/api/chats/extract-all-shift`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shift: 'Mañana' })
+        });
+        const data = await res.json();
+        alert(data.message || 'Orden emitida');
+      }
+    };
+
+    // 3. ANUNCIO GENERAL (BROADCAST)
+    document.getElementById('btn-open-broadcast').onclick = async () => {
+      const msg = prompt('📢 Escribe el anuncio para desplegarlo simultáneamente en la pantalla de TODOS los operadores:');
+      if (msg) {
+        await fetch(`${API_URL}/api/supervisor/send-message`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isBroadcast: true, text: msg })
+        });
+        alert('📢 Anuncio enviado a todas las estaciones de trabajo.');
+      }
+    };
+
+    // 4. FIREWALL TAG CLOUD
+    async function loadFirewallTags() {
+      try {
+        const res = await fetch(`${API_URL}/api/banned-words`);
+        const data = await res.json();
+        const container = document.getElementById('tag-cloud-container');
+        document.getElementById('total-tags-count').innerText = `${data.words.length} Reglas Activas`;
+
+        container.innerHTML = data.words.map(w => `
+          <div class="firewall-tag">
+            ${w}
+            <span onclick="removeFirewallTag('${w}')">✕</span>
+          </div>
+        `).join('');
+      } catch (e) {}
+    }
+    loadFirewallTags();
+
+    document.getElementById('btn-add-banned').onclick = async () => {
+      const input = document.getElementById('input-banned-word');
+      const word = input.value.trim();
+      if (!word) return;
+
+      await fetch(`${API_URL}/api/banned-words`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ word: word })
+      });
+      input.value = '';
+      loadFirewallTags();
+    };
+
+    window.removeFirewallTag = async (word) => {
+      if (confirm(`¿Desbloquear la palabra "${word}"?`)) {
+        await fetch(`${API_URL}/api/banned-words/${encodeURIComponent(word)}`, { method: 'DELETE' });
+        loadFirewallTags();
+      }
+    };
+
+    // 5. REGISTRO DE MULTAS
+    async function loadFines() {
+      try {
+        const res = await fetch(`${API_URL}/api/fines`);
+        const data = await res.json();
+        const container = document.getElementById('fines-container');
+
+        if (data.fines.length === 0) {
+          container.innerHTML = '<div style="color:var(--text-muted); font-size:11px; text-align:center; padding:15px;">No hay multas registradas.</div>';
+          return;
+        }
+
+        container.innerHTML = data.fines.map(f => `
+          <div style="background:#060913; border:1px solid #334155; padding:8px; border-radius:4px; font-size:11px; display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <b style="color:var(--neon-red);">🚨 $10.000 COP</b> | <b>${f.operator_name}</b> (${f.profile_name}) <br>
+              <span style="color:var(--text-muted);">${f.reason} [Cliente: ${f.client_name}]</span>
+            </div>
+            <div style="display:flex; gap:4px;">
+              <button style="background:var(--neon-emerald); color:#000; border:none; padding:4px 8px; border-radius:3px; font-weight:bold; cursor:pointer; font-size:10px;" onclick="updateFineStatus('${f.id}', 'APPROVED')">Aprobar</button>
+              <button style="background:#475569; color:#fff; border:none; padding:4px 8px; border-radius:3px; font-weight:bold; cursor:pointer; font-size:10px;" onclick="updateFineStatus('${f.id}', 'WAIVED')">Perdonar</button>
+            </div>
+          </div>
+        `).join('');
+      } catch (e) {}
+    }
+    document.getElementById('btn-refresh-fines').onclick = loadFines;
+    loadFines();
+
+    window.updateFineStatus = async (id, status) => {
+      await fetch(`${API_URL}/api/fines/${id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      loadFines();
+    };
+
+    // 6. CHAT DIRECTO CON OPERADOR
+    window.openDirectComms = (opName) => {
+      activeChatOperator = opName;
+      document.getElementById('chat-target-name').innerText = `💬 COMMS CON: ${opName.toUpperCase()}`;
+      document.getElementById('live-chat-drawer').style.display = 'flex';
+      refreshChatStream();
+    };
+
+    async function refreshChatStream() {
+      if (!activeChatOperator) return;
+      const res = await fetch(`${API_URL}/api/supervisor/messages/${activeChatOperator}`);
+      const data = await res.json();
+      const stream = document.getElementById('chat-stream-box');
+
+      stream.innerHTML = (data.messages || []).map(m => {
+        const isSup = m.sender === 'SUPERVISOR';
+        return `
+          <div style="align-self:${isSup ? 'flex-end' : 'flex-start'}; background:${isSup ? '#1e1b4b' : '#064e3b'}; border:1px solid ${isSup ? '#6366f1' : '#10b981'}; padding:6px 10px; border-radius:6px; max-width:85%;">
+            <div style="font-size:9.5px; opacity:0.75; font-weight:bold;">${isSup ? '👮 Supervisor' : `💼 ${activeChatOperator}`}</div>
+            <div>${m.text}</div>
+          </div>
+        `;
+      }).join('');
+      stream.scrollTop = stream.scrollHeight;
+    }
+
+    document.getElementById('btn-send-chat-msg').onclick = async () => {
+      const input = document.getElementById('input-chat-msg');
+      const text = input.value.trim();
+      if (!text || !activeChatOperator) return;
+
+      await fetch(`${API_URL}/api/supervisor/send-message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operatorName: activeChatOperator, text })
+      });
+      input.value = '';
+      refreshChatStream();
+    };
   </script>
 </body>
 </html>

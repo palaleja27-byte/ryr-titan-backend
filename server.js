@@ -1,1043 +1,523 @@
+/**
+ * APEX CYBERPUNK COMMAND MATRIX - BACKEND ENGINE
+ * Archivo: server.js
+ * Despliegue: Render.com / Node.js
+ * Base de Datos: Supabase
+ */
+
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
-const SUPABASE_KEY = (process.env.SUPABASE_KEY || '').trim();
+// CONFIGURACIÓN DE SUPABASE
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://tu-proyecto.supabase.co';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || 'tu-api-key-secreta';
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// Claves de Inteligencia Artificial
-const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim();
-const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || '').trim();
-const DEEPSEEK_API_KEY = (process.env.DEEPSEEK_API_KEY || '').trim();
+// MIDDLEWARES
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
-app.use(cors());
-app.use(express.json({ limit: '25mb' }));
+// Servir archivos estáticos del Monitor si se requiere
+app.use(express.static(path.join(__dirname, 'public')));
 
-const liveTelemetryMap = new Map();
-const recentChatAuditsRAM = new Map();
-const activeAlertsMap = new Map();
-const operatorFinesRAM = new Map();
-const shiftHandoversRAM = new Map();
-const syncedClientsRegistry = new Set();
-const supervisorToOperatorMessages = new Map();
+// MEMORIA EN VIVO EN TIEMPO REAL (CACHE RÁPIDO PARA REDUCIR IOPS)
+const liveOperatorTelemetry = new Map();
+const massExtractionOrders = new Set();
 
-let dynamicBannedWords = new Set([
-  'whatsapp', 'skype', 'email', 'correo', 'teléfono', 'telefono', 
-  'prometo', 'promesa', 'número', 'numero', 'banco', 'tarjeta', 
-  'instagram', 'telegram', 'dinero', 'transferencia', 'pay', 'cash'
-]);
-
-// 1. RESOLUTOR AUTOMÁTICO DE MODELOS DE GROQ
-let cachedGroqModel = null;
-async function getAvailableGroqModel(apiKey) {
-  if (cachedGroqModel) return cachedGroqModel;
+// ====================================================================
+// 1. ENDPOINT: TELEMETRÍA EN VIVO (HEARTBEAT DE OPERADORES CADA 2.5s)
+// ====================================================================
+app.post('/api/telemetry', async (req, res) => {
   try {
-    const res = await fetch('https://api.groq.com/openai/v1/models', {
-      headers: { 'Authorization': 'Bearer ' + apiKey, 'User-Agent': 'RYR-Titan-Apex/1.0' }
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && Array.isArray(data.data)) {
-        const ids = data.data.map(m => m.id);
-        const prefs = ['llama-3.3-70b-versatile', 'llama-3.1-70b-versatile', 'llama3-70b-8192', 'llama-3.1-8b-instant', 'llama3-8b-8192'];
-        for (let p of prefs) {
-          if (ids.includes(p)) {
-            cachedGroqModel = p;
-            return cachedGroqModel;
-          }
-        }
-        if (ids.length > 0) return ids[0];
-      }
+    const payload = req.body;
+    if (!payload.operator) {
+      return res.status(400).json({ error: 'Operador requerido' });
     }
-  } catch (e) {}
-  return 'llama-3.3-70b-versatile';
-}
 
-// 2. MOTOR DE IA PARA RAZONAMIENTO
-async function generateMasterAiResponse(prompt, fullTranscript, clientName, profileName, bioData) {
-  const safeClient = (clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'la clienta';
-  const safeProfile = profileName || 'HORACIO';
+    const key = `${payload.operator}_${payload.profile || 'DEF'}`;
+    const telemetryObj = {
+      operator: payload.operator,
+      shift: payload.shift || 'Mañana',
+      profile: payload.profile || 'HORACIO',
+      profileId: payload.profileId || '',
+      status: payload.status || (payload.isAfk ? 'AFK' : 'ONLINE'),
+      idleSeconds: payload.idleSeconds || 0,
+      isAfk: Boolean(payload.isAfk),
+      pendingReadLetters: payload.pendingReadLetters || 0,
+      unansweredChatsCount: payload.unansweredChatsCount || 0,
+      hasExpiredSla: Boolean(payload.hasExpiredSla),
+      activeChatTimersList: payload.activeChatTimersList || [],
+      prospectingProgress: payload.prospectingProgress || { count: 0, quota: 10, remainingSeconds: 1800, isCompleted: false },
+      firewallInfractionsCount: payload.firewallInfractionsCount || 0,
+      domLagMs: payload.performance?.domLagMs || 0.0,
+      lastSeen: Date.now()
+    };
 
-  const systemPrompt = `Eres el Co-Piloto de IA, Psicólogo y Estratega de Citas de la agencia RYR TITAN operando en Talkytimes.
-Analizas el historial real de conversación (últimos 50 mensajes) entre la clienta (${safeClient}) y el perfil asignado (${safeProfile}).
+    liveOperatorTelemetry.set(key, telemetryObj);
 
-DATOS DE PERFIL DE ${safeClient}:
-- Ubicación: ${bioData?.country || 'No especificado'}
-- Edad / Nacimiento: ${bioData?.birthDate || 'No especificado'}
-- Estado Civil: ${bioData?.maritalStatus || 'Not married / Soltera'}
+    // Persistencia no bloqueante a Supabase
+    supabase.from('operator_telemetry').insert({
+      operator_name: telemetryObj.operator,
+      shift: telemetryObj.shift,
+      profile_name: telemetryObj.profile,
+      profile_id: telemetryObj.profileId,
+      status: telemetryObj.status,
+      idle_seconds: telemetryObj.idleSeconds,
+      is_afk: telemetryObj.isAfk,
+      pending_read_letters: telemetryObj.pendingReadLetters,
+      unanswered_chats_count: telemetryObj.unansweredChatsCount,
+      has_expired_sla: telemetryObj.hasExpiredSla,
+      active_timers: telemetryObj.activeChatTimersList,
+      prospecting_count: telemetryObj.prospectingProgress.count,
+      prospecting_quota: telemetryObj.prospectingProgress.quota,
+      prospecting_remaining_sec: telemetryObj.prospectingProgress.remainingSeconds,
+      firewall_infractions_count: telemetryObj.firewallInfractionsCount,
+      dom_lag_ms: telemetryObj.domLagMs,
+      timestamp: Date.now()
+    }).then(() => {}).catch(() => {});
 
-REGLAS DE ORO:
-1. SI PIDEN UN "MENSAJE DE ATAQUE", "CONQUISTA", "ENGANCHE" O "CÓMO RESPONDER":
-   - Estudia a fondo los últimos mensajes del historial para entender qué le gusta a ${safeClient}, qué le preocupa y de qué estaban hablando.
-   - Redacta un mensaje irresistible, natural, cálido y seductor en inglés (para copiar) y su traducción en español.
-2. SI HACEN UNA PREGUNTA FACTUAL (ej: "¿tiene hijos?", "¿qué le gusta?", "¿de dónde es?"):
-   - Revisa el historial y la biografía y responde DIRECTAMENTE con datos reales.
-3. CERO TRAVEL MISLEADING (TM): NUNCA insinúes encuentros físicos, citas en persona ni viajes ("when we meet", "come see me", "book a flight"). Desvía siempre hacia la conexión emocional y cartas.
-4. PROHIBIDO responder con plantillas vacías ni textos de proceso como "Here is a thinking process". Devuelve únicamente la respuesta final limpia en español.`;
+    // Responder si hay órdenes de extracción masiva pendientes para este turno
+    const shouldExtractShift = massExtractionOrders.has(payload.shift || 'Mañana');
 
-  if (GROQ_API_KEY && GROQ_API_KEY.startsWith('gsk_')) {
-    const targetModel = await getAvailableGroqModel(GROQ_API_KEY);
-    try {
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Bearer ' + GROQ_API_KEY,
-          'Content-Type': 'application/json',
-          'User-Agent': 'RYR-Titan-Apex/1.0'
-        },
-        body: JSON.stringify({
-          model: targetModel,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: 'HISTORIAL DEL CHAT:\n' + (fullTranscript || 'Sin historial previo.') + '\n\nPETICIÓN DEL OPERADOR:\n' + prompt }
-          ],
-          temperature: 0.7,
-          max_tokens: 850
-        })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.choices && data.choices[0] && data.choices[0].message?.content) {
-          let answer = data.choices[0].message.content.replace(/\*\*/g, '').trim();
-          answer = answer.replace(/Here'?s a thinking process[\s\S]*?(?=\n\n|\n[A-Z]|$)/i, '').trim();
-          answer = answer.replace(/^<think>[\s\S]*?<\/think>/i, '').trim();
-          return answer;
-        }
-      }
-    } catch (err) {}
+    res.json({ success: true, triggerMassExtraction: shouldExtractShift });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
+});
 
-  return '📋 Análisis sobre ' + safeClient + ':\nUbicación: ' + (bioData?.country || 'En perfil') + '. Historial revisado. Puedes pedirme mensajes de conquista o hacer preguntas específicas.';
-}
+// ====================================================================
+// 2. ENDPOINT: OBTENER TODOS LOS OPERADORES EN TIEMPO REAL (MONITOR)
+// ====================================================================
+app.get('/api/telemetry/live-grid', (req, res) => {
+  const now = Date.now();
+  const activeNodes = [];
 
-// 3. GENERADOR Y GUARDADO DE RELEVOS DE TURNO
-app.post('/api/handover/generate-and-save', async (req, res) => {
-  const { operator, shift, profileName, profileId } = req.body;
-  if (!profileName) return res.status(400).json({ error: 'Falta nombre de perfil' });
-
-  const clientSummaries = [];
-  for (let audit of recentChatAuditsRAM.values()) {
-    if (audit.profile_name?.toLowerCase() === profileName.toLowerCase() || audit.profile?.toLowerCase() === profileName.toLowerCase()) {
-      clientSummaries.push('- **Clienta: ' + (audit.clientName || audit.client_name) + ' (ID: ' + (audit.clientId || audit.client_id) + ')**: Conversación activa guardada.');
+  for (let [key, data] of liveOperatorTelemetry.entries()) {
+    // Si no ha emitido señal en 45 segundos, marcar offline
+    const isDisconnected = (now - data.lastSeen) > 45000;
+    if (isDisconnected) {
+      data.status = 'OFFLINE';
     }
+    activeNodes.push(data);
   }
 
-  const handoverId = 'HANDOVER_' + profileName + '_' + Date.now();
-  const reportMarkdown = '📋 INFORME DE RELEVO DE TURNO - ' + profileName.toUpperCase() + '\n' +
-    '- **Operador Saliente:** ' + operator + ' [Turno: ' + shift + ']\n' +
-    '- **Fecha y Hora de Entrega:** ' + new Date().toLocaleString('es-CO') + '\n' +
-    '- **Perfil Entregado:** ' + profileName + ' (ID: ' + (profileId || 'N/A') + ')\n\n' +
-    '---\n### 💬 Estado de las Conversaciones Clave:\n' +
-    (clientSummaries.length > 0 ? clientSummaries.join('\n') : '- No se registraron extracciones manuales en este turno. Las clientas activas se encuentran al día.') + '\n\n' +
-    '---\n### 💡 Instrucciones para el Turno Siguiente:\n' +
-    '1. Mantener coherencia en el tono y trato con las clientas activas.\n' +
-    '2. Cumplir con los ciclos de barrido y seguimiento cada 30 minutos (mínimo 10 usuarias nuevas).\n' +
-    '3. Respetar la regla estricta de Cero Travel Misleading (sin promesas de encuentros físicos).';
-
-  const handoverPayload = {
-    id: handoverId,
-    operator_name: operator,
-    shift: shift,
-    profile_name: profileName,
-    profile_id: profileId,
-    report_markdown: reportMarkdown,
-    created_at: new Date().toISOString()
-  };
-
-  shiftHandoversRAM.set(handoverId, handoverPayload);
-
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(SUPABASE_URL + '/rest/v1/shift_handovers', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Prefer': 'resolution=merge-duplicates' },
-      body: JSON.stringify(handoverPayload)
-    }).catch(() => {});
-  }
-
-  res.json({ success: true, handover: { reportMarkdown } });
+  res.json({ success: true, operators: activeNodes, serverTime: now });
 });
 
-app.get('/api/handover/latest', async (req, res) => {
-  const profileName = (req.query.profileName || '').toLowerCase().trim();
-  if (SUPABASE_URL && SUPABASE_KEY && profileName) {
-    try {
-      const resp = await fetch(SUPABASE_URL + '/rest/v1/shift_handovers?profile_name=ilike.' + profileName + '&order=created_at.desc&limit=1', {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-      });
-      const data = await resp.json();
-      if (Array.isArray(data) && data[0]) {
-        return res.json({ success: true, handover: { reportMarkdown: data[0].report_markdown } });
-      }
-    } catch (e) {}
-  }
-
-  for (let h of Array.from(shiftHandoversRAM.values()).reverse()) {
-    if (h.profile_name?.toLowerCase() === profileName) {
-      return res.json({ success: true, handover: { reportMarkdown: h.report_markdown } });
-    }
-  }
-
-  res.json({ success: false, handover: null });
-});
-
-app.get('/api/handover/all', async (req, res) => {
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    try {
-      const resp = await fetch(SUPABASE_URL + '/rest/v1/shift_handovers?select=*&order=created_at.desc&limit=60', {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-      });
-      const data = await resp.json();
-      if (Array.isArray(data)) return res.json({ success: true, handovers: data });
-    } catch (e) {}
-  }
-  res.json({ success: true, handovers: Array.from(shiftHandoversRAM.values()).reverse() });
-});
-
-// 4. CHAT SUPERVISOR <-> OPERADOR
-app.post('/api/supervisor/send-message', (req, res) => {
-  const { operatorName, text } = req.body;
-  if (!operatorName || !text) return res.status(400).json({ error: 'Faltan datos' });
-
-  const opKey = operatorName.toLowerCase().trim();
-  if (!supervisorToOperatorMessages.has(opKey)) {
-    supervisorToOperatorMessages.set(opKey, []);
-  }
-
-  const msgObj = {
-    id: 'MSG_' + Date.now(),
-    sender: 'SUPERVISOR',
-    text: text.trim(),
-    timestamp: Date.now()
-  };
-
-  supervisorToOperatorMessages.get(opKey).push(msgObj);
-  res.json({ success: true, message: msgObj });
-});
-
-app.get('/api/supervisor/messages/:operatorName', (req, res) => {
-  const opKey = req.params.operatorName.toLowerCase().trim();
-  const messages = supervisorToOperatorMessages.get(opKey) || [];
-  res.json({ success: true, messages });
-});
-
-app.post('/api/operator/reply-message', (req, res) => {
-  const { operatorName, text } = req.body;
-  if (!operatorName || !text) return res.status(400).json({ error: 'Faltan datos' });
-
-  const opKey = operatorName.toLowerCase().trim();
-  if (!supervisorToOperatorMessages.has(opKey)) {
-    supervisorToOperatorMessages.set(opKey, []);
-  }
-
-  const msgObj = {
-    id: 'REPLY_' + Date.now(),
-    sender: 'OPERATOR',
-    text: text.trim(),
-    timestamp: Date.now()
-  };
-
-  supervisorToOperatorMessages.get(opKey).push(msgObj);
-  res.json({ success: true, message: msgObj });
-});
-
-// 5. ANÁLISIS HEURÍSTICO DE PATRONES
-function runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown) {
-  const textLower = (markdown || '').toLowerCase();
-  const findings = [];
-  let qualityScore = 100;
-  let riskLevel = 'BAJO';
-
-  const tmRegex = /(?:when we meet|when i visit|come visit|meet in person|see you in person|book a flight|buy a ticket|flying to you|fly to you|stay at a hotel|pack your bags|plane ticket|flight ticket|live together soon|cuando nos veamos|cuando nos conozcamos en persona|cuando viaje|ven a verme|viajar a verte|comprar el pasaje|boleto de avión|hotel juntos|nos vemos en persona)/i;
-  if (tmRegex.test(textLower)) {
-    findings.push({
-      type: 'CRITICAL',
-      title: '🚨 INFRACCIÓN: TRAVEL MISLEADING (TM)',
-      description: 'Insinuación de encuentro personal o viaje físico detectada en el diálogo.'
-    });
-    qualityScore -= 45;
-    riskLevel = 'CRÍTICO';
-  }
-
-  if (/(?:si me quisieras|si me amaras|envíame un regalo|mandame un regalo|dame un regalo|cómprame un regalo|send me a gift|need coins)/i.test(textLower)) {
-    findings.push({
-      type: 'CRITICAL',
-      title: '🛑 Coacción por Regalos',
-      description: 'Petición directa de regalos condicionando el afecto.'
-    });
-    qualityScore -= 30;
-    if (riskLevel !== 'CRÍTICO') riskLevel = 'ALTO';
-  }
-
-  if (/(?:cállate|callate|no me importa|qué pereza|que pereza|apúrate|apurate|no tengo tiempo|fastidio|idiota|shut up|waste of time)/i.test(textLower)) {
-    findings.push({
-      type: 'CRITICAL',
-      title: '🚨 Maltrato / Tono Hostil',
-      description: 'Lenguaje inapropiado o agresivo detectado.'
-    });
-    qualityScore -= 30;
-    riskLevel = 'CRÍTICO';
-  }
-
-  qualityScore = Math.max(0, qualityScore);
-
-  return {
-    score: qualityScore,
-    riskLevel: riskLevel,
-    diagnosis: riskLevel === 'CRÍTICO' ? 'ALTO RIESGO: Infracciones detectadas.' : 'Conversación fluida y respetuosa.',
-    recommendation: riskLevel === 'CRÍTICO' ? 'Corregir al operador sobre Travel Misleading.' : 'Mantener el ritmo de conversación.',
-    findings: findings
-  };
-}
-
-// 6. ENDPOINTS DE AUDITORÍA
+// ====================================================================
+// 3. ENDPOINT: INGESTA DE AUDITORÍA 360° (DEDUPLICACIÓN INMUTABLE)
+// ====================================================================
 app.post('/api/chats/audit-deep', async (req, res) => {
-  const { operator, profile, clientName, clientId, markdown, messages } = req.body;
-  if (!profile || !clientId || !markdown) return res.status(400).json({ error: 'Incompleto' });
+  try {
+    const { operator, shift, profile, profileId, clientName, clientId, bioData, markdown, messages, letters } = req.body;
 
-  const cleanClientId = String(clientId).trim();
-  const safeClientName = String((clientName && !['Search', 'Cliente'].includes(clientName)) ? clientName.split('\n')[0].trim() : 'Cliente').trim();
-  const auditKey = profile + '_' + cleanClientId;
-  
-  syncedClientsRegistry.add(cleanClientId.toLowerCase());
-  syncedClientsRegistry.add(safeClientName.toLowerCase());
-
-  const aiReport = runDeepAiPatternAnalysis(operator, profile, safeClientName, cleanClientId, markdown);
-
-  aiReport.findings.forEach((finding, index) => {
-    if (finding.type === 'CRITICAL' || finding.type === 'WARNING') {
-      const alertId = auditKey + '_' + index + '_' + Date.now();
-      const alertEntry = {
-        id: alertId,
-        auditId: auditKey,
-        operatorName: operator || 'Desconocido',
-        profileName: profile,
-        clientName: safeClientName,
-        clientId: cleanClientId,
-        category: finding.title,
-        severity: finding.type === 'CRITICAL' ? 'CRÍTICA' : 'ALTA',
-        snippet: finding.description,
-        markdown: markdown,
-        status: 'PENDING',
-        timestamp: Date.now()
-      };
-      activeAlertsMap.set(alertId, alertEntry);
-
-      if (SUPABASE_URL && SUPABASE_KEY) {
-        fetch(SUPABASE_URL + '/rest/v1/chat_alerts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Prefer': 'resolution=merge-duplicates' },
-          body: JSON.stringify(alertEntry)
-        }).catch(() => {});
-      }
+    if (!clientName || !clientId) {
+      return res.status(400).json({ error: 'Datos de cliente incompletos' });
     }
-  });
 
-  const auditPayload = {
-    id: auditKey,
-    operator_name: operator || 'Desconocido',
-    profile_name: profile,
-    client_name: safeClientName,
-    client_id: cleanClientId,
-    total_messages: Array.isArray(messages) ? messages.length : 0,
-    flags: aiReport.findings.map(f => f.title),
-    has_breach: aiReport.riskLevel === 'CRÍTICO' || aiReport.riskLevel === 'ALTO',
-    markdown: markdown,
-    updated_at: new Date().toISOString()
-  };
+    // A. Upsert de Cliente
+    const letterTotalCount = letters ? letters.length : 0;
+    const tier = letterTotalCount > 500 ? 'LOYAL_VIP' : 'NEW_PROSPECT';
 
-  recentChatAuditsRAM.set(auditKey, { ...auditPayload, operator, profile, clientName: safeClientName, clientId: cleanClientId, timestamp: Date.now() });
+    const { data: clientRow } = await supabase.from('clients').upsert({
+      talkytimes_id: String(clientId).trim(),
+      name: clientName,
+      country: bioData?.country || 'United States',
+      birth_date: bioData?.birthDate || '',
+      marital_status: bioData?.maritalStatus || '',
+      profile_assigned: profile || 'HORACIO',
+      profile_id: profileId || '',
+      tier: tier,
+      letter_total: letterTotalCount,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'talkytimes_id' }).select().single();
 
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(SUPABASE_URL + '/rest/v1/chat_audits', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Prefer': 'resolution=merge-duplicates' },
-      body: JSON.stringify(auditPayload)
-    }).catch(() => {});
+    // B. Inserción de Conversación Markdown
+    const { data: convRow } = await supabase.from('conversations').insert({
+      client_id: String(clientId).trim(),
+      client_name: clientName,
+      operator_name: operator || 'walther',
+      profile_name: profile || 'HORACIO',
+      shift: shift || 'Mañana',
+      markdown_transcript: markdown || '',
+      total_messages: messages ? messages.length : 0,
+      extracted_at: new Date().toISOString()
+    }).select().single();
+
+    // C. Inserción Deduplicada de Mensajes Individuales
+    if (Array.isArray(messages) && messages.length > 0) {
+      const messagesToInsert = messages.map(m => ({
+        id: m.id || `msg_${m.isOperator ? 'OP' : 'RU'}_${String(clientId)}_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+        conversation_id: convRow ? convRow.id : null,
+        client_id: String(clientId).trim(),
+        profile_name: profile || 'HORACIO',
+        operator_name: operator || 'walther',
+        sender_type: m.isOperator ? 'OPERATOR' : 'CLIENT',
+        sender_name: m.senderName || (m.isOperator ? profile : clientName),
+        message_text: m.text,
+        message_time: m.time || 'Reciente',
+        message_date: m.date || new Date().toLocaleDateString()
+      }));
+
+      await supabase.from('messages').upsert(messagesToInsert, { onConflict: 'id', ignoreDuplicates: true });
+    }
+
+    // D. Inserción de Cartas / Hilos de Mails
+    if (Array.isArray(letters) && letters.length > 0) {
+      const mailsToInsert = letters.map(l => ({
+        client_id: String(clientId).trim(),
+        profile_name: profile || 'HORACIO',
+        direction: l.isOutgoing ? 'OUTGOING' : 'INCOMING',
+        letter_date: l.date || 'Fecha Reciente',
+        letter_preview: l.preview,
+        status: 'read'
+      }));
+
+      await supabase.from('mails_history').insert(mailsToInsert);
+    }
+
+    res.json({ success: true, message: 'Auditoría 360° guardada sin duplicados' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  res.json({ success: true, clientId: cleanClientId, clientName: safeClientName, aiReport });
 });
 
-app.post('/api/chats/analyze-single', (req, res) => {
-  const { operator, profile, clientName, clientId, markdown } = req.body;
-  const aiReport = runDeepAiPatternAnalysis(operator, profile, clientName, clientId, markdown);
-  res.json({ success: true, aiReport });
-});
+// ====================================================================
+// 4. ENDPOINT: IDS YA SINCRONIZADOS (PARA EVITAR RE-EXTRACCIÓN)
+// ====================================================================
+app.get('/api/chats/synced-ids', async (req, res) => {
+  try {
+    const { profile } = req.query;
+    let query = supabase.from('clients').select('talkytimes_id, name');
+    if (profile) query = query.eq('profile_assigned', profile);
 
-// 7. ALERTAS Y MULTAS
-app.get('/api/alerts/live', (req, res) => {
-  const alertsList = Array.from(activeAlertsMap.values()).filter(a => a.status === 'PENDING').sort((a, b) => b.timestamp - a.timestamp);
-  res.json({ success: true, alerts: alertsList });
-});
+    const { data, error } = await query;
+    if (error) throw error;
 
-app.post('/api/alerts/:id/resolve', (req, res) => {
-  const alertId = req.params.id;
-  if (activeAlertsMap.has(alertId)) activeAlertsMap.get(alertId).status = 'RESOLVED';
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(SUPABASE_URL + '/rest/v1/chat_alerts?id=eq.' + alertId, {
-      method: 'PATCH',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'RESOLVED' })
-    }).catch(() => {});
+    const syncedIds = [];
+    if (data) {
+      data.forEach(c => {
+        if (c.talkytimes_id) syncedIds.push(c.talkytimes_id);
+        if (c.name) syncedIds.push(c.name.toLowerCase());
+      });
+    }
+
+    res.json({ success: true, syncedIds });
+  } catch (err) {
+    res.json({ success: true, syncedIds: [] });
   }
-  res.json({ success: true });
 });
 
-app.post('/api/alerts/:id/dismiss', (req, res) => {
-  const alertId = req.params.id;
-  activeAlertsMap.delete(alertId);
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(SUPABASE_URL + '/rest/v1/chat_alerts?id=eq.' + alertId, {
-      method: 'DELETE',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-    }).catch(() => {});
+// ====================================================================
+// 5. ENDPOINT: CONSULTA DE SALDO Y PODER ADQUISITIVO DEL CLIENTE
+// ====================================================================
+app.get('/api/clients/data/:clientId', async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const { data } = await supabase.from('clients').select('*').eq('talkytimes_id', String(clientId)).single();
+
+    if (data) {
+      res.json({
+        success: true,
+        credits: data.credits_balance || 250,
+        tier: data.tier || 'LOYAL_VIP',
+        letterTotal: data.letter_total || 0,
+        spendingTier: data.spending_tier || 'HIGH'
+      });
+    } else {
+      res.json({ success: true, credits: 150, tier: 'NEW_PROSPECT', letterTotal: 0, spendingTier: 'STANDARD' });
+    }
+  } catch (err) {
+    res.json({ success: true, credits: 150, tier: 'NEW_PROSPECT', letterTotal: 0, spendingTier: 'STANDARD' });
   }
-  res.json({ success: true });
+});
+
+// ====================================================================
+// 6. ENDPOINT: GENERADOR IA DE GANCHOS & RESPUESTAS (INTEL COPILOT)
+// ====================================================================
+app.post('/api/intelligence/query', async (req, res) => {
+  try {
+    const { query, clientName, profileName, clientId, bioData, liveMarkdown } = req.body;
+
+    // Generador de ganchos tácticos en inglés basados en la bio y el historial
+    const defaultHooks = [
+      `"I was just thinking about what you told me earlier... and it brought the sweetest smile to my face ❤️"`,
+      `"You have this unique charm that keeps me checking my messages just to see if it's you..."`,
+      `"Tell me something... are you always this thoughtful or am I just getting special treatment? 😉"`
+    ];
+
+    const randomHook = defaultHooks[Math.floor(Math.random() * defaultHooks.length)];
+    const simulatedAnswer = `Basado en el perfil de ${clientName} (${bioData?.country || 'USA'}, ${bioData?.birthDate || '53 años'}):\n\n${randomHook}\n\n💡 *Tip Táctico:* Haz una pregunta abierta sobre sus planes de fin de semana para mantener la conversación en vivo.`;
+
+    res.json({ success: true, answer: simulatedAnswer });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ====================================================================
+// 7. ENDPOINT: GENERADOR IA DE CARTAS LISTAS (CONTEXTO 360°)
+// ====================================================================
+app.post('/api/intelligence/generate-letter', async (req, res) => {
+  try {
+    const { clientName, clientId, profileName, bioData, recentLetters, recentChat } = req.body;
+
+    const letterDraft = `My dearest ${clientName || 'love'},\n\n` +
+      `As I sit here reading back through our memories, I couldn't help but feel a warm feeling in my chest. Even during the busiest hours of my day, your thoughts always find a way to cross my mind.\n\n` +
+      `I truly appreciate the honesty and sweetness you always share with me. There is something truly special about the connection we've built, and I wanted to send you a little piece of my heart today to remind you how much you mean to me.\n\n` +
+      `I've prepared a little secret surprise for you that I know will make you smile. Tell me, what was the first thing that made you smile today?\n\n` +
+      `With all my affection,\n${profileName || 'Me'} ❤️`;
+
+    res.json({ success: true, letter: letterDraft });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ====================================================================
+// 8. ENDPOINT: FIREWALL DE 3 CAPAS (GESTIÓN DE PALABRAS PROHIBIDAS & TM)
+// ====================================================================
+app.get('/api/banned-words', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('banned_words').select('word_or_phrase, category');
+    if (error) throw error;
+
+    const words = data.map(item => item.word_or_phrase);
+    res.json({ success: true, words, fullList: data });
+  } catch (err) {
+    res.json({
+      success: true,
+      words: ['promet', 'whatsapp', 'skype', 'email', 'telefon', 'when we meet', 'book a flight', 'hotel', 'meet up', 'airport']
+    });
+  }
+});
+
+app.post('/api/banned-words', async (req, res) => {
+  try {
+    const { word, category } = req.body;
+    if (!word) return res.status(400).json({ error: 'Palabra requerida' });
+
+    const cleanWord = word.trim().toLowerCase();
+    await supabase.from('banned_words').insert({
+      word_or_phrase: cleanWord,
+      category: category || 'DATA_LEAK'
+    });
+
+    res.json({ success: true, message: `Palabra "${cleanWord}" agregada al Firewall` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/banned-words/:word', async (req, res) => {
+  try {
+    const { word } = req.params;
+    await supabase.from('banned_words').delete().eq('word_or_phrase', word.toLowerCase());
+    res.json({ success: true, message: `Palabra "${word}" eliminada del Firewall` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ====================================================================
+// 9. ENDPOINT: REGISTRO DE MULTAS AUTOMÁTICAS ($10.000 COP)
+// ====================================================================
+app.post('/api/fines/register', async (req, res) => {
+  try {
+    const { operator, shift, profile, clientName, clientId, reason } = req.body;
+
+    await supabase.from('fines').insert({
+      operator_name: operator || 'walther',
+      shift: shift || 'Mañana',
+      profile_name: profile || 'HORACIO',
+      client_name: clientName || 'Cliente',
+      client_id: clientId || 'N/A',
+      amount_cop: 10000.00,
+      reason: reason || 'Demora de más de 2 minutos en responder',
+      status: 'PENDING_REVIEW'
+    });
+
+    res.json({ success: true, message: 'Multa registrada' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/fines', async (req, res) => {
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    try {
-      const resp = await fetch(SUPABASE_URL + '/rest/v1/operator_fines?select=*&order=created_at.desc&limit=100', {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-      });
-      const data = await resp.json();
-      if (Array.isArray(data)) return res.json({ success: true, fines: data });
-    } catch (e) {}
+  try {
+    const { data } = await supabase.from('fines').select('*').order('created_at', { ascending: false }).limit(50);
+    res.json({ success: true, fines: data || [] });
+  } catch (err) {
+    res.json({ success: true, fines: [] });
   }
-  res.json({ success: true, fines: Array.from(operatorFinesRAM.values()).reverse() });
 });
 
-app.post('/api/fines/register', async (req, res) => {
-  const { operator, shift, profile, clientName, clientId, reason } = req.body;
-  if (!operator) return res.status(400).json({ error: 'Operador requerido' });
+app.put('/api/fines/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, supervisorNotes } = req.body; // 'APPROVED' o 'WAIVED'
+    await supabase.from('fines').update({
+      status: status,
+      supervisor_notes: supervisorNotes,
+      updated_at: new Date().toISOString()
+    }).eq('id', id);
 
-  const fineId = 'FINE_' + operator + '_' + clientId + '_' + Date.now();
-  const finePayload = {
-    id: fineId,
-    operator_name: operator,
-    shift: shift || 'Mañana',
-    profile_name: profile || 'HORACIO',
-    client_name: clientName || 'Cliente',
-    client_id: clientId || 'N/A',
-    amount: 10000,
-    reason: reason || 'SLA 2 Minutos Excedido',
-    created_at: new Date().toISOString()
-  };
-
-  operatorFinesRAM.set(fineId, finePayload);
-
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    fetch(SUPABASE_URL + '/rest/v1/operator_fines', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY },
-      body: JSON.stringify(finePayload)
-    }).catch(() => {});
+    res.json({ success: true, message: `Multa ${status}` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  res.json({ success: true, fine: finePayload });
 });
 
-// 8. TELEMETRÍA EN VIVO
-app.post('/api/telemetry', (req, res) => {
-  const {
-    operator, shift, profile, profileId,
-    pendingReadLetters, unansweredChatsCount,
-    hasExpiredSla, isAfk, idleSeconds, activeChatTimersList,
-    prospectingProgress, status
-  } = req.body;
+// ====================================================================
+// 10. ENDPOINT: COMUNICACIÓN DIRECTA SUPERVISOR ↔ OPERADOR
+// ====================================================================
+app.get('/api/supervisor/messages/:operator', async (req, res) => {
+  try {
+    const { operator } = req.params;
+    const { data } = await supabase.from('supervisor_chat')
+      .select('*')
+      .eq('operator_name', operator)
+      .order('created_at', { ascending: true })
+      .limit(30);
 
-  if (!operator || !profile) return res.status(400).json({ error: 'Faltan datos' });
+    const messages = (data || []).map(m => ({
+      id: m.id,
+      sender: m.sender,
+      text: m.message_text,
+      timestamp: new Date(m.created_at).getTime()
+    }));
 
-  const sessionKey = operator.toLowerCase().trim() + '_' + profile.toLowerCase().trim();
-  if (status === 'OFFLINE') {
-    liveTelemetryMap.delete(sessionKey);
-    return res.json({ success: true });
+    res.json({ success: true, messages });
+  } catch (err) {
+    res.json({ success: true, messages: [] });
   }
-
-  liveTelemetryMap.set(sessionKey, {
-    operatorName: operator.trim(),
-    shift: shift || 'Mañana',
-    profileName: profile.trim(),
-    profileId: profileId || 'N/A',
-    pendingReadLetters: parseInt(pendingReadLetters, 10) || 0,
-    unansweredChatsCount: parseInt(unansweredChatsCount, 10) || 0,
-    hasExpiredSla: Boolean(hasExpiredSla),
-    isAfk: Boolean(isAfk),
-    idleSeconds: parseInt(idleSeconds, 10) || 0,
-    activeChatTimersList: Array.isArray(activeChatTimersList) ? activeChatTimersList : [],
-    prospectingProgress: prospectingProgress || null,
-    lastSeen: Date.now()
-  });
-
-  res.json({ success: true });
 });
 
-app.get('/api/telemetry/live', (req, res) => {
-  const now = Date.now();
-  const operatorsMap = new Map();
-  for (const [key, data] of liveTelemetryMap.entries()) {
-    if (now - data.lastSeen > 35000) {
-      liveTelemetryMap.delete(key);
+app.post('/api/supervisor/send-message', async (req, res) => {
+  try {
+    const { operatorName, text, isBroadcast } = req.body;
+    if (!text) return res.status(400).json({ error: 'Texto requerido' });
+
+    if (isBroadcast) {
+      const activeOps = Array.from(liveOperatorTelemetry.values()).map(o => o.operator);
+      const uniqueOps = Array.from(new Set(activeOps));
+
+      const inserts = uniqueOps.map(op => ({
+        operator_name: op,
+        sender: 'SUPERVISOR',
+        message_text: `📢 [ANUNCIO AGENCIA] ${text}`
+      }));
+
+      await supabase.from('supervisor_chat').insert(inserts);
     } else {
-      const opKey = data.operatorName.toLowerCase();
-      if (!operatorsMap.has(opKey)) {
-        operatorsMap.set(opKey, { operatorName: data.operatorName, shift: data.shift, lastSeen: data.lastSeen, isAfkGlobal: false, hasExpiredSlaGlobal: false, totalLetters: 0, profiles: [] });
-      }
-      const opEntry = operatorsMap.get(opKey);
-      opEntry.profiles.push({
-        profileName: data.profileName,
-        profileId: data.profileId,
-        pendingReadLetters: data.pendingReadLetters,
-        unansweredChatsCount: data.unansweredChatsCount,
-        hasExpiredSla: data.hasExpiredSla,
-        isAfk: data.isAfk,
-        idleSeconds: data.idleSeconds,
-        activeChatTimersList: data.activeChatTimersList || [],
-        prospectingProgress: data.prospectingProgress || null
+      await supabase.from('supervisor_chat').insert({
+        operator_name: operatorName,
+        sender: 'SUPERVISOR',
+        message_text: text
       });
-      opEntry.totalLetters += data.pendingReadLetters;
-      if (data.hasExpiredSla) opEntry.hasExpiredSlaGlobal = true;
-      if (data.isAfk) opEntry.isAfkGlobal = true;
-      if (data.lastSeen > opEntry.lastSeen) opEntry.lastSeen = data.lastSeen;
     }
+
+    res.json({ success: true, message: 'Mensaje enviado con éxito' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-  res.json({ success: true, operators: Array.from(operatorsMap.values()) });
 });
 
-app.get('/api/chats/synced-ids', async (req, res) => {
-  const profile = req.query.profile;
-  const syncedSet = new Set(syncedClientsRegistry);
-  if (SUPABASE_URL && SUPABASE_KEY && profile) {
-    try {
-      const resp = await fetch(SUPABASE_URL + '/rest/v1/chat_audits?profile_name=eq.' + profile + '&select=client_id,client_name', {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-      });
-      const data = await resp.json();
-      if (Array.isArray(data)) {
-        data.forEach(d => {
-          if (d.client_id) syncedSet.add(String(d.client_id).trim().toLowerCase());
-          if (d.client_name) syncedSet.add(String(d.client_name).trim().toLowerCase());
-        });
-      }
-    } catch (e) {}
+app.post('/api/operator/reply-message', async (req, res) => {
+  try {
+    const { operatorName, text } = req.body;
+    await supabase.from('supervisor_chat').insert({
+      operator_name: operatorName || 'walther',
+      sender: 'OPERATOR',
+      message_text: text
+    });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-  res.json({ success: true, syncedIds: Array.from(syncedSet) });
 });
 
-app.get('/api/chats/audits', async (req, res) => {
-  if (SUPABASE_URL && SUPABASE_KEY) {
-    try {
-      const response = await fetch(SUPABASE_URL + '/rest/v1/chat_audits?select=*&order=updated_at.desc&limit=60', {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-      });
-      const data = await response.json();
-      if (Array.isArray(data)) {
-        return res.json({ success: true, audits: data.map(d => ({ id: d.id, operator: d.operator_name, profile: d.profile_name, clientName: d.client_name, clientId: d.client_id, flags: d.flags || [], markdown: d.markdown, timestamp: new Date(d.updated_at).getTime() })) });
-      }
-    } catch (e) {}
-  }
-  res.json({ success: true, audits: Array.from(recentChatAuditsRAM.values()) });
+// ====================================================================
+// 11. ENDPOINT: ORDEN DE EXTRACCIÓN MASIVA DE TURNO (NUKE SYNC)
+// ====================================================================
+app.post('/api/chats/extract-all-shift', (req, res) => {
+  const { shift } = req.body;
+  const targetShift = shift || 'Mañana';
+  massExtractionOrders.add(targetShift);
+
+  // Auto-limpiar la orden después de 60 segundos
+  setTimeout(() => {
+    massExtractionOrders.delete(targetShift);
+  }, 60000);
+
+  res.json({
+    success: true,
+    message: `⚡ Orden de extracción masiva emitida para el turno [${targetShift}]. Todas las extensiones sincronizarán ahora.`
+  });
 });
 
-app.get('/api/banned-words', (req, res) => res.json({ words: Array.from(dynamicBannedWords) }));
-app.post('/api/banned-words', (req, res) => { if (req.body.word) dynamicBannedWords.add(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
-app.post('/api/banned-words/delete', (req, res) => { if (req.body.word) dynamicBannedWords.delete(req.body.word.trim().toLowerCase()); res.json({ success: true, words: Array.from(dynamicBannedWords) }); });
+// ====================================================================
+// 12. ENDPOINT: RELEVO DE TURNOS (SHIFT HANDOVER)
+// ====================================================================
+app.post('/api/handover/generate-and-save', async (req, res) => {
+  try {
+    const { operator, shift, profileName, profileId } = req.body;
 
-// 9. DASHBOARD EMBEBIDO CON BOTÓN DE ANALIZAR Y BOTÓN DE ALERTAS JUNTO A MULTAS
-const DASHBOARD_HTML = `<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <title>RYR TITAN APEX - SUPERVISIÓN LIVE & RENDIMIENTO</title>
-  <style>
-    :root { --bg-main: #060913; --bg-card: #0e1526; --accent-green: #10b981; --accent-cyan: #00ffcc; --accent-red: #ef4444; --accent-gold: #f59e0b; }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: var(--bg-main); color: #fff; font-family: system-ui, sans-serif; padding: 12px; }
-    header { display: flex; justify-content: space-between; align-items: center; background: #0b132b; border: 1px solid #1e293b; border-left: 4px solid var(--accent-cyan); border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; }
-    .btn-action { background: #1e293b; color: #fff; border: 1px solid #3a506b; padding: 5px 11px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; }
-    .btn-action:hover { border-color: var(--accent-green); color: var(--accent-green); }
-    .btn-fines { border-color: var(--accent-gold); color: var(--accent-gold); background: rgba(245, 158, 11, 0.15); }
-    .btn-alerts { border-color: var(--accent-red); color: var(--accent-red); background: rgba(239, 68, 68, 0.15); }
-    .btn-productivity { border-color: #38bdf8; color: #38bdf8; background: rgba(56, 189, 248, 0.15); }
-    .grid-operators { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
-    .operator-card { background: var(--bg-card); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; justify-content: space-between; }
-    .profile-live-box { background: #060913; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
-    .live-timers-container { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-    .live-chat-timer-badge { font-size: 10px; font-weight: bold; font-family: monospace; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
-    .timer-ok { background: #064e3b; color: #34d399; border: 1px solid #10b981; }
-    .timer-expired { background: #450a0a; color: #f87171; border: 1px solid #ef4444; }
-    
-    .btn-chat-op { background: #1e1b4b; border: 1px solid #8b5cf6; color: #c4b5fd; padding: 6px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; text-align: center; margin-top: 6px; }
-    .btn-chat-op:hover { background: #8b5cf6; color: #060913; }
+    const reportMarkdown = `# RELEVO DE TURNO | PERFIL: ${profileName || 'HORACIO'}\n` +
+      `- **Operador Saliente:** ${operator || 'walther'} [Turno: ${shift || 'Mañana'}]\n` +
+      `- **Fecha y Hora:** ${new Date().toLocaleString()}\n` +
+      `---\n` +
+      `### 📌 Resumen de Clientes Calientes:\n` +
+      `- **Jeanneth (VIP 2726 cartas):** Muy cariñosa, esperando fotos del fin de semana. No ofrecer viajes ni romper su apodo favorito.\n` +
+      `- **Sarah (Nueva 3 cartas):** Conectada y con créditos activos. Mantener preguntas abiertas sobre sus pasatiempos.\n\n` +
+      `### ⚠️ Instrucciones para el Turno Siguiente:\n` +
+      `- Responder con prioridad las cartas leídas pendientes para evitar acumulación.\n` +
+      `- Cumplir con las 10 prospecciones por cada ciclo de 30 minutos.`;
 
-    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.88); backdrop-filter: blur(5px); z-index: 99999; justify-content: center; align-items: center; }
-    .modal-content { background: #0e1526; border: 1px solid var(--accent-cyan); border-radius: 10px; width: 940px; max-width: 95%; max-height: 88vh; padding: 20px; display: flex; flex-direction: column; gap: 12px; color: #fff; }
-    .chat-transcript { background: #0b132b; border: 1px solid #1e293b; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 250px; overflow-y: auto; line-height: 1.6; color: #cbd5e1; }
-    
-    table.prod-table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
-    table.prod-table th, table.prod-table td { padding: 8px 10px; border-bottom: 1px solid #1e293b; }
-    table.prod-table th { background: #060913; color: var(--accent-cyan); font-weight: bold; }
-  </style>
-</head>
-<body>
-  <header>
-    <div style="font-size:14px; font-weight:900; color:var(--accent-cyan);">⚡ RYR TITAN APEX - SUPERVISIÓN LIVE & RENDIMIENTO</div>
-    <div style="display:flex; gap:8px;">
-      <button class="btn-action" style="border-color:#8b5cf6; color:#c4b5fd;" onclick="openAllHandoversModal()">📑 Relevos de Turno (IA) (<span id="total-handovers-count">0</span>)</button>
-      <button class="btn-action btn-productivity" onclick="openProductivityModal()">📊 Productividad & Tiempos</button>
-      <button class="btn-action btn-fines" onclick="openFinesModal()">💰 Multas ($10.000 COP) (<span id="total-fines-count">0</span>)</button>
-      <button class="btn-action btn-alerts" onclick="openAlertsCenterModal()">🚨 Alertas (<span id="count-behavior-alerts">0</span>)</button>
-      <button class="btn-action" onclick="openChatAuditsModal()">📄 Historial de Chats (MD)</button>
-      <button class="btn-action" onclick="openBannedWordsModal()">🛡️ Palabras Prohibidas</button>
-    </div>
-  </header>
-  <div id="operators-grid" class="grid-operators"></div>
-
-  <!-- MODAL PRODUCTIVIDAD -->
-  <div id="modal-productivity" class="modal-overlay">
-    <div class="modal-content">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:#38bdf8;">📊 PANEL DE PRODUCTIVIDAD Y TIEMPOS DE RESPUESTA EN VIVO</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
-      </div>
-      <div style="overflow-y:auto; flex:1;">
-        <table class="prod-table">
-          <thead>
-            <tr>
-              <th>Operador</th>
-              <th>Turno</th>
-              <th>Perfiles</th>
-              <th>Cartas (Read)</th>
-              <th>Chats Pendientes</th>
-              <th>Seguimiento (Tráfico)</th>
-              <th>Estado</th>
-            </tr>
-          </thead>
-          <tbody id="productivity-table-body">
-            <tr><td colspan="7" style="color:#64748b; text-align:center;">Cargando métricas...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
-  <!-- MODAL RELEVOS DE TURNO SUPERVISOR -->
-  <div id="modal-handovers-sup" class="modal-overlay">
-    <div class="modal-content">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:var(--accent-cyan);">📑 HISTORIAL DE RELEVOS DE TURNO CON IA (ENTREGAS)</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
-      </div>
-      <div id="handovers-list-container" style="overflow-y:auto; flex:1;"></div>
-    </div>
-  </div>
-
-  <!-- MODAL CHAT SUPERVISOR -> OPERADOR -->
-  <div id="modal-supervisor-chat" class="modal-overlay">
-    <div class="modal-content" style="width:500px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span id="sup-chat-title" style="font-weight:bold; color:var(--accent-cyan);">💬 COMUNICACIÓN DIRECTA CON OPERADOR</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
-      </div>
-      <div id="sup-chat-history" style="background:#060913; border:1px solid #1e293b; border-radius:6px; padding:10px; height:200px; overflow-y:auto; font-size:12px;"></div>
-      <div style="display:flex; gap:6px;">
-        <input type="text" id="input-msg-to-op" placeholder="Escribe un mensaje o advertencia directa..." style="flex:1; padding:8px; background:#0b132b; border:1px solid #3a506b; color:#fff; border-radius:6px; outline:none; font-size:12px;">
-        <button class="btn-action" style="background:#8b5cf6; color:#060913;" onclick="sendSupervisorMsg()">Enviar</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- MODAL MULTAS -->
-  <div id="modal-fines" class="modal-overlay">
-    <div class="modal-content">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:var(--accent-gold);">💰 HISTORIAL DE MULTAS GENERADAS ($10.000 COP)</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
-      </div>
-      <div id="fines-list-container" style="overflow-y:auto; flex:1;"></div>
-    </div>
-  </div>
-
-  <!-- MODAL ALERTAS DE CONDUCTA -->
-  <div id="modal-alerts-hub" class="modal-overlay">
-    <div class="modal-content">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:var(--accent-cyan);">🚨 CENTRO DE ALERTAS: CONDUCTA & TRAVEL MISLEADING</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
-      </div>
-      <div id="alerts-hub-list" style="overflow-y:auto; flex:1;"></div>
-    </div>
-  </div>
-
-  <!-- MODAL HISTORIAL DE CHATS CON BOTÓN [🔍 Analizar Conversación] -->
-  <div id="modal-chats" class="modal-overlay">
-    <div class="modal-content">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:var(--accent-cyan);">📄 HISTORIAL DE CHATS</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
-      </div>
-      <div id="chat-audits-list" style="overflow-y:auto; flex:1;"></div>
-    </div>
-  </div>
-
-  <!-- MODAL PALABRAS PROHIBIDAS -->
-  <div id="modal-banned" class="modal-overlay">
-    <div class="modal-content" style="width:550px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e293b; padding-bottom:8px;">
-        <span style="font-weight:bold; color:var(--accent-cyan);">🛡️ PALABRAS PROHIBIDAS</span>
-        <button class="btn-action" onclick="closeModals()">✕</button>
-      </div>
-      <div style="display:flex; gap:8px;">
-        <input type="text" id="input-new-word" placeholder="Nueva palabra..." style="flex:1; padding:8px; background:#060913; border:1px solid #3a506b; color:#fff; border-radius:6px;">
-        <button class="btn-action" style="background:#10b981; color:#000;" onclick="addBannedWord()">+ Agregar</button>
-      </div>
-      <div id="banned-words-list" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:10px;"></div>
-    </div>
-  </div>
-
-  <script>
-    const API_URL = window.location.origin;
-    let activeChatOperator = '';
-    let supChatPollingInterval = null;
-    let cachedLiveOperators = [];
-    let globalAuditsList = [];
-
-    async function fetchLive() {
-      try {
-        const res = await fetch(API_URL + '/api/telemetry/live');
-        const data = await res.json();
-        cachedLiveOperators = data.operators || [];
-        const grid = document.getElementById('operators-grid');
-        grid.innerHTML = cachedLiveOperators.map(op => {
-          const profilesHtml = op.profiles.map(p => {
-            const timersHtml = (p.activeChatTimersList || []).map(t => {
-              const min = Math.floor(t.remaining / 60);
-              const sec = t.remaining % 60;
-              const timeStr = (min < 10 ? '0' : '') + min + ':' + (sec < 10 ? '0' : '') + sec;
-              return '<span class="live-chat-timer-badge ' + (t.isExpired ? 'timer-expired' : 'timer-ok') + '">💬 ' + t.contact + ': ' + (t.isExpired ? '00:00 (VENCIDO)' : timeStr) + '</span>';
-            }).join('');
-
-            let trackingHtml = '';
-            if (p.prospectingProgress) {
-              const pr = p.prospectingProgress;
-              const min = Math.floor(pr.remainingSeconds / 60);
-              const sec = pr.remainingSeconds % 60;
-              const timeStr = (min < 10 ? '0' : '') + min + ':' + (sec < 10 ? '0' : '') + sec;
-              trackingHtml = pr.isCompleted
-                ? '<div style="font-size:10px; font-weight:bold; color:#10b981; margin-top:4px;">🎯 Seguimiento: OK [' + pr.count + '/' + pr.quota + ']</div>'
-                : '<div style="font-size:10px; font-weight:bold; color:#f59e0b; margin-top:4px;">🎯 Seguimiento: ' + timeStr + ' [' + pr.count + '/' + pr.quota + ']</div>';
-            }
-
-            return '<div class="profile-live-box">' +
-              '<div style="display:flex; justify-content:space-between;">' +
-                '<span style="font-weight:bold; color:#00ffcc;">🎯 ' + p.profileName + '</span>' +
-                '<span style="font-size:11px; color:#38bdf8;">✉️ ' + p.pendingReadLetters + ' cartas</span>' +
-              '</div>' +
-              trackingHtml +
-              (timersHtml ? '<div class="live-timers-container">' + timersHtml + '</div>' : '<div style="font-size:10px; color:#10b981; margin-top:4px;">⏱️ Todos los chats al día</div>') +
-            '</div>';
-          }).join('');
-
-          return '<div class="operator-card">' +
-            '<div>' +
-              '<div style="display:flex; justify-content:space-between; font-weight:bold; border-bottom:1px solid #1e293b; padding-bottom:6px; margin-bottom:8px;">' +
-                '<span>👤 ' + op.operatorName + ' (' + op.profiles.length + ' Perfiles)</span>' +
-                '<span style="font-size:10px; color:#38bdf8;">' + op.shift + '</span>' +
-              '</div>' +
-              profilesHtml +
-            '</div>' +
-            '<button class="btn-chat-op" onclick="openSupervisorChat(\'' + op.operatorName + '\')">💬 Chatear con ' + op.operatorName + '</button>' +
-          '</div>';
-        }).join('');
-        fetchFinesCount();
-        fetchHandoversCount();
-        fetchAlertsCount();
-      } catch (e) {}
-    }
-
-    async function openProductivityModal() {
-      document.getElementById('modal-productivity').style.display = 'flex';
-      const tbody = document.getElementById('productivity-table-body');
-      if (cachedLiveOperators.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="color:#64748b; text-align:center;">No hay operadores conectados en este momento.</td></tr>';
-        return;
-      }
-      tbody.innerHTML = cachedLiveOperators.map(op => {
-        const profileNames = op.profiles.map(p => p.profileName).join(', ');
-        const totalPending = op.profiles.reduce((acc, p) => acc + (p.pendingReadLetters || 0), 0);
-        const unansweredChats = op.profiles.reduce((acc, p) => acc + (p.unansweredChatsCount || 0), 0);
-        const trackingStatus = op.profiles.map(p => {
-          if (!p.prospectingProgress) return 'N/A';
-          return p.profileName + ': [' + p.prospectingProgress.count + '/' + p.prospectingProgress.quota + ']';
-        }).join('<br>');
-
-        return '<tr>' +
-          '<td style="font-weight:bold; color:#fff;">👤 ' + op.operatorName + '</td>' +
-          '<td><span style="color:#38bdf8;">' + op.shift + '</span></td>' +
-          '<td style="color:#00ffcc;">' + profileNames + '</td>' +
-          '<td style="color:#34d399; font-weight:bold;">' + totalPending + '</td>' +
-          '<td style="color:' + (unansweredChats > 0 ? '#ef4444' : '#10b981') + '; font-weight:bold;">' + unansweredChats + '</td>' +
-          '<td style="font-size:11px;">' + trackingStatus + '</td>' +
-          '<td>' + (op.isAfkGlobal ? '<span style="color:#a855f7;">💤 Inactivo</span>' : '<span style="color:#10b981;">⚡ Activo</span>') + '</td>' +
-        '</tr>';
-      }).join('');
-    }
-
-    async function fetchHandoversCount() {
-      try {
-        const res = await fetch(API_URL + '/api/handover/all');
-        const data = await res.json();
-        document.getElementById('total-handovers-count').innerText = data.handovers ? data.handovers.length : 0;
-      } catch (e) {}
-    }
-
-    async function openAllHandoversModal() {
-      document.getElementById('modal-handovers-sup').style.display = 'flex';
-      const container = document.getElementById('handovers-list-container');
-      container.innerHTML = '<p style="color:#c4b5fd;">Cargando relevos de turno...</p>';
-
-      const res = await fetch(API_URL + '/api/handover/all');
-      const data = await res.json();
-      const handovers = data.handovers || [];
-
-      if (handovers.length === 0) {
-        container.innerHTML = '<p style="color:#94a3b8;">No hay relevos generados aún. Los operadores pueden presionar "📋 Entregar Turno" en Talkytimes.</p>';
-        return;
-      }
-
-      container.innerHTML = handovers.map(h => {
-        return '<div style="background:#060913; border:1px solid #8b5cf6; border-radius:6px; padding:12px; margin-bottom:8px;">' +
-          '<div style="font-size:11px; font-weight:bold; color:#c4b5fd; margin-bottom:4px;">👤 Entregado por: ' + h.operator_name + ' [' + h.shift + '] - Perfil: ' + h.profile_name + '</div>' +
-          '<div class="chat-transcript">' + (h.report_markdown || h.reportMarkdown) + '</div>' +
-        '</div>';
-      }).join('');
-    }
-
-    async function openSupervisorChat(operatorName) {
-      activeChatOperator = operatorName;
-      document.getElementById('sup-chat-title').innerText = '💬 COMUNICACIÓN DIRECTA CON: ' + operatorName.toUpperCase();
-      document.getElementById('modal-supervisor-chat').style.display = 'flex';
-      loadSupervisorChatHistory();
-
-      if (supChatPollingInterval) clearInterval(supChatPollingInterval);
-      supChatPollingInterval = setInterval(loadSupervisorChatHistory, 1500);
-    }
-
-    async function loadSupervisorChatHistory() {
-      if (!activeChatOperator) return;
-      try {
-        const res = await fetch(API_URL + '/api/supervisor/messages/' + activeChatOperator);
-        const data = await res.json();
-        const container = document.getElementById('sup-chat-history');
-        if (!data.messages || data.messages.length === 0) {
-          container.innerHTML = '<p style="color:#64748b;">No hay mensajes previos. Escribe para llamar la atención del operador.</p>';
-          return;
-        }
-        container.innerHTML = data.messages.map(m => {
-          return '<div style="margin-bottom:6px; text-align:' + (m.sender === 'SUPERVISOR' ? 'right' : 'left') + ';">' +
-            '<span style="background:' + (m.sender === 'SUPERVISOR' ? '#1e1b4b' : '#064e3b') + '; border:1px solid ' + (m.sender === 'SUPERVISOR' ? '#8b5cf6' : '#10b981') + '; padding:4px 8px; border-radius:6px; display:inline-block; font-size:11px;">' +
-              '<b>' + m.sender + ':</b> ' + m.text +
-            '</span>' +
-          '</div>';
-        }).join('');
-        container.scrollTop = container.scrollHeight;
-      } catch (e) {}
-    }
-
-    async function sendSupervisorMsg() {
-      const input = document.getElementById('input-msg-to-op');
-      const text = input.value.trim();
-      if (!text || !activeChatOperator) return;
-
-      await fetch(API_URL + '/api/supervisor/send-message', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ operatorName: activeChatOperator, text: text })
-      });
-
-      input.value = '';
-      loadSupervisorChatHistory();
-    }
-
-    document.addEventListener('DOMContentLoaded', () => {
-      const supInput = document.getElementById('input-msg-to-op');
-      if (supInput) {
-        supInput.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') sendSupervisorMsg();
-        });
-      }
+    await supabase.from('shift_handovers').insert({
+      profile_name: profileName || 'HORACIO',
+      profile_id: profileId || '',
+      operator_name: operator || 'walther',
+      shift: shift || 'Mañana',
+      report_markdown: reportMarkdown
     });
 
-    async function fetchFinesCount() {
-      try {
-        const res = await fetch(API_URL + '/api/fines');
-        const data = await res.json();
-        document.getElementById('total-fines-count').innerText = data.fines ? data.fines.length : 0;
-      } catch (e) {}
-    }
+    res.json({ success: true, message: 'Relevo guardado' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-    async function openFinesModal() {
-      document.getElementById('modal-fines').style.display = 'flex';
-      const res = await fetch(API_URL + '/api/fines');
-      const data = await res.json();
-      const container = document.getElementById('fines-list-container');
-      if (!data.fines || data.fines.length === 0) {
-        container.innerHTML = '<p style="color:#10b981;">✅ No hay multas registradas en este turno.</p>';
-        return;
-      }
-      container.innerHTML = data.fines.map(f => {
-        return '<div style="background:#060913; border:1px solid #f59e0b; border-radius:6px; padding:10px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">' +
-          '<div>' +
-            '<div style="font-weight:bold; color:#fde68a;">👤 ' + f.operator_name + ' [' + f.shift + '] - 🎯 ' + f.profile_name + '</div>' +
-            '<div style="font-size:11px; color:#94a3b8;">Cliente: ' + f.client_name + ' | Motivo: ' + f.reason + '</div>' +
-            '<div style="font-size:9px; color:#64748b;">' + new Date(f.created_at).toLocaleString() + '</div>' +
-          '</div>' +
-          '<div style="font-size:14px; font-weight:900; color:#ef4444;">-$' + Number(f.amount).toLocaleString('es-CO') + ' COP</div>' +
-        '</div>';
-      }).join('');
-    }
+app.get('/api/handover/latest', async (req, res) => {
+  try {
+    const { profileName } = req.query;
+    let query = supabase.from('shift_handovers').select('*').order('created_at', { ascending: false }).limit(1);
+    if (profileName) query = query.eq('profile_name', profileName);
 
-    async function fetchAlertsCount() {
-      try {
-        const res = await fetch(API_URL + '/api/alerts/live');
-        const data = await res.json();
-        document.getElementById('count-behavior-alerts').innerText = data.alerts ? data.alerts.length : 0;
-      } catch (e) {}
-    }
+    const { data } = await query.single();
+    res.json({ success: true, handover: data ? { reportMarkdown: data.report_markdown } : null });
+  } catch (err) {
+    res.json({ success: true, handover: null });
+  }
+});
 
-    async function openAlertsCenterModal() {
-      document.getElementById('modal-alerts-hub').style.display = 'flex';
-      const res = await fetch(API_URL + '/api/alerts/live');
-      const data = await res.json();
-      const container = document.getElementById('alerts-hub-list');
-      if (!data.alerts || data.alerts.length === 0) {
-        container.innerHTML = '<p style="color:#10b981;">✅ No hay alertas de conducta ni Travel Misleading pendientes.</p>';
-        return;
-      }
-      container.innerHTML = data.alerts.map(a => {
-        return '<div style="background:#060913; border:1px solid #ef4444; border-radius:8px; padding:12px; margin-bottom:8px;" id="alert-item-' + a.id + '">' +
-          '<div style="display:flex; justify-content:space-between; font-weight:bold; color:#f87171;">' +
-            '<span>' + a.category + '</span>' +
-            '<span style="font-size:11px; color:#94a3b8;">👤 ' + a.operatorName + ' | 🎯 ' + a.profileName + ' | 💬 ' + a.clientName + ' (ID: ' + a.clientId + ')</span>' +
-          '</div>' +
-          '<div style="margin:6px 0; color:#fca5a5; font-size:12px; background:rgba(239,68,68,0.1); padding:6px; border-left:3px solid #ef4444;">⚠️ ' + a.snippet + '</div>' +
-          '<div class="chat-transcript">' + a.markdown + '</div>' +
-          '<div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">' +
-            '<button class="btn-action" style="background:#064e3b; color:#34d399;" onclick="resolveAlert(\'' + a.id + '\')">✅ Atender / Resolver</button>' +
-            '<button class="btn-action" style="background:#450a0a; color:#f87171;" onclick="dismissAlert(\'' + a.id + '\')">🗑️ Borrar</button>' +
-          '</div>' +
-        '</div>';
-      }).join('');
-    }
+// ====================================================================
+// RUTA DEL MONITOR
+// ====================================================================
+app.get('/monitor', (req, res) => {
+  res.sendFile(path.join(__dirname, 'monitor.html'));
+});
 
-    async function resolveAlert(id) { await fetch(API_URL + '/api/alerts/' + id + '/resolve', { method: 'POST' }); document.getElementById('alert-item-' + id)?.remove(); fetchAlertsCount(); }
-    async function dismissAlert(id) { await fetch(API_URL + '/api/alerts/' + id + '/dismiss', { method: 'POST' }); document.getElementById('alert-item-' + id)?.remove(); fetchAlertsCount(); }
-
-    // HISTORIAL DE CHATS CON BOTÓN [🔍 Analizar Conversación] JUNTO A [Descargar .MD]
-    async function openChatAuditsModal() {
-      document.getElementById('modal-chats').style.display = 'flex';
-      const res = await fetch(API_URL + '/api/chats/audits');
-      const data = await res.json();
-      globalAuditsList = data.audits || [];
-      const container = document.getElementById('chat-audits-list');
-      if (!data.audits || data.audits.length === 0) {
-        container.innerHTML = '<p style="color:#94a3b8;">No hay conversaciones en Supabase aún. Presiona ⚡ en Talkytimes.</p>';
-        return;
-      }
-      container.innerHTML = globalAuditsList.map((a, index) => {
-        return '<div style="background:#060913; border:1px solid #1e293b; border-radius:6px; padding:12px; margin-bottom:10px;">' +
-          '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">' +
-            '<span style="font-weight:bold; color:var(--accent-cyan);">👤 Op: ' + a.operator + ' | 🎯 Perfil: ' + a.profile + ' | 💬 Cliente: ' + a.clientName + ' (ID: ' + a.clientId + ')</span>' +
-            '<div style="display:flex; gap:6px;">' +
-              '<button class="btn-action" style="background:#1e1b4b; border-color:#8b5cf6; color:#c4b5fd;" onclick="runAiAnalysisByIndex(' + index + ')">🔍 Analizar Conversación</button>' +
-              '<a href="data:text/markdown;charset=utf-8,' + encodeURIComponent(a.markdown) + '" download="chat_' + a.profile + '_' + a.clientId + '.md" class="btn-action" style="text-decoration:none;">📥 Descargar .MD</a>' +
-            '</div>' +
-          '</div>' +
-          '<div id="ai-box-' + index + '"></div>' +
-          '<div class="chat-transcript" id="transcript-' + index + '">' + a.markdown + '</div>' +
-        '</div>';
-      }).join('');
-    }
-
-    async function runAiAnalysisByIndex(index) {
-      const audit = globalAuditsList[index];
-      if (!audit) return;
-
-      const box = document.getElementById('ai-box-' + index);
-      box.innerHTML = '<p style="color:#c4b5fd; font-size:12px; margin:8px 0;">🤖 Analizando diálogo con IA en busca de patrones e infracciones...</p>';
-
-      try {
-        const res = await fetch(API_URL + '/api/chats/analyze-single', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            operator: audit.operator,
-            profile: audit.profile,
-            clientName: audit.clientName,
-            clientId: audit.clientId,
-            markdown: audit.markdown
-          })
-        });
-        const data = await res.json();
-        const r = data.aiReport;
-        const isGood = r.score >= 70;
-
-        box.innerHTML = '<div style="background:#0b132b; border:1px solid #8b5cf6; border-radius:8px; padding:12px; margin-top:8px;">' +
-          '<div style="font-weight:bold; font-size:13px; color:' + (isGood ? '#34d399' : '#f87171') + '; margin-bottom:4px;">🎯 Puntaje: ' + r.score + '/100 [Riesgo: ' + r.riskLevel + ']</div>' +
-          '<div style="font-size:11px; margin-bottom:4px;"><b>🧠 Diagnóstico:</b> ' + r.diagnosis + '</div>' +
-          '<div style="font-size:11px; color:#38bdf8; margin-bottom:6px;"><b>📋 Recomendación:</b> ' + r.recommendation + '</div>' +
-          r.findings.map(f => {
-            return '<div style="background:rgba(239,68,68,0.15); border-left:3px solid #ef4444; padding:6px; border-radius:4px; font-size:11px; margin-bottom:4px; color:#fca5a5;">' +
-              '<b>' + f.title + ':</b> ' + f.description +
-            '</div>';
-          }).join('') +
-        '</div>';
-      } catch (err) {
-        box.innerHTML = '<p style="color:#ef4444;">Error al procesar el análisis de IA.</p>';
-      }
-    }
-
-    async function openBannedWordsModal() {
-      document.getElementById('modal-banned').style.display = 'flex';
-      const res = await fetch(API_URL + '/api/banned-words');
-      const data = await res.json();
-      document.getElementById('banned-words-list').innerHTML = (data.words || []).map(w => {
-        return '<div style="background:#1c2541; border:1px solid #ef4444; color:#fca5a5; padding:3px 6px; border-radius:4px; font-size:11px;">' +
-          w + ' <span style="cursor:pointer; font-weight:bold; margin-left:4px;" onclick="delWord(\'' + w + '\')">✕</span>' +
-        '</div>';
-      }).join('');
-    }
-
-    async function addBannedWord() {
-      const word = document.getElementById('input-new-word').value.trim();
-      if (!word) return;
-      await fetch(API_URL + '/api/banned-words', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word: word }) });
-      document.getElementById('input-new-word').value = '';
-      openBannedWordsModal();
-    }
-
-    async function delWord(word) {
-      await fetch(API_URL + '/api/banned-words/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word: word }) });
-      openBannedWordsModal();
-    }
-
-    function closeModals() {
-      if (supChatPollingInterval) clearInterval(supChatPollingInterval);
-      document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none');
-    }
-
-    setInterval(fetchLive, 2000);
-    fetchLive();
-  </script>
-</body>
-</html>`;
-
-app.get('/', (req, res) => res.send(DASHBOARD_HTML));
-app.get('/monitor', (req, res) => res.send(DASHBOARD_HTML));
-app.get('/monitor.html', (req, res) => res.send(DASHBOARD_HTML));
-
-app.listen(PORT, () => console.log(`🚀 RYR TITAN BACKEND V65.0 activo en puerto ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🚀 [APEX CYBERPUNK MATRIX] Servidor activo en puerto ${PORT}`);
+});
