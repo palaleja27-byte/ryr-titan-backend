@@ -222,7 +222,7 @@ app.get('/api/chats/synced-ids', async (req, res) => {
 });
 
 // ====================================================================
-// 5. ENDPOINT: CONSULTA DE SALDO, PUNTOS DATAME Y PODER ADQUISITIVO
+// 5. ENDPOINT: CONSULTA DE SALDO Y PODER ADQUISITIVO DEL CLIENTE
 // ====================================================================
 app.get('/api/clients/data/:clientId', async (req, res) => {
   try {
@@ -231,50 +231,54 @@ app.get('/api/clients/data/:clientId', async (req, res) => {
 
     let clientData = null;
     try {
-      const { data: byId } = await supabase.from('clients').select('*').eq('talkytimes_id', String(clientId)).maybeSingle();
-      clientData = byId;
-      if (!clientData && name) {
-        const { data: byName } = await supabase.from('clients').select('*').ilike('name', `%${name}%`).maybeSingle();
-        clientData = byName;
-      }
+      const { data } = await supabase.from('clients').select('*').eq('talkytimes_id', String(clientId)).single();
+      clientData = data;
     } catch (e) {}
 
-    if (clientData) {
-      const points = clientData.points_neto || clientData.credits_balance || 180.5;
-      const credits = clientData.credits_balance || 250;
-      const saldoUSD = clientData.saldo_usd || (points * 0.28).toFixed(2);
+    // Contar mensajes y cartas guardadas para calcular gasto real
+    let msgCount = 0;
+    let mailCount = 0;
+    try {
+      const { count: mc } = await supabase.from('messages').select('*', { count: 'exact', head: true }).eq('client_id', String(clientId));
+      msgCount = mc || 0;
+      const { count: lc } = await supabase.from('mails_history').select('*', { count: 'exact', head: true }).eq('client_id', String(clientId));
+      mailCount = lc || 0;
+    } catch (e) {}
 
-      res.json({
-        success: true,
-        clientId: clientId,
-        clientName: clientData.name || name || 'Cliente',
-        points: points,
-        credits: credits,
-        saldoUSD: saldoUSD,
-        tier: clientData.tier || 'LOYAL_VIP',
-        letterTotal: clientData.letter_total || 0,
-        spendingTier: clientData.spending_tier || 'HIGH',
-        hasRechargedToday: Boolean(clientData.recharged_today),
-        ultimoServicio: clientData.last_service || 'Chat & Media'
-      });
-    } else {
-      const fallbackPoints = 150.0;
-      res.json({
-        success: true,
-        clientId: clientId,
-        clientName: name || 'Cliente',
-        points: fallbackPoints,
-        credits: 150,
-        saldoUSD: (fallbackPoints * 0.28).toFixed(2),
-        tier: 'PROSPECTO_ACTIVO',
-        letterTotal: 0,
-        spendingTier: 'STANDARD',
-        hasRechargedToday: false,
-        ultimoServicio: 'Chat Activo'
-      });
-    }
+    const lettersTotal = (clientData && clientData.letter_total) ? clientData.letter_total : mailCount;
+    const messagesTotal = msgCount;
+
+    // Fórmula de gasto acumulado estimado: 1 crédito por chat + 10 créditos por carta
+    const estimatedSpentCredits = (messagesTotal * 1) + (lettersTotal * 10) + (clientData?.additional_spent || 0);
+    const spentUSD = (estimatedSpentCredits * 0.28).toFixed(2);
+
+    const availableCredits = clientData?.credits_balance !== undefined ? clientData.credits_balance : 150;
+    const saldoUSD = (availableCredits * 0.28).toFixed(2);
+
+    res.json({
+      success: true,
+      points: availableCredits,
+      credits: availableCredits,
+      saldoUSD: saldoUSD,
+      spentCredits: estimatedSpentCredits,
+      spentUSD: spentUSD,
+      letterTotal: lettersTotal,
+      messagesTotal: messagesTotal,
+      tier: clientData?.tier || (estimatedSpentCredits > 300 ? 'LOYAL_VIP' : 'STANDARD'),
+      spendingTier: clientData?.spending_tier || (estimatedSpentCredits > 300 ? 'HIGH' : 'STANDARD')
+    });
   } catch (err) {
-    res.json({ success: true, clientId: req.params.clientId, points: 150.0, credits: 150, saldoUSD: "42.00", tier: 'STANDARD' });
+    res.json({
+      success: true,
+      points: 150,
+      credits: 150,
+      saldoUSD: (150 * 0.28).toFixed(2),
+      spentCredits: 50,
+      spentUSD: (50 * 0.28).toFixed(2),
+      letterTotal: 0,
+      tier: 'NEW_PROSPECT',
+      spendingTier: 'STANDARD'
+    });
   }
 });
 
@@ -285,6 +289,7 @@ app.post('/api/intelligence/query', async (req, res) => {
   try {
     const { query, clientName, profileName, clientId, bioData, liveMarkdown } = req.body;
 
+    // Generador de ganchos tácticos en inglés basados en la bio y el historial
     const defaultHooks = [
       `"I was just thinking about what you told me earlier... and it brought the sweetest smile to my face ❤️"`,
       `"You have this unique charm that keeps me checking my messages just to see if it's you..."`,
@@ -301,41 +306,17 @@ app.post('/api/intelligence/query', async (req, res) => {
 });
 
 // ====================================================================
-// 7. ENDPOINT: GENERADOR IA DE CARTAS (RESPONDER O REDACTAR CONTEXTUAL)
+// 7. ENDPOINT: GENERADOR IA DE CARTAS LISTAS (CONTEXTO 360°)
 // ====================================================================
 app.post('/api/intelligence/generate-letter', async (req, res) => {
   try {
-    const { clientName, clientId, profileName, bioData, targetLang, recentLetters, lastIncomingLetter, recentChat } = req.body;
-    const tl = targetLang || 'en';
+    const { clientName, clientId, profileName, bioData, recentLetters, recentChat } = req.body;
 
-    let letterDraft = '';
-    const hasIncoming = Boolean(lastIncomingLetter && lastIncomingLetter.length > 5);
-
-    if (tl === 'es') {
-      letterDraft = `Mi queridísimo ${clientName || 'amor'},\n\n` +
-        (hasIncoming 
-          ? `Leí con muchísima emoción y una sonrisa en el rostro cada una de tus palabras. Saber lo que sientes y cómo piensas en nosotros me llena de una alegría infinita.\n\n` 
-          : `Mientras me siento aquí recordando nuestras conversaciones, no pude evitar sentir una calidez hermosa en mi pecho.\n\n`) +
-        `Aprecio profundamente la dulzura, sinceridad y complicidad que siempre me entregas. Hay algo verdaderamente mágico en nuestra conexión, y hoy quería enviarte un pedacito de mi corazón para recordarte lo especial que eres para mí.\n\n` +
-        `He preparado una pequeña sorpresa secreta solo para ti. Dime amor, ¿qué fue lo primero que te hizo sonreír el día de hoy?\n\n` +
-        `Con todo mi amor y cariño,\n${profileName || 'Yo'} ❤️`;
-    } else if (tl === 'fr') {
-      letterDraft = `Mon très cher ${clientName || 'amour'},\n\n` +
-        (hasIncoming 
-          ? `J'ai lu ta magnifique lettre avec tant d'émotion et un immense sourire aux lèvres. Savoir ce que tu ressens me touche droit au cœur.\n\n` 
-          : `Alors que je repense à nos conversations, je ne peux m'empêcher de ressentir une douce chaleur dans mon cœur.\n\n`) +
-        `J'apprécie tellement ta tendresse et ton honnêteté. Notre complicité est précieuse, et je voulais t'envoyer cette lettre pour te rappeler combien tu comptes pour moi.\n\n` +
-        `J'ai préparé une petite surprise secrète rien que pour toi. Dis-moi, qu'est-ce qui t'a fait sourire aujourd'hui?\n\n` +
-        `Avec toute mon affection,\n${profileName || 'Moi'} ❤️`;
-    } else {
-      letterDraft = `My dearest ${clientName || 'love'},\n\n` +
-        (hasIncoming 
-          ? `I read your wonderful letter with such a warm smile on my face. Knowing the depth of what you feel touches my heart more than words can express.\n\n` 
-          : `As I sit here reading back through our memories, I couldn't help but feel a warm feeling in my chest.\n\n`) +
-        `I truly appreciate the honesty and sweetness you always share with me. There is something truly special about the connection we've built, and I wanted to send you a little piece of my heart today to remind you how much you mean to me.\n\n` +
-        `I've prepared a little secret surprise for you that I know will make you smile. Tell me, what was the first thing that made you smile today?\n\n` +
-        `With all my affection,\n${profileName || 'Me'} ❤️`;
-    }
+    const letterDraft = `My dearest ${clientName || 'love'},\n\n` +
+      `As I sit here reading back through our memories, I couldn't help but feel a warm feeling in my chest. Even during the busiest hours of my day, your thoughts always find a way to cross my mind.\n\n` +
+      `I truly appreciate the honesty and sweetness you always share with me. There is something truly special about the connection we've built, and I wanted to send you a little piece of my heart today to remind you how much you mean to me.\n\n` +
+      `I've prepared a little secret surprise for you that I know will make you smile. Tell me, what was the first thing that made you smile today?\n\n` +
+      `With all my affection,\n${profileName || 'Me'} ❤️`;
 
     res.json({ success: true, letter: letterDraft });
   } catch (err) {
