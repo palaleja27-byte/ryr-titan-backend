@@ -644,19 +644,147 @@ app.post('/api/operator/reply-message', async (req, res) => {
 // 11. ENDPOINT: ORDEN DE EXTRACCIÓN MASIVA DE TURNO (NUKE SYNC)
 // ====================================================================
 app.post('/api/chats/extract-all-shift', (req, res) => {
-  const { shift } = req.body;
+  const { shift, operator, profile } = req.body;
   const targetShift = shift || 'Mañana';
   massExtractionOrders.add(targetShift);
 
-  // Auto-limpiar la orden después de 60 segundos
   setTimeout(() => {
     massExtractionOrders.delete(targetShift);
   }, 60000);
 
   res.json({
     success: true,
-    message: `⚡ Orden de extracción masiva emitida para el turno [${targetShift}]. Todas las extensiones sincronizarán ahora.`
+    message: `⚡ Orden de extracción emitida para [${profile || operator || targetShift}]. La sincronización táctica ha iniciado.`
   });
+});
+
+// ====================================================================
+// 11.1 ENDPOINT: MOTOR DE AUDITORÍA EN TIEMPO REAL (4 REGLAS SUPREMAS)
+// ====================================================================
+function auditConversationRules(text, profileName, clientName) {
+  const cleanText = (text || '').toLowerCase();
+  const violations = [];
+
+  // Regla 1: Manipulación de regalos (Sin manipulación de ningún tipo para recibir regalos)
+  const giftKeywords = [
+    'regalo', 'regálame', 'regalame', 'gift', 'gifts', 'send me a gift', 'buy me a gift',
+    'present', 'presents', 'tokens', 'monedas', 'propina', 'tip', 'donación', 'mandame un regalo',
+    'enviame un regalo', 'give me a present', 'compra un regalo', 'buy me credits', 'mándame un detalle',
+    'dame un regalo', 'ayúdame con un regalo', 'send me coins'
+  ];
+  const matchedGifts = giftKeywords.filter(k => cleanText.includes(k));
+  if (matchedGifts.length > 0) {
+    violations.push({
+      rule: 'GIFT_MANIPULATION',
+      severity: 'CRITICAL',
+      title: '🎁 Manipulación de Regalos / Tokens Prohibida',
+      detail: `Se detectaron solicitudes o insinuaciones de regalos/tokens: "${matchedGifts.slice(0, 3).join(', ')}"`,
+      sample: matchedGifts[0]
+    });
+  }
+
+  // Regla 2: Error en el Nombre del Perfil
+  if (profileName) {
+    const pClean = profileName.toLowerCase().trim();
+    // Lista de perfiles comunes de la agencia para evitar cruces
+    const agencyProfiles = ['horacio', 'walther', 'carlos', 'daniela', 'laura', 'andrea', 'mariana', 'valentina', 'camila', 'sofia'];
+    const otherProfiles = agencyProfiles.filter(p => p !== pClean);
+    for (const op of otherProfiles) {
+      // Si la operadora se refiere a sí misma con otro nombre o firma con otro nombre
+      const regexNameConfusion = new RegExp(`\\b(soy|me llamo|mi nombre es|i am|my name is|atentamente|con amor,)\\s+${op}\\b`, 'i');
+      if (regexNameConfusion.test(cleanText)) {
+        violations.push({
+          rule: 'WRONG_PROFILE_NAME',
+          severity: 'HIGH',
+          title: '👤 Confusión en Nombre del Perfil Asignado',
+          detail: `El operador utilizó el nombre de otro perfil ("${op.toUpperCase()}") en lugar de "${profileName.toUpperCase()}"`,
+          sample: op
+        });
+        break;
+      }
+    }
+  }
+
+  // Regla 3 & 4: Travel Misleading & Promesas de Viaje, Citas o Matrimonio
+  const travelMarriageKeywords = [
+    { word: 'when we meet', rule: 'TRAVEL_MEETING', label: 'Cita en persona ("when we meet")' },
+    { word: 'when i visit', rule: 'TRAVEL_MEETING', label: 'Visita en persona ("when i visit")' },
+    { word: 'book a flight', rule: 'TRAVEL_MEETING', label: 'Compra/reserva de vuelo ("book a flight")' },
+    { word: 'my flight', rule: 'TRAVEL_MEETING', label: 'Referencia a vuelo ("my flight")' },
+    { word: 'airport', rule: 'TRAVEL_MEETING', label: 'Aeropuerto ("airport")' },
+    { word: 'hotel', rule: 'TRAVEL_MEETING', label: 'Hotel ("hotel")' },
+    { word: 'plane ticket', rule: 'TRAVEL_MEETING', label: 'Pasaje aéreo ("plane ticket")' },
+    { word: 'meet up', rule: 'TRAVEL_MEETING', label: 'Encuentro presencial ("meet up")' },
+    { word: 'in person', rule: 'TRAVEL_MEETING', label: 'En persona ("in person")' },
+    { word: 'vernos en persona', rule: 'TRAVEL_MEETING', label: 'Cita presencial ("vernos en persona")' },
+    { word: 'visitarte', rule: 'TRAVEL_MEETING', label: 'Promesa de visita ("visitarte")' },
+    { word: 'viajar a verte', rule: 'TRAVEL_MEETING', label: 'Promesa de viaje ("viajar a verte")' },
+    { word: 'marry me', rule: 'MARRIAGE_PROMISE', label: 'Promesa de matrimonio ("marry me")' },
+    { word: 'get married', rule: 'MARRIAGE_PROMISE', label: 'Promesa de matrimonio ("get married")' },
+    { word: 'casarnos', rule: 'MARRIAGE_PROMISE', label: 'Promesa de matrimonio ("casarnos")' },
+    { word: 'matrimonio', rule: 'MARRIAGE_PROMISE', label: 'Mención de matrimonio ("matrimonio")' },
+    { word: 'mi esposo', rule: 'MARRIAGE_PROMISE', label: 'Mención de compromiso conyugal ("mi esposo")' },
+    { word: 'my husband', rule: 'MARRIAGE_PROMISE', label: 'Mención de compromiso ("my husband")' },
+    { word: 'promet', rule: 'FALSE_PROMISE', label: 'Raíz de promesa ("promet...")' }
+  ];
+
+  const matchedTravel = [];
+  travelMarriageKeywords.forEach(item => {
+    if (cleanText.includes(item.word)) {
+      matchedTravel.push(item);
+    }
+  });
+
+  if (matchedTravel.length > 0) {
+    violations.push({
+      rule: 'TRAVEL_MISLEADING_MARRIAGE',
+      severity: 'CRITICAL',
+      title: '✈️ Infracción Travel Misleading (TM) / Promesas de Viaje o Matrimonio',
+      detail: `Se detectaron frases prohibidas de encuentro, pasajes o matrimonio: ${matchedTravel.map(m => m.label).slice(0, 3).join(', ')}`,
+      sample: matchedTravel[0].word
+    });
+  }
+
+  return {
+    passed: violations.length === 0,
+    score: violations.length === 0 ? 100 : Math.max(0, 100 - (violations.length * 35)),
+    violationsCount: violations.length,
+    violations: violations,
+    checklist: {
+      noGiftManipulation: !violations.some(v => v.rule === 'GIFT_MANIPULATION'),
+      correctProfileName: !violations.some(v => v.rule === 'WRONG_PROFILE_NAME'),
+      noTravelOrMeeting: !violations.some(v => v.rule === 'TRAVEL_MISLEADING_MARRIAGE'),
+      noMarriagePromise: !violations.some(v => v.rule === 'TRAVEL_MISLEADING_MARRIAGE' && cleanText.includes('marr'))
+    }
+  };
+}
+
+// Endpoint para auditar texto en vivo (utilizado por el Accordion y por el módulo Anti-TM)
+app.post('/api/audit/realtime-check', async (req, res) => {
+  try {
+    const { text, profileName, clientName, operatorName } = req.body;
+    const auditResult = auditConversationRules(text, profileName, clientName);
+
+    // Si hay violaciones críticas, registrar intento de infracción en telemetría o multa preventiva
+    if (!auditResult.passed && operatorName) {
+      const crit = auditResult.violations.find(v => v.severity === 'CRITICAL');
+      if (crit) {
+        supabase.from('fines').insert({
+          operator_name: operatorName,
+          shift: 'En Vivo',
+          profile_name: profileName || 'Perfil',
+          client_name: clientName || 'Chat en Vivo',
+          amount_cop: 10000.00,
+          reason: `Alerta Auditoría en Vivo: ${crit.title} (${crit.sample})`,
+          status: 'PENDING_REVIEW'
+        }).then(() => {}).catch(() => {});
+      }
+    }
+
+    res.json({ success: true, ...auditResult });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ====================================================================
