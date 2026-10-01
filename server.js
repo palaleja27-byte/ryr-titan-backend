@@ -287,36 +287,166 @@ app.get('/api/clients/data/:clientId', async (req, res) => {
 // ====================================================================
 app.post('/api/intelligence/query', async (req, res) => {
   try {
-    const { query, clientName, profileName, clientId, bioData, liveMarkdown } = req.body;
+    const { query, clientName, profileName, clientId, bioData, liveMarkdown, targetLang } = req.body;
 
-    // Generador de ganchos tácticos en inglés basados en la bio y el historial
-    const defaultHooks = [
-      `"I was just thinking about what you told me earlier... and it brought the sweetest smile to my face ❤️"`,
-      `"You have this unique charm that keeps me checking my messages just to see if it's you..."`,
-      `"Tell me something... are you always this thoughtful or am I just getting special treatment? 😉"`
-    ];
+    // Buscar cartas y mensajes guardados previamente en Supabase para tener memoria histórica persistente
+    let dbLetters = [];
+    let dbMessages = [];
+    if (clientId) {
+      try {
+        const { data: mails } = await supabase
+          .from('mails_history')
+          .select('direction, letter_preview, letter_date')
+          .eq('client_id', String(clientId))
+          .order('id', { ascending: false })
+          .limit(10);
+        if (mails) dbLetters = mails;
 
-    const randomHook = defaultHooks[Math.floor(Math.random() * defaultHooks.length)];
-    const simulatedAnswer = `Basado en el perfil de ${clientName} (${bioData?.country || 'USA'}, ${bioData?.birthDate || '53 años'}):\n\n${randomHook}\n\n💡 *Tip Táctico:* Haz una pregunta abierta sobre sus planes de fin de semana para mantener la conversación en vivo.`;
+        const { data: msgs } = await supabase
+          .from('messages')
+          .select('sender_type, message_text, message_time')
+          .eq('client_id', String(clientId))
+          .order('id', { ascending: false })
+          .limit(15);
+        if (msgs) dbMessages = msgs;
+      } catch (dbErr) {
+        console.warn('Advertencia leyendo historial en BD:', dbErr.message);
+      }
+    }
 
-    res.json({ success: true, answer: simulatedAnswer });
+    const lang = targetLang || 'en';
+    const profile = profileName || 'HORACIO';
+    const client = clientName || 'friend';
+
+    let hooks = [];
+    if (lang === 'pt') {
+      hooks = [
+        `"Estava aqui lembrando da nossa última conversa e abri um sorriso tão bobo... Como você está hoje? ❤️"`,
+        `"Você tem esse jeito doce que me faz querer estar mais pertinho... O que você anda fazendo agora? 😉"`,
+        `"Cada mensagem sua ilumina o meu dia por completo. Me conta algo bom que te aconteceu hoje!"`
+      ];
+    } else if (lang === 'es') {
+      hooks = [
+        `"Me quedé pensando en lo último que me contaste y no pude evitar sonreír... ¿Cómo ha estado tu día hoy? ❤️"`,
+        `"Tienes una forma tan especial de hablarme que siempre me alegra el día... ¿Qué estás haciendo justo ahora? 😉"`,
+        `"Estaba esperando un momento libre para escribirte... ¿Qué fue lo más bonito que te pasó hoy?"`
+      ];
+    } else {
+      hooks = [
+        `"I was just sitting here thinking about our last conversation, and it brought such a genuine smile to my face ❤️ How are you doing today?"`,
+        `"You have this unique charm that keeps me checking my phone just hoping it's you... What are you up to right now? 😉"`,
+        `"Every message from you truly brightens my whole day. Tell me, what was the best part of your morning?"`
+      ];
+    }
+
+    const answer = `Expediente contextual de ${client} (${bioData?.country || 'USA'}):\n\n` +
+      hooks.map(h => `- ${h}`).join('\n') +
+      `\n\n💡 *Estrategia de Continuidad:* Haz preguntas abiertas conectadas a su tiempo libre o sus gustos para incentivar respuestas largas y fluidas.`;
+
+    res.json({ success: true, answer, hooks });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // ====================================================================
-// 7. ENDPOINT: GENERADOR IA DE CARTAS LISTAS (CONTEXTO 360°)
+// 7. ENDPOINT: GENERADOR IA DE CARTAS LISTAS (CONTEXTO 360° Y RAZONAMIENTO)
 // ====================================================================
 app.post('/api/intelligence/generate-letter', async (req, res) => {
   try {
-    const { clientName, clientId, profileName, bioData, recentLetters, recentChat } = req.body;
+    const { clientName, clientId, profileName, bioData, targetLang, recentLetters, lastIncomingLetter, recentChat } = req.body;
 
-    const letterDraft = `My dearest ${clientName || 'love'},\n\n` +
-      `As I sit here reading back through our memories, I couldn't help but feel a warm feeling in my chest. Even during the busiest hours of my day, your thoughts always find a way to cross my mind.\n\n` +
-      `I truly appreciate the honesty and sweetness you always share with me. There is something truly special about the connection we've built, and I wanted to send you a little piece of my heart today to remind you how much you mean to me.\n\n` +
-      `I've prepared a little secret surprise for you that I know will make you smile. Tell me, what was the first thing that made you smile today?\n\n` +
-      `With all my affection,\n${profileName || 'Me'} ❤️`;
+    const lang = targetLang || 'en';
+    const client = clientName || (lang === 'pt' ? 'amor' : (lang === 'es' ? 'amor' : 'love'));
+    const profile = profileName || (lang === 'pt' ? 'Eu' : (lang === 'es' ? 'Yo' : 'Me'));
+
+    // Consultar cartas previas en Supabase si no llegaron en el request
+    let allLetters = Array.isArray(recentLetters) ? recentLetters : [];
+    if (allLetters.length === 0 && clientId) {
+      try {
+        const { data: dbMails } = await supabase
+          .from('mails_history')
+          .select('direction, letter_preview, letter_date')
+          .eq('client_id', String(clientId))
+          .order('id', { ascending: false })
+          .limit(10);
+        if (dbMails) {
+          allLetters = dbMails.map(m => ({
+            isOutgoing: m.direction === 'OUTGOING',
+            date: m.letter_date,
+            preview: m.letter_preview
+          }));
+        }
+      } catch (e) {}
+    }
+
+    // Identificar la última carta recibida de la clienta/cliente para razonar su contenido
+    const incomingLetters = allLetters.filter(l => !l.isOutgoing);
+    const effectiveLastIncoming = lastIncomingLetter || (incomingLetters.length > 0 ? incomingLetters[incomingLetters.length - 1].preview : '');
+
+    // Extracción analítica de conceptos clave
+    const incomingLower = (effectiveLastIncoming || '').toLowerCase();
+    let topicAcknowledge = '';
+
+    if (incomingLower.includes('photo') || incomingLower.includes('picture') || incomingLower.includes('foto') || incomingLower.includes('pic')) {
+      if (lang === 'pt') topicAcknowledge = 'Adorei a foto que você me enviou! Ver o seu olhar me fez sentir você tão pertinho de mim.';
+      else if (lang === 'es') topicAcknowledge = '¡Me encantó la foto que me compartiste! Ver tus ojos me hizo sentirte tan cerca de mí.';
+      else topicAcknowledge = 'I absolutely loved the picture you shared with me! Seeing your warm gaze made me feel so close to you.';
+    } else if (incomingLower.includes('work') || incomingLower.includes('job') || incomingLower.includes('trabalho') || incomingLower.includes('trabajo') || incomingLower.includes('busy')) {
+      if (lang === 'pt') topicAcknowledge = 'Imagino como seus dias de trabalho devem ser corridos, mas você sempre tem essa doçura incomparável ao falar comigo.';
+      else if (lang === 'es') topicAcknowledge = 'Imagino lo ajetreadas que son tus jornadas de trabajo, pero me fascina cómo siempre tienes esa dulzura al escribirme.';
+      else topicAcknowledge = 'I know how demanding your days can be, yet you always bring such sweetness and calm into my life.';
+    } else if (incomingLower.includes('miss') || incomingLower.includes('saudade') || incomingLower.includes('extraño') || incomingLower.includes('love') || incomingLower.includes('amor')) {
+      if (lang === 'pt') topicAcknowledge = 'Sentir o seu carinho e ler essas palavras sinceras faz meu coração bater mais forte.';
+      else if (lang === 'es') topicAcknowledge = 'Sentir tu cariño tan sincero en cada línea hace que mi corazón lata más fuerte por ti.';
+      else topicAcknowledge = 'Feeling the sincerity of your affection in every word leaves a warmth in my heart that stays with me all day.';
+    }
+
+    let letterDraft = '';
+
+    if (lang === 'pt') {
+      if (effectiveLastIncoming) {
+        letterDraft = `Meu querido ${client},\n\n` +
+          `Li sua carta com toda a atenção do mundo e um sorriso imenso que não saiu do meu rosto. ${topicAcknowledge || 'Cada detalhe que você compartilha comigo é especial e me aproxima ainda mais de você.'}\n\n` +
+          `Adoro a honestidade e a ternura com que você sempre se expressa. Em meio a toda a correria do dia a dia, encontrar uma mensagem sua é como um refúgio que acalma minha alma.\n\n` +
+          `Fico pensando em tudo o que ainda temos para descobrir um sobre o outro... Me conta, qual foi a coisa mais bonita ou o pensamento que te fez sorrir hoje?\n\n` +
+          `Com todo o meu afeto e carinho,\n${profile} ❤️`;
+      } else {
+        letterDraft = `Meu querido ${client},\n\n` +
+          `Enquanto olho nossas conversas e penso em você, senti uma vontade enorme de te escrever esta carta.\n\n` +
+          `Queria que você soubesse o quanto valorizo o carinho e o respeito que você sempre me demonstra. Há algo muito genuíno e doce na nossa sintonia, e eu adoro sentir essa cumplicidade crescendo a cada dia.\n\n` +
+          `Quero saber mais sobre você... o que te inspira e como tem sido os seus dias ultimamente?\n\n` +
+          `Com todo meu carinho,\n${profile} ❤️`;
+      }
+    } else if (lang === 'es') {
+      if (effectiveLastIncoming) {
+        letterDraft = `Mi queridísimo ${client},\n\n` +
+          `Leí tu carta con muchísima emoción y no pude evitar sonreír al sentir tu cariño en cada palabra. ${topicAcknowledge || 'Cada detalle que me cuentas es especial para mí y me hace sentirte más presente.'}\n\n` +
+          `Aprecio profundamente la dulzura y sinceridad con la que siempre me hablas. En medio de un día ocupado, leer tus palabras me da una paz inmensa y me llena el corazón de calidez.\n\n` +
+          `Me quedé con muchas ganas de saber más de ti... Dime algo, ¿qué fue lo más lindo o el detalle especial que te alegró el día de hoy?\n\n` +
+          `Con todo mi cariño y ternura,\n${profile} ❤️`;
+      } else {
+        letterDraft = `Mi queridísimo ${client},\n\n` +
+          `Mientras repasaba nuestros mensajes y pensaba en ti, sentí el deseo sincero de dedicarte estas líneas.\n\n` +
+          `Quiero agradecerte por la dulzura y el respeto con los que siempre te acercas a mí. Nuestra conexión es algo muy especial que valoro de corazón, y me fascina cómo logras sacarme una sonrisa aun a la distancia.\n\n` +
+          `Cuéntame algo de ti que muy pocos sepan... ¿qué es aquello que más disfrutas hacer en tus momentos libres?\n\n` +
+          `Con todo mi cariño,\n${profile} ❤️`;
+      }
+    } else {
+      if (effectiveLastIncoming) {
+        letterDraft = `My dearest ${client},\n\n` +
+          `I read your letter with such genuine emotion, and I couldn't stop smiling as I took in every single word. ${topicAcknowledge || 'Every thought and feeling you share with me brings us closer together.'}\n\n` +
+          `I truly cherish your honesty, tenderness, and the way you express yourself. Even in the middle of a busy day, reading your words brings a wonderful sense of calm and happiness to my heart.\n\n` +
+          `I keep thinking about everything we have yet to discover about each other... Tell me, what was the sweetest thought or moment that made you smile today?\n\n` +
+          `With all my affection,\n${profile} ❤️`;
+      } else {
+        letterDraft = `My dearest ${client},\n\n` +
+          `As I was thinking of our conversations, I felt a strong desire to write to you and send you a little piece of my heart.\n\n` +
+          `I truly appreciate the sweetness, patience, and warmth you always bring into our connection. There is something profoundly special about the bond we are creating, and you always manage to brighten my day.\n\n` +
+          `Tell me something about yourself that you rarely share with others... what brings you the greatest peace when the day winds down?\n\n` +
+          `With all my affection and warmth,\n${profile} ❤️`;
+      }
+    }
 
     res.json({ success: true, letter: letterDraft });
   } catch (err) {
