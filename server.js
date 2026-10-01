@@ -54,8 +54,8 @@ app.post('/api/telemetry', async (req, res) => {
       idleSeconds: payload.idleSeconds || 0,
       isAfk: Boolean(payload.isAfk),
       pendingReadLetters: payload.pendingReadLetters || 0,
-      unansweredChatsCount: payload.unansweredChatsCount || 0,
-      hasExpiredSla: Boolean(payload.hasExpiredSla),
+      unansweredChatsCount: (payload.activeChatTimersList || []).length,
+      hasExpiredSla: Array.isArray(payload.activeChatTimersList) && payload.activeChatTimersList.length > 0 && payload.activeChatTimersList.some(t => t.isExpired),
       activeChatTimersList: payload.activeChatTimersList || [],
       prospectingProgress: payload.prospectingProgress || { count: 0, quota: 10, remainingSeconds: 1800, isCompleted: false },
       firewallInfractionsCount: payload.firewallInfractionsCount || 0,
@@ -317,31 +317,70 @@ app.post('/api/intelligence/query', async (req, res) => {
     const lang = targetLang || 'en';
     const profile = profileName || 'HORACIO';
     const client = clientName || 'friend';
+    const q = (query || '').toLowerCase().trim();
 
+    const country = bioData?.country || 'United States';
+    const birthDate = bioData?.birthDate || 'En perfil';
+    const marital = bioData?.maritalStatus || 'Single / Soltera';
+
+    // Combinar mensajes históricos de Supabase y en vivo
+    const allDbText = [...dbLetters.map(l => l.letter_preview), ...dbMessages.map(m => m.message_text)].join(' ').toLowerCase();
+    const combinedCorpus = `${liveMarkdown || ''} ${allDbText}`.toLowerCase();
+
+    let answer = '';
     let hooks = [];
-    if (lang === 'pt') {
-      hooks = [
-        `"Estava aqui lembrando da nossa última conversa e abri um sorriso tão bobo... Como você está hoje? ❤️"`,
-        `"Você tem esse jeito doce que me faz querer estar mais pertinho... O que você anda fazendo agora? 😉"`,
-        `"Cada mensagem sua ilumina o meu dia por completo. Me conta algo bom que te aconteceu hoje!"`
-      ];
-    } else if (lang === 'es') {
-      hooks = [
-        `"Me quedé pensando en lo último que me contaste y no pude evitar sonreír... ¿Cómo ha estado tu día hoy? ❤️"`,
-        `"Tienes una forma tan especial de hablarme que siempre me alegra el día... ¿Qué estás haciendo justo ahora? 😉"`,
-        `"Estaba esperando un momento libre para escribirte... ¿Qué fue lo más bonito que te pasó hoy?"`
-      ];
-    } else {
-      hooks = [
-        `"I was just sitting here thinking about our last conversation, and it brought such a genuine smile to my face ❤️ How are you doing today?"`,
-        `"You have this unique charm that keeps me checking my phone just hoping it's you... What are you up to right now? 😉"`,
-        `"Every message from you truly brightens my whole day. Tell me, what was the best part of your morning?"`
-      ];
-    }
 
-    const answer = `Expediente contextual de ${client} (${bioData?.country || 'USA'}):\n\n` +
-      hooks.map(h => `- ${h}`).join('\n') +
-      `\n\n💡 *Estrategia de Continuidad:* Haz preguntas abiertas conectadas a su tiempo libre o sus gustos para incentivar respuestas largas y fluidas.`;
+    // Evaluar intención del operador
+    if (/d[oó]nde|pa[ií]s|ubicaci[oó]n|ciudad|vive|where|location|from/i.test(q)) {
+      let locDetail = 'Registrado en su expediente oficial.';
+      const cityMatch = combinedCorpus.match(/(?:live in|from|living in|vivo en)\s+([a-z\s]{3,20})/i);
+      if (cityMatch) locDetail = `Menciona en sus conversaciones: "${cityMatch[1].trim()}"`;
+      answer = `📍 **Ubicación de ${client}:**\n- **País:** ${country}\n- **Detalles del Chat:** ${locDetail}\n\n💡 *Respuesta sugerida para enviar:*\n"I've always loved how warm and welcoming people from ${country} are... Tell me, how is your afternoon going today? ❤️"`;
+      hooks = [`"I've always loved how warm and welcoming people from ${country} are... Tell me, how is your afternoon going today? ❤️"`];
+    } else if (/edad|a[ñn]os|cumple|nacimiento|age|old|born|birth/i.test(q)) {
+      answer = `🎂 **Edad y Nacimiento de ${client}:**\n- **Fecha y Edad:** ${birthDate}\n- **Estado Civil:** ${marital}\n\n💡 *Respuesta sugerida para enviar:*\n"Age is just a number, but your warmth and charm make you truly unforgettable 😉 What's your secret to staying so radiant?"`;
+      hooks = [`"Age is just a number, but your warmth and charm make you truly unforgettable 😉 What's your secret to staying so radiant?"`];
+    } else if (/hijo|hija|familia|llaman|nombre|children|kids|family|daughter|son/i.test(q)) {
+      let famFound = [];
+      if (combinedCorpus.includes('daughter') || combinedCorpus.includes('hija')) famFound.push('Menciona tener una hija');
+      if (combinedCorpus.includes('son') || combinedCorpus.includes('hijo')) famFound.push('Menciona tener un hijo');
+      if (combinedCorpus.includes('dog') || combinedCorpus.includes('cat') || combinedCorpus.includes('perro') || combinedCorpus.includes('gato')) famFound.push('Tiene mascotas queridas');
+      const famSummary = famFound.length > 0 ? famFound.join(' y ') : 'Aún no ha especificado nombres de familiares directos en las conversaciones';
+      answer = `👨‍👩‍👧 **Expediente Familiar de ${client}:**\n- **Estado Civil:** ${marital}\n- **Datos Identificados:** ${famSummary}.\n\n💡 *Respuesta sugerida para enviar:*\n"Family is everything to me ❤️ How is your family doing today? Tell me more about the people who make you smile the most."`;
+      hooks = [`"Family is everything to me ❤️ How is your family doing today? Tell me more about the people who make you smile the most."`];
+    } else if (/cr[eé]dito|saldo|recarga|gasto|puntos|credits|points|money/i.test(q)) {
+      const isHighSpending = dbLetters.length > 5 || dbMessages.length > 10;
+      answer = `💰 **Saldo y Poder Adquisitivo de ${client}:**\n- **Nivel de Usuario:** ${isHighSpending ? '💎 CLIENTE VIP (Gasto Constante)' : '🟢 PROSPECTO ACTIVO'}\n- **Disponibilidad:** Usuario activo en plataforma con historial de consumo de cartas y chats.\n\n💡 *Estrategia de Venta:*\n"I was just looking at a cute picture I took earlier and immediately thought of you... Want me to send it over to you? 😉"`;
+      hooks = [`"I was just looking at a cute picture I took earlier and immediately thought of you... Want me to send it over to you? 😉"`];
+    } else if (/trabaj|ocupaci[oó]n|dedica|profesi[oó]n|hace|work|job|career/i.test(q)) {
+      answer = `💼 **Ocupación de ${client}:**\n- **Actividad:** Conecta en horarios de descanso laboral.\n\n💡 *Respuesta sugerida para enviar:*\n"I know how demanding work can be, but talking to you always brings peace to my day ❤️ How was your workday?"`;
+      hooks = [`"I know how demanding work can be, but talking to you always brings peace to my day ❤️ How was your workday?"`];
+    } else {
+      // Ganchos contextuales tácticos
+      if (lang === 'pt') {
+        hooks = [
+          `"Estava aqui lembrando da nossa última conversa e abri um sorriso tão bobo... Como você está hoje? ❤️"`,
+          `"Você tem esse jeito doce que me faz querer estar mais pertinho... O que você anda fazendo agora? 😉"`,
+          `"Cada mensagem sua ilumina o meu dia por completo. Me conta algo bom que te aconteceu hoje!"`
+        ];
+      } else if (lang === 'es') {
+        hooks = [
+          `"Me quedé pensando en lo último que me contaste y no pude evitar sonreír... ¿Cómo ha estado tu día hoy? ❤️"`,
+          `"Tienes una forma tan especial de hablarme que siempre me alegra el día... ¿Qué estás haciendo justo ahora? 😉"`,
+          `"Estaba esperando un momento libre para escribirte... ¿Qué fue lo más bonito que te pasó hoy?"`
+        ];
+      } else {
+        hooks = [
+          `"I was just sitting here thinking about our last conversation, and it brought such a genuine smile to my face ❤️ How are you doing today?"`,
+          `"You have this unique charm that keeps me checking my phone just hoping it's you... What are you up to right now? 😉"`,
+          `"Every message from you truly brightens my whole day. Tell me, what was the best part of your morning?"`
+        ];
+      }
+
+      answer = `Expediente contextual de ${client} (${country} | ${birthDate}):\n\n` +
+        hooks.map(h => `- ${h}`).join('\n') +
+        `\n\n💡 *Estrategia de Continuidad:* Haz preguntas abiertas conectadas a su tiempo libre o sus gustos para incentivar respuestas largas y fluidas.`;
+    }
 
     res.json({ success: true, answer, hooks });
   } catch (err) {
