@@ -384,23 +384,17 @@ app.post('/api/intelligence/query', async (req, res) => {
     let answer = '';
     let hooks = [];
 
-    const hasDbHistory = (dbLetters.length > 0 || dbMessages.length > 0);
-    const dbWarningPrefix = !hasDbHistory 
-      ? `⚠️ **Aviso al Operador:** Este cliente no tiene conversaciones o cartas previas subidas en la base de datos. Haz clic en **"Subir Chat"** y **"Subir Cartas"** para nutrir mi memoria 360° con todo el historial acumulado.\n\n`
-      : '';
-
     // Evaluar intención del operador
     if (/qu[eé]\s+(sabes|puedes|haces)|capacidades|ayuda|funciones|para qu[eé]\s+sirves/i.test(q)) {
       answer = `🧠 **Soy tu Co-Piloto Táctico & Asistente IA 360°:**\n\n` +
-        `Puedo ayudarte en tiempo real con:\n` +
-        `1. 📍 **Ubicación & Cultura:** Pregúntame *"de dónde es"* para darte su país y ciudad.\n` +
+        `Puedo responderte al instante sobre:\n` +
+        `1. 📍 **Ubicación & Ciudad:** Pregúntame *"de dónde es"* para saber su país y ciudad.\n` +
         `2. 🎂 **Edad & Biografía:** Pregúntame *"cuántos años tiene"* o *"cuándo nació"*.\n` +
         `3. 👨‍👩‍👧 **Familia & Mascotas:** Pregúntame *"tiene hijos"* o *"cómo se llaman"*.\n` +
         `4. 🎨 **Gustos & Pasiones:** Pregúntame *"cuáles son sus gustos"* o *"qué le gusta hacer"*.\n` +
         `5. 💰 **Poder Adquisitivo:** Pregúntame *"cuántos créditos tiene"* o *"cuánto gasta"*.\n` +
         `6. ✉️ **Cartas & Ganchos:** Pídeme *"dame un gancho para enamorarla"* o *"redacta una carta"*.\n` +
-        `7. 🛡️ **Seguridad:** Monitoreo activo para evitar infracciones de Travel Misleading.\n\n` +
-        `💡 *Tip:* Mantén las cartas y chats sincronizados con los botones de **Subir Chats / Subir Cartas** para darte respuestas con máxima precisión.`;
+        `7. 🛡️ **Seguridad:** Monitoreo activo anti-infracciones de Travel Misleading.`;
       hooks = [`"I was just thinking about you and wanted to say hello... Tell me, how has your day been treating you? ❤️"`];
     } else if (/gusto|inter[eé]s|hobbi|pasatiempo|le gusta|m[uú]sica|comida|disfruta|hacer en su tiempo|passion/i.test(q)) {
       let tastesFound = [];
@@ -414,10 +408,10 @@ app.post('/api/intelligence/query', async (req, res) => {
         ? tastesFound.map(t => `- ${t}`).join('\n')
         : `- Aprecia la atención genuina, el respeto y las conversaciones emotivas.\n- Registrado como aficionado a conversaciones sinceras y detalladas.`;
 
-      answer = `${dbWarningPrefix}🎨 **Gustos e Intereses de ${client}:**\n${tastesSummary}\n\n💡 *Respuesta sugerida para chatear:*\n"I love learning about what truly makes you happy... Tell me, when you have free time just for yourself, what's your favorite thing to do? ✨"`;
+      answer = `🎨 **Gustos e Intereses de ${client}:**\n${tastesSummary}\n\n💡 *Respuesta sugerida para chatear:*\n"I love learning about what truly makes you happy... Tell me, when you have free time just for yourself, what's your favorite thing to do? ✨"`;
       hooks = [`"I love learning about what truly makes you happy... Tell me, when you have free time just for yourself, what's your favorite thing to do? ✨"`];
     } else if (/historia|relaci[oó]n|como vamos|resumen|hilo|antecedente/i.test(q)) {
-      answer = `${dbWarningPrefix}📖 **Historial de Relación con ${client}:**\n` +
+      answer = `📖 **Historial de Relación con ${client}:**\n` +
         `- **Total Mensajes en BD:** ${dbMessages.length} diálogos registrados.\n` +
         `- **Total Cartas en BD:** ${dbLetters.length} cartas procesadas.\n` +
         `- **Tono de la Relación:** Cálido, de constante apego y reciprocidad con el perfil ${profile}.\n\n` +
@@ -427,10 +421,10 @@ app.post('/api/intelligence/query', async (req, res) => {
       let locDetail = 'Registrado en su expediente oficial.';
       const cityMatch = combinedCorpus.match(/(?:live in|from|living in|vivo en)\s+([a-z\s]{3,20})/i);
       if (cityMatch) locDetail = `Menciona en sus conversaciones: "${cityMatch[1].trim()}"`;
-      answer = `${dbWarningPrefix}📍 **Ubicación de ${client}:**\n- **País:** ${country}\n- **Detalles del Chat:** ${locDetail}\n\n💡 *Respuesta sugerida para enviar:*\n"I've always loved how warm and welcoming people from ${country} are... Tell me, how is your afternoon going today? ❤️"`;
+      answer = `📍 **Ubicación de ${client}:**\n- **País:** ${country}\n- **Detalles del Chat:** ${locDetail}\n\n💡 *Respuesta sugerida para enviar:*\n"I've always loved how warm and welcoming people from ${country} are... Tell me, how is your afternoon going today? ❤️"`;
       hooks = [`"I've always loved how warm and welcoming people from ${country} are... Tell me, how is your afternoon going today? ❤️"`];
     } else if (/edad|a[ñn]os|cumple|nacimiento|age|old|born|birth/i.test(q)) {
-      answer = `${dbWarningPrefix}🎂 **Edad y Nacimiento de ${client}:**\n- **Fecha y Edad:** ${birthDate}\n- **Estado Civil:** ${marital}\n\n💡 *Respuesta sugerida para enviar:*\n"Age is just a number, but your warmth and charm make you truly unforgettable 😉 What's your secret to staying so radiant?"`;
+      answer = `🎂 **Edad y Nacimiento de ${client}:**\n- **Fecha y Edad:** ${birthDate}\n- **Estado Civil:** ${marital}\n\n💡 *Respuesta sugerida para enviar:*\n"Age is just a number, but your warmth and charm make you truly unforgettable 😉 What's your secret to staying so radiant?"`;
       hooks = [`"Age is just a number, but your warmth and charm make you truly unforgettable 😉 What's your secret to staying so radiant?"`];
     } else if (/hijo|hija|familia|llaman|children|kids|family|daughter|son/i.test(q)) {
       let famFound = [];
@@ -438,14 +432,14 @@ app.post('/api/intelligence/query', async (req, res) => {
       if (combinedCorpus.includes('son') || combinedCorpus.includes('hijo')) famFound.push('Menciona tener un hijo');
       if (combinedCorpus.includes('dog') || combinedCorpus.includes('cat') || combinedCorpus.includes('perro') || combinedCorpus.includes('gato')) famFound.push('Tiene mascotas queridas');
       const famSummary = famFound.length > 0 ? famFound.join(' y ') : 'Aún no ha especificado nombres de familiares directos en las conversaciones';
-      answer = `${dbWarningPrefix}👨‍👩‍👧 **Expediente Familiar de ${client}:**\n- **Estado Civil:** ${marital}\n- **Datos Identificados:** ${famSummary}.\n\n💡 *Respuesta sugerida para enviar:*\n"Family is everything to me ❤️ How is your family doing today? Tell me more about the people who make you smile the most."`;
+      answer = `👨‍👩‍👧 **Expediente Familiar de ${client}:**\n- **Estado Civil:** ${marital}\n- **Datos Identificados:** ${famSummary}.\n\n💡 *Respuesta sugerida para enviar:*\n"Family is everything to me ❤️ How is your family doing today? Tell me more about the people who make you smile the most."`;
       hooks = [`"Family is everything to me ❤️ How is your family doing today? Tell me more about the people who make you smile the most."`];
     } else if (/cr[eé]dito|saldo|recarga|gasto|puntos|credits|points|money/i.test(q)) {
       const isHighSpending = dbLetters.length > 5 || dbMessages.length > 10;
-      answer = `${dbWarningPrefix}💰 **Saldo y Poder Adquisitivo de ${client}:**\n- **Nivel de Usuario:** ${isHighSpending ? '💎 CLIENTE VIP (Gasto Constante)' : '🟢 PROSPECTO ACTIVO'}\n- **Disponibilidad:** Usuario activo en plataforma con historial de consumo de cartas y chats.\n\n💡 *Estrategia de Venta:*\n"I was just looking at a cute picture I took earlier and immediately thought of you... Want me to send it over to you? 😉"`;
+      answer = `💰 **Saldo y Poder Adquisitivo de ${client}:**\n- **Nivel de Usuario:** ${isHighSpending ? '💎 CLIENTE VIP (Gasto Constante)' : '🟢 PROSPECTO ACTIVO'}\n- **Disponibilidad:** Usuario activo en plataforma con historial de consumo de cartas y chats.\n\n💡 *Estrategia de Venta:*\n"I was just looking at a cute picture I took earlier and immediately thought of you... Want me to send it over to you? 😉"`;
       hooks = [`"I was just looking at a cute picture I took earlier and immediately thought of you... Want me to send it over to you? 😉"`];
     } else if (/trabaj|ocupaci[oó]n|dedica|profesi[oó]n|hace|work|job|career/i.test(q)) {
-      answer = `${dbWarningPrefix}💼 **Ocupación de ${client}:**\n- **Actividad:** Conecta en horarios de descanso laboral.\n\n💡 *Respuesta sugerida para enviar:*\n"I know how demanding work can be, but talking to you always brings peace to my day ❤️ How was your workday?"`;
+      answer = `💼 **Ocupación de ${client}:**\n- **Actividad:** Conecta en horarios de descanso laboral.\n\n💡 *Respuesta sugerida para enviar:*\n"I know how demanding work can be, but talking to you always brings peace to my day ❤️ How was your workday?"`;
       hooks = [`"I know how demanding work can be, but talking to you always brings peace to my day ❤️ How was your workday?"`];
     } else {
       // Ganchos contextuales tácticos
@@ -469,7 +463,7 @@ app.post('/api/intelligence/query', async (req, res) => {
         ];
       }
 
-      answer = `${dbWarningPrefix}Expediente contextual de ${client} (${country} | ${birthDate}):\n\n` +
+      answer = `Expediente contextual de ${client} (${country} | ${birthDate}):\n\n` +
         hooks.map(h => `- ${h}`).join('\n') +
         `\n\n💡 *Estrategia de Continuidad:* Haz preguntas abiertas conectadas a su tiempo libre o sus gustos para incentivar respuestas largas y fluidas.`;
     }
@@ -964,9 +958,12 @@ app.get('/api/handover/latest', async (req, res) => {
 });
 
 // ====================================================================
-// RUTA DEL MONITOR
+// RUTA DEL MONITOR (CON NO-CACHE PARA ACTUALIZACIONES INSTANTÁNEAS)
 // ====================================================================
 app.get('/monitor', (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
   res.sendFile(path.join(__dirname, 'monitor.html'));
 });
 
