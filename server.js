@@ -34,6 +34,27 @@ app.use(express.static(path.join(__dirname, 'public')));
 const liveOperatorTelemetry = new Map();
 const massExtractionOrders = new Set();
 
+// BUFFER DE LOGS DE SINCRONIZACIÓN Y SUBIDA EN TIEMPO REAL (ÚLTIMOS 150 EVENTOS)
+const liveSyncLogsBuffer = [];
+function logSyncEvent({ type, operator, profile, clientName, count, durationMs, status, detail }) {
+  const entry = {
+    id: `sync_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    timestamp: new Date().toISOString(),
+    timeFormatted: new Date().toLocaleTimeString('es-CO'),
+    type: type || 'CHAT_UPLOAD', // 'CHAT_UPLOAD', 'LETTERS_SYNC', 'NUKE_ORDER', 'FIREWALL_CHECK', 'ERROR'
+    operator: operator || 'Sistema',
+    profile: profile || 'HORACIO',
+    clientName: clientName || 'General',
+    count: Number(count) || 0,
+    durationMs: Number(durationMs) || 0,
+    status: status || 'SUCCESS', // 'SUCCESS', 'PENDING', 'WARNING', 'ERROR'
+    detail: detail || ''
+  };
+  liveSyncLogsBuffer.unshift(entry);
+  if (liveSyncLogsBuffer.length > 150) liveSyncLogsBuffer.pop();
+  return entry;
+}
+
 // ====================================================================
 // 1. ENDPOINT: TELEMETRÍA EN VIVO (HEARTBEAT DE OPERADORES CADA 2.5s)
 // ====================================================================
@@ -118,13 +139,24 @@ app.get('/api/telemetry/live-grid', (req, res) => {
 });
 
 // ====================================================================
-// 3. ENDPOINT: INGESTA DE AUDITORÍA 360° (DEDUPLICACIÓN INMUTABLE)
+// 3. ENDPOINT: INGESTA DE AUDITORÍA 360° (DEDUPLICACIÓN INMUTABLE & LOGS)
 // ====================================================================
 app.post('/api/chats/audit-deep', async (req, res) => {
+  const startTime = Date.now();
   try {
     const { operator, shift, profile, profileId, clientName, clientId, bioData, markdown, messages, letters } = req.body;
 
     if (!clientName || !clientId) {
+      logSyncEvent({
+        type: 'ERROR',
+        operator: operator || 'walther',
+        profile: profile || 'HORACIO',
+        clientName: clientName || 'N/A',
+        count: 0,
+        durationMs: Date.now() - startTime,
+        status: 'ERROR',
+        detail: 'Rechazado: Datos de cliente incompletos (Falta clientName o clientId)'
+      });
       return res.status(400).json({ error: 'Datos de cliente incompletos' });
     }
 
@@ -158,7 +190,8 @@ app.post('/api/chats/audit-deep', async (req, res) => {
     }).select().single();
 
     // C. Inserción Deduplicada de Mensajes Individuales
-    if (Array.isArray(messages) && messages.length > 0) {
+    const msgCount = Array.isArray(messages) ? messages.length : 0;
+    if (msgCount > 0) {
       const messagesToInsert = messages.map(m => ({
         id: m.id || `msg_${m.isOperator ? 'OP' : 'RU'}_${String(clientId)}_${Date.now()}_${Math.random().toString(36).substring(7)}`,
         conversation_id: convRow ? convRow.id : null,
@@ -176,7 +209,8 @@ app.post('/api/chats/audit-deep', async (req, res) => {
     }
 
     // D. Inserción de Cartas / Hilos de Mails
-    if (Array.isArray(letters) && letters.length > 0) {
+    const letterCount = Array.isArray(letters) ? letters.length : 0;
+    if (letterCount > 0) {
       const mailsToInsert = letters.map(l => ({
         client_id: String(clientId).trim(),
         profile_name: profile || 'HORACIO',
@@ -189,9 +223,32 @@ app.post('/api/chats/audit-deep', async (req, res) => {
       await supabase.from('mails_history').insert(mailsToInsert);
     }
 
-    res.json({ success: true, message: 'Auditoría 360° guardada sin duplicados' });
+    const durationMs = Date.now() - startTime;
+    logSyncEvent({
+      type: 'CHAT_UPLOAD',
+      operator: operator || 'walther',
+      profile: profile || 'HORACIO',
+      clientName: clientName,
+      count: msgCount,
+      durationMs: durationMs,
+      status: durationMs > 3000 ? 'WARNING' : 'SUCCESS',
+      detail: `Sincronizados ${msgCount} mensajes y ${letterCount} cartas para el cliente '${clientName}' (ID: ${clientId}) en ${durationMs}ms.`
+    });
+
+    res.json({ success: true, message: 'Auditoría 360° guardada sin duplicados', durationMs });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const durationMs = Date.now() - startTime;
+    logSyncEvent({
+      type: 'ERROR',
+      operator: req.body?.operator || 'walther',
+      profile: req.body?.profile || 'HORACIO',
+      clientName: req.body?.clientName || 'N/A',
+      count: 0,
+      durationMs: durationMs,
+      status: 'ERROR',
+      detail: `Error al guardar en Supabase: ${err.message}`
+    });
+    res.status(500).json({ error: err.message, durationMs });
   }
 });
 
@@ -252,9 +309,20 @@ app.get('/api/chats/all-conversations', async (req, res) => {
 // 4.2 ENDPOINT: SINCRONIZAR Y EXTRAER CARTAS DEL PERFIL
 // ====================================================================
 app.post('/api/mails/sync-profile-letters', async (req, res) => {
+  const startTime = Date.now();
   try {
     const { operator, shift, profile, letters } = req.body;
     if (!letters || !Array.isArray(letters) || letters.length === 0) {
+      logSyncEvent({
+        type: 'WARNING',
+        operator: operator || 'walther',
+        profile: profile || 'HORACIO',
+        clientName: 'Mails',
+        count: 0,
+        durationMs: Date.now() - startTime,
+        status: 'WARNING',
+        detail: 'Sincronización de cartas omitida: Buzón vacío o sin cartas visibles.'
+      });
       return res.status(400).json({ error: 'No se recibieron cartas para guardar' });
     }
 
@@ -268,11 +336,51 @@ app.post('/api/mails/sync-profile-letters', async (req, res) => {
     }));
 
     await supabase.from('mails_history').insert(mailsToInsert);
+    const durationMs = Date.now() - startTime;
 
-    res.json({ success: true, message: `✅ Se sincronizaron ${letters.length} cartas del perfil ${profile || 'HORACIO'} con éxito.` });
+    logSyncEvent({
+      type: 'LETTERS_SYNC',
+      operator: operator || 'walther',
+      profile: profile || 'HORACIO',
+      clientName: `${letters.length} Cartas`,
+      count: letters.length,
+      durationMs: durationMs,
+      status: durationMs > 3000 ? 'WARNING' : 'SUCCESS',
+      detail: `Sincronizadas ${letters.length} cartas para el perfil '${profile || 'HORACIO'}' en ${durationMs}ms.`
+    });
+
+    res.json({ success: true, message: `✅ Se sincronizaron ${letters.length} cartas del perfil ${profile || 'HORACIO'} con éxito en ${durationMs}ms.`, durationMs });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const durationMs = Date.now() - startTime;
+    logSyncEvent({
+      type: 'ERROR',
+      operator: req.body?.operator || 'walther',
+      profile: req.body?.profile || 'HORACIO',
+      clientName: 'Mails',
+      count: 0,
+      durationMs: durationMs,
+      status: 'ERROR',
+      detail: `Error al subir cartas a Supabase: ${err.message}`
+    });
+    res.status(500).json({ error: err.message, durationMs });
   }
+});
+
+// ====================================================================
+// 4.3 ENDPOINT: FEED DE LOGS DE SUBIDA Y AUDITORÍA EN TIEMPO REAL
+// ====================================================================
+app.get('/api/sync/logs', (req, res) => {
+  res.json({
+    success: true,
+    totalLogs: liveSyncLogsBuffer.length,
+    logs: liveSyncLogsBuffer
+  });
+});
+
+app.post('/api/sync/log-event', (req, res) => {
+  const payload = req.body;
+  const entry = logSyncEvent(payload);
+  res.json({ success: true, entry });
 });
 
 // ====================================================================

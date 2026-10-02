@@ -520,7 +520,27 @@
       </div>
       <div id="fines-container" style="max-height:220px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;">
         <div style="color:var(--text-muted); font-size:11px; text-align:center; padding:15px;">Cargando registro de multas...</div>
+  </div>
+
+  <!-- CONSOLA DE AUDITORÍA Y REGISTRO DE SUBIDA DE CONVERSACIONES & CARTAS (LIVE LOGS) -->
+  <div class="matrix-panel" style="margin-top: 16px; border-color: rgba(6, 182, 212, 0.45); box-shadow: 0 4px 20px rgba(0,0,0,0.6);">
+    <div class="panel-header" style="background: linear-gradient(90deg, rgba(6, 78, 59, 0.3), rgba(11, 19, 43, 0.9));">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span style="color:var(--neon-cyan); font-weight:900;">📡 CONSOLA DE AUDITORÍA & LOGS DE SUBIDA EN VIVO (CHATS & CARTAS)</span>
+        <span id="sync-logs-count-badge" class="badge-status badge-online" style="font-size:10px;">0 EVENTOS</span>
       </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <!-- Filtros -->
+        <button class="log-filter-btn active" onclick="setLogFilter('ALL')" id="filter-log-ALL" style="background:#0e7490; color:#fff; border:none; padding:3px 8px; border-radius:3px; font-size:10px; font-weight:bold; cursor:pointer;">Todos</button>
+        <button class="log-filter-btn" onclick="setLogFilter('CHAT_UPLOAD')" id="filter-log-CHAT_UPLOAD" style="background:#1e293b; color:#94a3b8; border:none; padding:3px 8px; border-radius:3px; font-size:10px; font-weight:bold; cursor:pointer;">⚡ Chats</button>
+        <button class="log-filter-btn" onclick="setLogFilter('LETTERS_SYNC')" id="filter-log-LETTERS_SYNC" style="background:#1e293b; color:#94a3b8; border:none; padding:3px 8px; border-radius:3px; font-size:10px; font-weight:bold; cursor:pointer;">✉️ Cartas</button>
+        <button class="log-filter-btn" onclick="setLogFilter('ERROR')" id="filter-log-ERROR" style="background:#1e293b; color:#94a3b8; border:none; padding:3px 8px; border-radius:3px; font-size:10px; font-weight:bold; cursor:pointer;">🚨 Alertas / Demoras</button>
+        <button onclick="togglePauseSyncLogs()" id="btn-pause-logs" style="background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid #f59e0b; padding:3px 8px; border-radius:3px; font-size:10px; font-weight:bold; cursor:pointer;">⏸️ Pausar</button>
+        <button onclick="clearLiveSyncLogs()" style="background:transparent; color:#64748b; border:1px solid #334155; padding:3px 8px; border-radius:3px; font-size:10px; cursor:pointer;">🧹 Limpiar</button>
+      </div>
+    </div>
+    <div id="sync-logs-stream" style="max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding: 8px 12px; font-family: monospace; font-size: 11px; background: #030611;">
+      <div style="color:var(--text-muted); text-align:center; padding:15px;">Iniciando escucha de telemetría de subidas en tiempo real...</div>
     </div>
   </div>
 
@@ -1127,6 +1147,127 @@
       input.value = '';
       refreshChatStream();
     };
+
+    // ====================================================================
+    // 6.1 POLLING & RENDER DE LOGS DE SUBIDA EN TIEMPO REAL
+    // ====================================================================
+    let liveSyncLogsCache = [];
+    let currentLogFilter = 'ALL';
+    let isSyncLogsPaused = false;
+
+    window.setLogFilter = function(filter) {
+      currentLogFilter = filter;
+      document.querySelectorAll('.log-filter-btn').forEach(b => {
+        b.style.background = '#1e293b';
+        b.style.color = '#94a3b8';
+      });
+      const activeBtn = document.getElementById(`filter-log-${filter}`);
+      if (activeBtn) {
+        activeBtn.style.background = '#0e7490';
+        activeBtn.style.color = '#fff';
+      }
+      renderSyncLogs(liveSyncLogsCache);
+    };
+
+    window.togglePauseSyncLogs = function() {
+      isSyncLogsPaused = !isSyncLogsPaused;
+      const btn = document.getElementById('btn-pause-logs');
+      if (btn) {
+        btn.innerText = isSyncLogsPaused ? '▶️ Reanudar' : '⏸️ Pausar';
+        btn.style.borderColor = isSyncLogsPaused ? '#10b981' : '#f59e0b';
+        btn.style.color = isSyncLogsPaused ? '#34d399' : '#fbbf24';
+      }
+    };
+
+    window.clearLiveSyncLogs = function() {
+      liveSyncLogsCache = [];
+      const stream = document.getElementById('sync-logs-stream');
+      if (stream) stream.innerHTML = '<div style="color:var(--text-muted); text-align:center; padding:15px;">Consola de logs limpiada. Esperando nuevos eventos...</div>';
+      const badge = document.getElementById('sync-logs-count-badge');
+      if (badge) badge.innerText = '0 EVENTOS';
+    };
+
+    async function pollLiveSyncLogs() {
+      if (isSyncLogsPaused) return;
+      try {
+        const res = await fetch(`${API_URL}/api/sync/logs`);
+        const data = await res.json();
+        if (data.success && Array.isArray(data.logs)) {
+          liveSyncLogsCache = data.logs;
+          renderSyncLogs(data.logs);
+        }
+      } catch (err) {}
+    }
+    setInterval(pollLiveSyncLogs, 1800);
+    pollLiveSyncLogs();
+
+    function renderSyncLogs(logs) {
+      const stream = document.getElementById('sync-logs-stream');
+      const badge = document.getElementById('sync-logs-count-badge');
+      if (!stream) return;
+
+      if (badge) badge.innerText = `${logs.length} EVENTOS`;
+
+      let filtered = logs;
+      if (currentLogFilter === 'CHAT_UPLOAD') {
+        filtered = logs.filter(l => l.type === 'CHAT_UPLOAD');
+      } else if (currentLogFilter === 'LETTERS_SYNC') {
+        filtered = logs.filter(l => l.type === 'LETTERS_SYNC');
+      } else if (currentLogFilter === 'ERROR') {
+        filtered = logs.filter(l => l.status === 'ERROR' || l.status === 'WARNING' || l.durationMs > 2500);
+      }
+
+      if (filtered.length === 0) {
+        stream.innerHTML = '<div style="color:var(--text-muted); text-align:center; padding:15px;">No hay eventos registrados bajo el filtro seleccionado.</div>';
+        return;
+      }
+
+      stream.innerHTML = filtered.map(l => {
+        let typeBadge = '';
+        if (l.type === 'CHAT_UPLOAD') {
+          typeBadge = '<span style="background:rgba(16,185,129,0.2); border:1px solid #10b981; color:#34d399; padding:2px 6px; border-radius:3px; font-weight:bold; font-size:9.5px;">⚡ CHAT</span>';
+        } else if (l.type === 'LETTERS_SYNC') {
+          typeBadge = '<span style="background:rgba(6,182,212,0.2); border:1px solid #06b6d4; color:#38bdf8; padding:2px 6px; border-radius:3px; font-weight:bold; font-size:9.5px;">✉️ CARTAS</span>';
+        } else if (l.type === 'NUKE_ORDER') {
+          typeBadge = '<span style="background:rgba(236,72,153,0.2); border:1px solid #ec4899; color:#f472b6; padding:2px 6px; border-radius:3px; font-weight:bold; font-size:9.5px;">💣 NUKE</span>';
+        } else {
+          typeBadge = '<span style="background:rgba(239,68,68,0.2); border:1px solid #ef4444; color:#f87171; padding:2px 6px; border-radius:3px; font-weight:bold; font-size:9.5px;">🚨 ALERTA</span>';
+        }
+
+        let statusIcon = '✅';
+        let rowBorder = 'rgba(255,255,255,0.05)';
+        if (l.status === 'ERROR') {
+          statusIcon = '❌';
+          rowBorder = 'rgba(239,68,68,0.4)';
+        } else if (l.status === 'WARNING' || l.durationMs > 2500) {
+          statusIcon = '⚠️';
+          rowBorder = 'rgba(245,158,11,0.4)';
+        }
+
+        const durationPill = l.durationMs > 2500
+          ? `<span style="color:#f87171; font-weight:bold; background:rgba(239,68,68,0.15); padding:1px 5px; border-radius:3px;">⏱️ ${(l.durationMs/1000).toFixed(1)}s (Demora)</span>`
+          : (l.durationMs > 800
+              ? `<span style="color:#fbbf24; font-weight:bold; background:rgba(245,158,11,0.15); padding:1px 5px; border-radius:3px;">⏱️ ${l.durationMs}ms</span>`
+              : `<span style="color:#34d399; font-weight:bold; background:rgba(16,185,129,0.15); padding:1px 5px; border-radius:3px;">⏱️ ${l.durationMs}ms</span>`);
+
+        return `
+          <div style="display:flex; justify-content:space-between; align-items:center; background:#070c1a; border:1px solid ${rowBorder}; padding:5px 8px; border-radius:4px; gap:8px;">
+            <div style="display:flex; align-items:center; gap:8px; flex:1; min-width:0;">
+              <span>${statusIcon}</span>
+              <span style="color:#64748b; font-size:10px; min-width:55px;">${l.timeFormatted}</span>
+              ${typeBadge}
+              <span style="color:#cbd5e1; font-size:10.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                [Op: <b style="color:#10b981;">${l.operator}</b> | Perfil: <b style="color:#f472b6;">${l.profile}</b>] - ${l.detail}
+              </span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              ${durationPill}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
     // 7. MODAL MAESTRO: EXPLORADOR DE CONVERSACIONES & CARTAS
     window.openConversationsModal = function(targetProfile = 'ALL', targetOperator = 'ALL') {
       let modal = document.getElementById('ryr-conversations-viewer-modal');
