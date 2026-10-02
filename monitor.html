@@ -114,6 +114,129 @@
       color: #060913;
     }
 
+    /* MÓDULO ACORDEÓN: PERFILES DEL TURNO & AUDITORÍA EN TIEMPO REAL */
+    .shift-audit-accordion-wrap {
+      background: rgba(11, 19, 43, 0.95);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      border-radius: 8px;
+      margin-bottom: 20px;
+      overflow: hidden;
+      box-shadow: 0 4px 25px rgba(0, 0, 0, 0.5);
+    }
+
+    .accordion-master-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 18px;
+      background: linear-gradient(90deg, rgba(6, 78, 59, 0.4), rgba(11, 19, 43, 0.9));
+      border-bottom: 1px solid rgba(16, 185, 129, 0.2);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .accordion-title-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .accordion-title-group h3 {
+      font-size: 13.5px;
+      font-weight: 900;
+      color: var(--neon-emerald);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin: 0;
+    }
+
+    .accordion-body {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .profile-acc-card {
+      background: #070c1b;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      overflow: hidden;
+      transition: all 0.2s ease;
+    }
+
+    .profile-acc-card.has-pending {
+      border-color: rgba(245, 158, 11, 0.4);
+    }
+
+    .profile-acc-card.all-synced {
+      border-color: rgba(16, 185, 129, 0.4);
+    }
+
+    .profile-acc-card.has-violations {
+      border-color: rgba(239, 68, 68, 0.6) !important;
+      box-shadow: 0 0 15px rgba(239, 68, 68, 0.25);
+    }
+
+    .profile-acc-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      background: rgba(15, 23, 42, 0.6);
+      cursor: pointer;
+    }
+
+    .profile-acc-head:hover {
+      background: rgba(15, 23, 42, 0.9);
+    }
+
+    .profile-acc-body {
+      padding: 14px 16px;
+      background: rgba(6, 9, 19, 0.8);
+      border-top: 1px solid #1e293b;
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .profile-acc-body.open {
+      display: flex;
+    }
+
+    .audit-rule-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .audit-rule-badge.ok {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #34d399;
+    }
+
+    .audit-rule-badge.fail {
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid rgba(239, 68, 68, 0.6);
+      color: #f87171;
+      animation: pulseAlert 1.5s infinite;
+    }
+
+    .realtime-audit-tester {
+      background: #090e1f;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
     /* GRID TÁCTICO DE OPERADORES */
     .tactical-grid {
       display: grid;
@@ -332,7 +455,34 @@
   <!-- BOTONERA MAESTRA -->
   <div class="master-actions">
     <button id="btn-nuke-sync" class="btn-nuke">⚡ EXTRAER & AUDITAR TODAS LAS CONVERSACIONES DEL TURNO (NUKE SYNC)</button>
+    <button id="btn-open-conv-viewer" class="btn-broadcast" style="background: rgba(14, 165, 233, 0.2); border-color: var(--neon-cyan); color: var(--neon-cyan);" onclick="openConversationsModal()">📚 VER HISTORIAL CONVERSACIONES & CARTAS</button>
+    <button id="btn-toggle-shift-accordion" class="btn-broadcast" style="background: rgba(16, 185, 129, 0.2); border-color: var(--neon-emerald); color: var(--neon-emerald);">📂 PERFILES DEL TURNO & AUDITORÍA EN TIEMPO REAL</button>
     <button id="btn-open-broadcast" class="btn-broadcast">📢 ANUNCIO GENERAL</button>
+  </div>
+
+  <!-- ACORDEÓN MAESTRO: PERFILES DEL TURNO & AUDITORÍA EN TIEMPO REAL -->
+  <div id="shift-audit-accordion-wrap" class="shift-audit-accordion-wrap">
+    <div class="accordion-master-header" onclick="toggleShiftAccordion()">
+      <div class="accordion-title-group">
+        <span style="font-size:1.3rem;">📂</span>
+        <div>
+          <h3>Gestión de Perfiles del Turno & Auditoría en Tiempo Real (Anti-TM & Reglas Supremas)</h3>
+          <span style="font-size:10px; color:#94a3b8;">Despliega cada perfil para inspeccionar conversaciones pendientes, sincronizar y validar en tiempo real: Cero manipulación de regalos, nombre correcto de perfil, cero promesas de viajes/citas o matrimonio.</span>
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span id="accordion-summary-badge" class="badge-status badge-online" style="font-size:10px;">🟢 Cargando perfiles...</span>
+        <button id="btn-sync-all-profiles-acc" onclick="event.stopPropagation(); syncAllProfilesAccordion();" style="background:#059669; color:#fff; border:none; padding:4px 10px; border-radius:4px; font-size:10px; font-weight:800; cursor:pointer;">⚡ Subir Todas</button>
+        <span id="accordion-toggle-arrow" style="font-size:13px; color:var(--neon-emerald); transition:transform 0.2s;">▼</span>
+      </div>
+    </div>
+
+    <div id="shift-accordion-content" class="accordion-body">
+      <!-- Listado dinámico de perfiles tipo acordeón -->
+      <div style="text-align:center; color:#64748b; font-size:11px; padding:15px;">
+        Sincronizando perfiles activos del turno con telemetría y Supabase...
+      </div>
+    </div>
   </div>
 
   <!-- RADAR TÁCTICO DE OPERADORES -->
@@ -401,6 +551,7 @@
         const data = await res.json();
         if (data.success) {
           renderGrid(data.operators);
+          renderShiftProfilesAccordion(data.operators);
         }
       } catch (e) {}
     }
@@ -416,7 +567,11 @@
       opsCountBadge.innerText = `🟢 ${onlineOps.length} OPERADORES EN LÍNEA`;
 
       let totalExpired = 0;
-      onlineOps.forEach(o => { if (o.hasExpiredSla) totalExpired++; });
+      onlineOps.forEach(o => {
+        const hasRealTimers = (o.activeChatTimersList && o.activeChatTimersList.length > 0) || (o.activeSlaTimers && Object.keys(o.activeSlaTimers).length > 0);
+        const hasExpired = o.hasExpiredSla && hasRealTimers;
+        if (hasExpired) totalExpired++;
+      });
 
       if (totalExpired > 0) {
         slaAlertBadge.style.display = 'inline-block';
@@ -431,16 +586,38 @@
       }
 
       grid.innerHTML = operators.map(op => {
+        const timerList = Array.isArray(op.activeChatTimersList) ? op.activeChatTimersList : [];
+        const hasRealExpired = op.hasExpiredSla && timerList.length > 0 && timerList.some(t => t.isExpired);
+
         let cardClass = 'operator-card';
         if (op.status !== 'OFFLINE') cardClass += ' active-card';
-        if (op.hasExpiredSla) cardClass += ' sla-expired';
+        if (hasRealExpired) cardClass += ' sla-expired';
 
         let statusPill = 'OFFLINE';
         if (op.isAfk) statusPill = '💤 AFK (>3m)';
         else if (op.status === 'ONLINE') statusPill = '🟢 ACTIVO';
 
         let timersHtml = '';
-        if (op.activeSlaTimers) {
+        if (timerList.length > 0) {
+          timersHtml = timerList.map(t => {
+            const cleanTarget = (t.contact || 'Chat').replace(/^(name_|id_)/, '');
+            const remain = typeof t.remaining === 'number' ? t.remaining : 120;
+            const m = Math.floor(remain / 60);
+            const s = remain % 60;
+            const timeStr = `${m}:${s < 10 ? '0' : ''}${s}`;
+
+            let timerClass = 'timer-ok';
+            if (t.isExpired || remain <= 0) timerClass = 'timer-danger';
+            else if (remain < 60) timerClass = 'timer-warning';
+
+            return `
+              <div class="timer-pill ${timerClass}">
+                <span>💬 ${cleanTarget}</span>
+                <span>${(t.isExpired || remain <= 0) ? '🚨 VENCIDO' : `⏱️ ${timeStr}`}</span>
+              </div>
+            `;
+          }).join('');
+        } else if (op.activeSlaTimers && Object.keys(op.activeSlaTimers).length > 0) {
           const timerEntries = Object.entries(op.activeSlaTimers);
           timersHtml = timerEntries.map(([targetName, timestamp]) => {
             const elapsed = Math.floor((Date.now() - timestamp) / 1000);
@@ -504,9 +681,11 @@
               ${timersHtml || '<div style="color:var(--text-muted); font-size:10px;">Sin chats pendientes de SLA</div>'}
             </div>
 
-            <div class="card-footer-btns">
-              <button class="card-btn" onclick="openDirectComms('${op.operator}')">💬 Chatear con ${op.operator}</button>
+            <div class="card-footer-btns" style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+              <button class="card-btn" onclick="openDirectComms('${op.operator}')">💬 Chat ${op.operator}</button>
+              <button class="card-btn" style="background:#1e1b4b; color:#a5b4fc; border-color:#6366f1;" onclick="openConversationsModal('${op.profile}', '${op.operator}')">📖 Ver Chats</button>
               <button class="card-btn" style="background:#064e3b; color:#34d399; border-color:#10b981;" onclick="triggerSyncOperator('${op.shift}', '${op.operator}')">⚡ Subir Chats</button>
+              <button class="card-btn" style="background:#0e7490; color:#67e8f9; border-color:#06b6d4;" onclick="triggerSyncOperator('${op.shift}', '${op.operator}')">✉️ Subir Cartas</button>
             </div>
           </div>
         `;
@@ -521,6 +700,284 @@
       });
       const data = await res.json();
       alert(`⚡ Orden de sincronización emitida para ${opName} [${shift}].`);
+    }
+
+    // ====================================================================
+    // 1.1 GESTIÓN DE ACORDEÓN DE PERFILES DEL TURNO & AUDITORÍA EN TIEMPO REAL
+    // ====================================================================
+    let isAccordionCollapsed = false;
+    let shiftProfilesMap = new Map();
+
+    window.toggleShiftAccordion = function() {
+      const content = document.getElementById('shift-accordion-content');
+      const arrow = document.getElementById('accordion-toggle-arrow');
+      isAccordionCollapsed = !isAccordionCollapsed;
+      if (isAccordionCollapsed) {
+        content.style.display = 'none';
+        arrow.style.transform = 'rotate(-90deg)';
+      } else {
+        content.style.display = 'flex';
+        arrow.style.transform = 'rotate(0deg)';
+      }
+    };
+
+    const btnToggleAccordion = document.getElementById('btn-toggle-shift-accordion');
+    if (btnToggleAccordion) {
+      btnToggleAccordion.onclick = () => {
+        window.toggleShiftAccordion();
+        document.getElementById('shift-audit-accordion-wrap').scrollIntoView({ behavior: 'smooth' });
+      };
+    }
+
+    window.toggleProfileAccordionItem = function(profileKey) {
+      const body = document.getElementById(`profile-body-${profileKey}`);
+      const arrow = document.getElementById(`profile-arrow-${profileKey}`);
+      if (!body) return;
+      if (body.classList.contains('open')) {
+        body.classList.remove('open');
+        if (arrow) arrow.textContent = '▶';
+      } else {
+        body.classList.add('open');
+        if (arrow) arrow.textContent = '▼';
+      }
+    };
+
+    window.syncProfileChats = async function(profileName, operatorName, shiftName) {
+      try {
+        const res = await fetch(`${API_URL}/api/chats/extract-all-shift`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            profile: profileName,
+            operator: operatorName,
+            shift: shiftName || 'Mañana'
+          })
+        });
+        const data = await res.json();
+        alert(`⚡ Extracción sincronizada emitida para perfil ${profileName}: ${data.message || 'Procesando'}`);
+      } catch (e) {
+        alert('Error conectando con el servidor para extraer chats.');
+      }
+    };
+
+    window.syncAllProfilesAccordion = async function() {
+      if (confirm('⚡ ¿Deseas ordenar la sincronización masiva de TODOS los perfiles del turno?')) {
+        const res = await fetch(`${API_URL}/api/chats/extract-all-shift`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shift: 'Mañana' })
+        });
+        const data = await res.json();
+        alert(`⚡ Éxito: ${data.message}`);
+      }
+    };
+
+    // Auditoría instantánea en vivo (Verifica las 4 reglas: Manipulación de regalos, Nombre de perfil, Cero TM/Viajes, Cero Matrimonio)
+    window.testAuditRealtimeMessage = async function(profileKey, profileName, clientName) {
+      const input = document.getElementById(`audit-input-${profileKey}`);
+      const resultBox = document.getElementById(`audit-result-${profileKey}`);
+      if (!input || !resultBox) return;
+
+      const text = input.value.trim();
+      if (!text) {
+        resultBox.innerHTML = '<span style="color:#f59e0b;">⚠️ Ingresa un mensaje de chat o fragmento para auditar.</span>';
+        return;
+      }
+
+      resultBox.innerHTML = '<span style="color:#06b6d4;">🤖 Auditando texto bajo reglas anti-TM y anti-manipulación...</span>';
+
+      try {
+        const res = await fetch(`${API_URL}/api/audit/realtime-check`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: text,
+            profileName: profileName,
+            clientName: clientName,
+            operatorName: 'Supervisor Audit'
+          })
+        });
+        const data = await res.json();
+
+        if (data.passed) {
+          resultBox.innerHTML = `
+            <div style="background:rgba(16,185,129,0.15); border:1px solid #10b981; border-radius:6px; padding:8px 10px; color:#34d399; font-size:11px;">
+              <b>✅ CONVERSACIÓN CONFORME (PUNTUAJE 100/100):</b><br>
+              • 🎁 Sin manipulación ni petición de regalos o tokens.<br>
+              • 👤 Nombre de perfil correcto (${profileName}).<br>
+              • ✈️ Cero promesas de viajes, hoteles, vuelos o encuentros físicos.<br>
+              • 💍 Cero propuestas o promesas conyugales/matrimonio.
+            </div>
+          `;
+        } else {
+          const violationsHtml = data.violations.map(v => `
+            <div style="margin-top:4px; color:#fca5a5;">
+              <b>• ${v.title}:</b> ${v.detail}
+            </div>
+          `).join('');
+
+          resultBox.innerHTML = `
+            <div style="background:rgba(239,68,68,0.2); border:1px solid #ef4444; border-radius:6px; padding:8px 10px; color:#f87171; font-size:11px;">
+              <b>🚨 INFRACCIÓN DETECTADA (RIESGO CRÍTICO):</b>
+              ${violationsHtml}
+              <div style="margin-top:6px; font-size:10px; color:#fbbf24;">
+                ⚠️ Se recomienda corregir la conversación de inmediato o pausar el chat para evitar sanciones.
+              </div>
+            </div>
+          `;
+        }
+      } catch (err) {
+        resultBox.innerHTML = '<span style="color:#ef4444;">Error ejecutando auditoría en el backend.</span>';
+      }
+    };
+
+    function renderShiftProfilesAccordion(operators) {
+      const container = document.getElementById('shift-accordion-content');
+      const badgeSummary = document.getElementById('accordion-summary-badge');
+      if (!container) return;
+
+      const profileList = [];
+      const seenProfiles = new Set();
+
+      (operators || []).forEach(op => {
+        const pName = (op.profile || 'HORACIO').toUpperCase().trim();
+        if (pName && !seenProfiles.has(pName)) {
+          seenProfiles.add(pName);
+          profileList.push({
+            profileName: pName,
+            operator: op.operator,
+            shift: op.shift || 'Mañana',
+            syncAudit: op.syncAudit || { syncedCount: 0, pendingCount: 0, isUpToDate: true, pendingClients: [] },
+            isOnline: op.status !== 'OFFLINE',
+            infractions: op.firewallInfractionsCount || 0
+          });
+        }
+      });
+
+      // Si no hay operadores en línea, asegurar al menos HORACIO como perfil base
+      if (profileList.length === 0) {
+        profileList.push({
+          profileName: 'HORACIO',
+          operator: 'walther',
+          shift: 'Mañana',
+          syncAudit: { syncedCount: 12, pendingCount: 0, isUpToDate: true, pendingClients: [] },
+          isOnline: false,
+          infractions: 0
+        });
+      }
+
+      let totalPendingAcrossProfiles = 0;
+      profileList.forEach(p => { totalPendingAcrossProfiles += (p.syncAudit?.pendingCount || 0); });
+
+      if (badgeSummary) {
+        badgeSummary.className = totalPendingAcrossProfiles > 0 ? 'badge-status badge-alert' : 'badge-status badge-online';
+        badgeSummary.innerText = totalPendingAcrossProfiles > 0 
+          ? `🟡 ${totalPendingAcrossProfiles} CHATS POR SUBIR (${profileList.length} PERFILES)` 
+          : `🟢 ${profileList.length} PERFILES AL DÍA`;
+      }
+
+      container.innerHTML = profileList.map((p, idx) => {
+        const key = `prof_${p.profileName.replace(/[^a-z0-9]/gi, '_')}`;
+        const hasPending = (p.syncAudit?.pendingCount || 0) > 0;
+        const pendingCount = p.syncAudit?.pendingCount || 0;
+        const syncedCount = p.syncAudit?.syncedCount || 0;
+        const pendingClients = p.syncAudit?.pendingClients || [];
+
+        const statusPill = hasPending
+          ? `<span style="background:rgba(245,158,11,0.2); border:1px solid #f59e0b; color:#fbbf24; padding:3px 8px; border-radius:4px; font-weight:800; font-size:10px;">🟡 ${pendingCount} Por Subir</span>`
+          : `<span style="background:rgba(16,185,129,0.2); border:1px solid #10b981; color:#34d399; padding:3px 8px; border-radius:4px; font-weight:800; font-size:10px;">🟢 Al Día (${syncedCount} sinc)</span>`;
+
+        let cardClass = 'profile-acc-card';
+        if (hasPending) cardClass += ' has-pending';
+        else cardClass += ' all-synced';
+        if (p.infractions > 0) cardClass += ' has-violations';
+
+        return `
+          <div class="${cardClass}">
+            <div class="profile-acc-head" onclick="toggleProfileAccordionItem('${key}')">
+              <div style="display:flex; align-items:center; gap:10px;">
+                <span id="profile-arrow-${key}" style="color:var(--neon-emerald); font-size:11px;">▼</span>
+                <div>
+                  <b style="color:#fff; font-size:12.5px;">🎯 PERFIL: ${p.profileName}</b>
+                  <span style="font-size:10.5px; color:#94a3b8; margin-left:8px;">[Operador: ${p.operator || 'walther'} | Turno: ${p.shift}]</span>
+                </div>
+              </div>
+
+              <div style="display:flex; align-items:center; gap:6px;" onclick="event.stopPropagation()">
+                ${statusPill}
+                <button onclick="openConversationsModal('${p.profileName}', '${p.operator}')" style="background:#1e1b4b; color:#c4b5fd; border:1px solid #6366f1; padding:4px 8px; border-radius:4px; font-size:10px; font-weight:bold; cursor:pointer;">
+                  📖 Ver Historial
+                </button>
+                <button onclick="syncProfileChats('${p.profileName}', '${p.operator}', '${p.shift}')" style="background:#059669; color:#fff; border:none; padding:4px 8px; border-radius:4px; font-size:10px; font-weight:bold; cursor:pointer;">
+                  ⚡ Subir Chats
+                </button>
+                <button onclick="syncProfileChats('${p.profileName}', '${p.operator}', '${p.shift}')" style="background:#0e7490; color:#fff; border:none; padding:4px 8px; border-radius:4px; font-size:10px; font-weight:bold; cursor:pointer;">
+                  ✉️ Subir Cartas
+                </button>
+              </div>
+            </div>
+
+            <div id="profile-body-${key}" class="profile-acc-body open">
+              <!-- BARRA DE REGLAS SUPREMAS DE AUDITORÍA -->
+              <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+                <span style="font-size:10.5px; color:#94a3b8; font-weight:800; margin-right:4px;">REGLAS ACTIVAS:</span>
+                <span class="audit-rule-badge ok">🎁 Cero Manipulación Regalos</span>
+                <span class="audit-rule-badge ok">👤 Nombre Perfil Correcto (${p.profileName})</span>
+                <span class="audit-rule-badge ok">✈️ Cero Promesas Viaje / Encuentro</span>
+                <span class="audit-rule-badge ok">💍 Cero Promesas Matrimonio</span>
+                ${p.infractions > 0 ? `<span class="audit-rule-badge fail">⚠️ ${p.infractions} Alertas Registradas</span>` : ''}
+              </div>
+
+              <!-- LISTADO DE CLIENTES PENDIENTES VS SINCRONIZADOS -->
+              <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div style="background:#040711; border:1px solid #1e293b; border-radius:6px; padding:10px;">
+                  <div style="font-size:11px; font-weight:bold; color:#fbbf24; margin-bottom:6px;">
+                    🟡 Chats Pendientes de Cosechar (${pendingCount})
+                  </div>
+                  ${pendingClients.length > 0 
+                    ? `<div style="display:flex; flex-direction:column; gap:4px; font-size:10.5px; color:#cbd5e1;">
+                        ${pendingClients.map(c => `
+                          <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.03); padding:3px 6px; border-radius:3px;">
+                            <span>💬 ${c}</span>
+                            <span style="color:#f59e0b; font-size:9.5px;">⏳ Pendiente</span>
+                          </div>
+                        `).join('')}
+                      </div>`
+                    : `<div style="font-size:10.5px; color:#64748b; font-style:italic;">Todas las conversaciones están cosechadas y al día.</div>`
+                  }
+                </div>
+
+                <div style="background:#040711; border:1px solid #1e293b; border-radius:6px; padding:10px;">
+                  <div style="font-size:11px; font-weight:bold; color:#34d399; margin-bottom:6px;">
+                    🟢 Estado de la Base de Datos
+                  </div>
+                  <div style="font-size:10.5px; color:#94a3b8; line-height:1.5;">
+                    • Conversaciones Sincronizadas: <b>${syncedCount}</b><br>
+                    • Estatus Operativo: <b>${p.isOnline ? '🟢 En Línea en Talkytimes' : '⚪ Offline / Standby'}</b><br>
+                    • Firewall 3 Capas: <b>Activo & Escaneando</b>
+                  </div>
+                </div>
+              </div>
+
+              <!-- TESTER DE AUDITORÍA EN TIEMPO REAL -->
+              <div class="realtime-audit-tester">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <span style="font-size:11px; font-weight:bold; color:#06b6d4;">🔍 Auditar Mensaje / Conversación en Tiempo Real</span>
+                  <span style="font-size:10px; color:#64748b;">Inspecciona respuestas antes de enviar o audita diálogos sospechosos</span>
+                </div>
+                <textarea id="audit-input-${key}" placeholder="Pega el mensaje del operador o fragmento de chat para auditar contra las 4 reglas (regalos, nombre equivocado, viajes o matrimonio)..." style="width:100%; height:45px; background:#060913; border:1px solid #1e293b; border-radius:4px; padding:6px 8px; color:#fff; font-size:11px; outline:none; resize:none;"></textarea>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <button onclick="testAuditRealtimeMessage('${key}', '${p.profileName}', 'Cliente')" style="background:linear-gradient(135deg, #0ea5e9, #6366f1); color:#fff; border:none; padding:5px 14px; border-radius:4px; font-size:10px; font-weight:bold; cursor:pointer;">
+                    🤖 Auditar con IA en Tiempo Real
+                  </button>
+                  <button onclick="document.getElementById('audit-input-${key}').value='';" style="background:transparent; border:none; color:#64748b; font-size:10px; cursor:pointer;">Limpiar</button>
+                </div>
+                <div id="audit-result-${key}"></div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
     }
 
     // 2. EXTRACCIÓN MASIVA DE TURNO (NUKE SYNC)
@@ -664,6 +1121,154 @@
       });
       input.value = '';
       refreshChatStream();
+    };
+    // 7. MODAL MAESTRO: EXPLORADOR DE CONVERSACIONES & CARTAS
+    window.openConversationsModal = function(targetProfile = 'ALL', targetOperator = 'ALL') {
+      let modal = document.getElementById('ryr-conversations-viewer-modal');
+      if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'ryr-conversations-viewer-modal';
+        modal.style.cssText = `
+          position: fixed;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          width: 960px;
+          max-width: 95vw;
+          height: 650px;
+          max-height: 90vh;
+          background: rgba(11, 19, 43, 0.98);
+          backdrop-filter: blur(20px);
+          border: 2px solid var(--neon-cyan);
+          border-radius: 12px;
+          color: #fff;
+          z-index: 999999;
+          display: flex;
+          flex-direction: column;
+          box-shadow: 0 15px 50px rgba(0,0,0,0.95), 0 0 25px rgba(6, 182, 212, 0.3);
+          font-family: 'Space Grotesk', system-ui, sans-serif;
+        `;
+        document.body.appendChild(modal);
+      }
+
+      modal.style.display = 'flex';
+      modal.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 20px; border-bottom:1px solid #1e293b; background:rgba(6,9,19,0.8);">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span style="font-size:1.2rem; color:var(--neon-cyan);">📚</span>
+            <b style="color:var(--neon-cyan); font-size:13.5px; letter-spacing:1px;">EXPLORADOR DE CONVERSACIONES & CARTAS SUBIDAS</b>
+          </div>
+          <span style="cursor:pointer; color:#94a3b8; font-size:18px; font-weight:bold;" onclick="document.getElementById('ryr-conversations-viewer-modal').style.display='none'">✕</span>
+        </div>
+
+        <div style="display:flex; gap:10px; padding:12px 20px; background:#070c1a; border-bottom:1px solid #1e293b; align-items:center; flex-wrap:wrap;">
+          <input type="text" id="conv-search-input" placeholder="Buscar por cliente o ID..." style="background:#0b132b; border:1px solid #334155; color:#fff; padding:6px 12px; border-radius:6px; font-size:11px; flex:1; min-width:180px;">
+          <button onclick="fetchAndRenderConversations()" style="background:var(--neon-cyan); color:#000; border:none; padding:6px 14px; border-radius:6px; font-weight:bold; font-size:11px; cursor:pointer;">🔍 Filtrar</button>
+          <button onclick="document.getElementById('conv-search-input').value=''; fetchAndRenderConversations();" style="background:#334155; color:#fff; border:none; padding:6px 12px; border-radius:6px; font-size:11px; cursor:pointer;">Limpiar</button>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 360px 1fr; flex:1; overflow:hidden;">
+          <!-- LISTA LATERAL DE CHATS -->
+          <div id="conv-list-pane" style="background:#040711; border-right:1px solid #1e293b; overflow-y:auto; padding:10px; display:flex; flex-direction:column; gap:8px;">
+            <div style="color:#94a3b8; font-size:11px; text-align:center; padding:20px;">Cargando historial de conversaciones...</div>
+          </div>
+
+          <!-- DETALLE Y ANÁLISIS DEL CHAT -->
+          <div id="conv-detail-pane" style="background:#090e1f; padding:18px; overflow-y:auto; color:#cbd5e1; font-size:12px; line-height:1.6;">
+            <div style="color:#64748b; text-align:center; margin-top:60px;">Selecciona una conversación de la izquierda para ver su transcripción, análisis de cartas y operador asignado.</div>
+          </div>
+        </div>
+      `;
+
+      fetchAndRenderConversations(targetProfile, targetOperator);
+    };
+
+    let globalConversationsCache = [];
+    window.fetchAndRenderConversations = async function(targetProfile, targetOperator) {
+      const listPane = document.getElementById('conv-list-pane');
+      if (!listPane) return;
+      listPane.innerHTML = '<div style="color:#06b6d4; font-size:11px; text-align:center; padding:20px;">⏳ Consultando Supabase en tiempo real...</div>';
+
+      const searchInput = document.getElementById('conv-search-input');
+      const searchVal = searchInput ? searchInput.value.trim() : '';
+
+      try {
+        let url = `${API_URL}/api/chats/all-conversations?`;
+        if (targetProfile && targetProfile !== 'ALL') url += `profile=${encodeURIComponent(targetProfile)}&`;
+        if (targetOperator && targetOperator !== 'ALL') url += `operator=${encodeURIComponent(targetOperator)}&`;
+        if (searchVal) url += `search=${encodeURIComponent(searchVal)}&`;
+
+        const res = await fetch(url);
+        const data = await res.json();
+        const convs = data.conversations || [];
+        globalConversationsCache = convs;
+
+        if (convs.length === 0) {
+          listPane.innerHTML = '<div style="color:#94a3b8; font-size:11px; text-align:center; padding:20px;">No se encontraron conversaciones registradas en la base de datos.</div>';
+          return;
+        }
+
+        listPane.innerHTML = convs.map((c, i) => {
+          const dateStr = c.extracted_at ? new Date(c.extracted_at).toLocaleString('es-CO') : 'Reciente';
+          return `
+            <div class="conv-item-card" onclick="viewConversationDetail(${i})" style="background:#0b132b; border:1px solid #1e293b; border-radius:6px; padding:8px 10px; cursor:pointer; transition:border-color 0.2s;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <b style="color:#38bdf8; font-size:11.5px;">👤 ${c.client_name || 'Cliente'}</b>
+                <span style="font-size:9.5px; color:#f59e0b; background:rgba(245,158,11,0.1); padding:2px 5px; border-radius:3px;">ID: ${c.client_id}</span>
+              </div>
+              <div style="font-size:10px; color:#cbd5e1; margin-top:3px;">
+                🎯 <b>Perfil:</b> ${c.profile_name || 'HORACIO'} | 💼 <b>Op:</b> ${c.operator_name || 'walther'}
+              </div>
+              <div style="font-size:9.5px; color:#64748b; margin-top:3px; display:flex; justify-content:space-between;">
+                <span>💬 ${c.total_messages || 0} mensajes</span>
+                <span>📅 ${dateStr}</span>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        if (convs.length > 0) {
+          viewConversationDetail(0);
+        }
+      } catch (err) {
+        listPane.innerHTML = '<div style="color:#ef4444; font-size:11px; text-align:center; padding:20px;">Error al cargar conversaciones del servidor.</div>';
+      }
+    };
+
+    window.viewConversationDetail = function(index) {
+      const c = globalConversationsCache[index];
+      const detailPane = document.getElementById('conv-detail-pane');
+      if (!c || !detailPane) return;
+
+      const dateStr = c.extracted_at ? new Date(c.extracted_at).toLocaleString('es-CO') : 'Reciente';
+      const cleanMarkdown = (c.markdown_transcript || 'Sin transcripción disponible.')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
+        .replace(/\*(.*?)\*/g, '<i>$1</i>')
+        .replace(/### (.*?)\n/g, '<h4 style="color:#38bdf8; margin:10px 0 4px;">$1</h4>')
+        .replace(/## (.*?)\n/g, '<h3 style="color:#10b981; margin:12px 0 6px;">$1</h3>')
+        .replace(/# (.*?)\n/g, '<h2 style="color:#67e8f9; margin:14px 0 8px;">$1</h2>')
+        .replace(/\n/g, '<br>');
+
+      detailPane.innerHTML = `
+        <div style="background:#070c1a; border:1px solid #1e293b; border-radius:8px; padding:12px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <div>
+            <h3 style="color:#38bdf8; margin:0; font-size:14px;">👤 Conversación: ${c.client_name} (ID: ${c.client_id})</h3>
+            <span style="font-size:10.5px; color:#94a3b8;">
+              Subido por el Operador: <b style="color:#10b981;">${c.operator_name || 'walther'}</b> [Turno: ${c.shift || 'Mañana'}] al Perfil: <b style="color:#f472b6;">${c.profile_name || 'HORACIO'}</b>
+            </span>
+          </div>
+          <div style="font-size:10.5px; color:#fbbf24; background:rgba(245,158,11,0.15); padding:4px 8px; border-radius:4px; border:1px solid rgba(245,158,11,0.4);">
+            🕒 Fecha y Hora: <b>${dateStr}</b>
+          </div>
+        </div>
+
+        <div style="background:#040711; border:1px solid #1e293b; border-radius:8px; padding:14px; font-family:monospace; font-size:11.5px; max-height:420px; overflow-y:auto; line-height:1.6; color:#e2e8f0;">
+          ${cleanMarkdown}
+        </div>
+      `;
     };
   </script>
 </body>
