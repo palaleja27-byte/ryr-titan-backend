@@ -861,6 +861,17 @@ app.post('/api/chats/extract-all-shift', (req, res) => {
   const targetShift = shift || 'Mañana';
   massExtractionOrders.add(targetShift);
 
+  logSyncEvent({
+    type: 'NUKE_ORDER',
+    operator: operator || 'Supervisor',
+    profile: profile || 'TURNO',
+    clientName: 'Extracción Masiva',
+    count: 0,
+    durationMs: 50,
+    status: 'SUCCESS',
+    detail: `Orden de extracción masiva emitida para el turno '${targetShift}'. Estaciones cosechando...`
+  });
+
   setTimeout(() => {
     massExtractionOrders.delete(targetShift);
   }, 60000);
