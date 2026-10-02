@@ -87,28 +87,8 @@ app.post('/api/telemetry', async (req, res) => {
       lastSeen: Date.now()
     };
 
+    // Guardar en Memoria RAM ultrarrápida (CERO consumo de Disk IOPS / Storage en Supabase)
     liveOperatorTelemetry.set(key, telemetryObj);
-
-    // Persistencia no bloqueante a Supabase
-    supabase.from('operator_telemetry').insert({
-      operator_name: telemetryObj.operator,
-      shift: telemetryObj.shift,
-      profile_name: telemetryObj.profile,
-      profile_id: telemetryObj.profileId,
-      status: telemetryObj.status,
-      idle_seconds: telemetryObj.idleSeconds,
-      is_afk: telemetryObj.isAfk,
-      pending_read_letters: telemetryObj.pendingReadLetters,
-      unanswered_chats_count: telemetryObj.unansweredChatsCount,
-      has_expired_sla: telemetryObj.hasExpiredSla,
-      active_timers: telemetryObj.activeChatTimersList,
-      prospecting_count: telemetryObj.prospectingProgress.count,
-      prospecting_quota: telemetryObj.prospectingProgress.quota,
-      prospecting_remaining_sec: telemetryObj.prospectingProgress.remainingSeconds,
-      firewall_infractions_count: telemetryObj.firewallInfractionsCount,
-      dom_lag_ms: telemetryObj.domLagMs,
-      timestamp: Date.now()
-    }).then(() => {}).catch(() => {});
 
     // Responder si hay órdenes de extracción masiva pendientes para este turno
     const shouldExtractShift = massExtractionOrders.has(payload.shift || 'Mañana');
