@@ -222,6 +222,60 @@ app.get('/api/chats/synced-ids', async (req, res) => {
 });
 
 // ====================================================================
+// 4.1 ENDPOINT: OBTENER TODAS LAS CONVERSACIONES AUDITADAS (HISTORIAL MAESTRO)
+// ====================================================================
+app.get('/api/chats/all-conversations', async (req, res) => {
+  try {
+    const { profile, operator, search } = req.query;
+    let query = supabase.from('conversations').select('*').order('extracted_at', { ascending: false }).limit(60);
+
+    if (profile && profile !== 'ALL') {
+      query = query.ilike('profile_name', `%${profile}%`);
+    }
+    if (operator && operator !== 'ALL') {
+      query = query.ilike('operator_name', `%${operator}%`);
+    }
+    if (search) {
+      query = query.or(`client_name.ilike.%${search}%,client_id.ilike.%${search}%`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    res.json({ success: true, conversations: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message, conversations: [] });
+  }
+});
+
+// ====================================================================
+// 4.2 ENDPOINT: SINCRONIZAR Y EXTRAER CARTAS DEL PERFIL
+// ====================================================================
+app.post('/api/mails/sync-profile-letters', async (req, res) => {
+  try {
+    const { operator, shift, profile, letters } = req.body;
+    if (!letters || !Array.isArray(letters) || letters.length === 0) {
+      return res.status(400).json({ error: 'No se recibieron cartas para guardar' });
+    }
+
+    const mailsToInsert = letters.map(l => ({
+      client_id: String(l.clientId || 'N/A').trim(),
+      profile_name: profile || 'HORACIO',
+      direction: l.isOutgoing ? 'OUTGOING' : 'INCOMING',
+      letter_date: l.date || 'Fecha Reciente',
+      letter_preview: l.preview || l.fullText || '',
+      status: 'read'
+    }));
+
+    await supabase.from('mails_history').insert(mailsToInsert);
+
+    res.json({ success: true, message: `✅ Se sincronizaron ${letters.length} cartas del perfil ${profile || 'HORACIO'} con éxito.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ====================================================================
 // 5. ENDPOINT: CONSULTA DE SALDO Y PODER ADQUISITIVO DEL CLIENTE
 // ====================================================================
 app.get('/api/clients/data/:clientId', async (req, res) => {
@@ -330,30 +384,68 @@ app.post('/api/intelligence/query', async (req, res) => {
     let answer = '';
     let hooks = [];
 
+    const hasDbHistory = (dbLetters.length > 0 || dbMessages.length > 0);
+    const dbWarningPrefix = !hasDbHistory 
+      ? `⚠️ **Aviso al Operador:** Este cliente no tiene conversaciones o cartas previas subidas en la base de datos. Haz clic en **"Subir Chat"** y **"Subir Cartas"** para nutrir mi memoria 360° con todo el historial acumulado.\n\n`
+      : '';
+
     // Evaluar intención del operador
-    if (/d[oó]nde|pa[ií]s|ubicaci[oó]n|ciudad|vive|where|location|from/i.test(q)) {
+    if (/qu[eé]\s+(sabes|puedes|haces)|capacidades|ayuda|funciones|para qu[eé]\s+sirves/i.test(q)) {
+      answer = `🧠 **Soy tu Co-Piloto Táctico & Asistente IA 360°:**\n\n` +
+        `Puedo ayudarte en tiempo real con:\n` +
+        `1. 📍 **Ubicación & Cultura:** Pregúntame *"de dónde es"* para darte su país y ciudad.\n` +
+        `2. 🎂 **Edad & Biografía:** Pregúntame *"cuántos años tiene"* o *"cuándo nació"*.\n` +
+        `3. 👨‍👩‍👧 **Familia & Mascotas:** Pregúntame *"tiene hijos"* o *"cómo se llaman"*.\n` +
+        `4. 🎨 **Gustos & Pasiones:** Pregúntame *"cuáles son sus gustos"* o *"qué le gusta hacer"*.\n` +
+        `5. 💰 **Poder Adquisitivo:** Pregúntame *"cuántos créditos tiene"* o *"cuánto gasta"*.\n` +
+        `6. ✉️ **Cartas & Ganchos:** Pídeme *"dame un gancho para enamorarla"* o *"redacta una carta"*.\n` +
+        `7. 🛡️ **Seguridad:** Monitoreo activo para evitar infracciones de Travel Misleading.\n\n` +
+        `💡 *Tip:* Mantén las cartas y chats sincronizados con los botones de **Subir Chats / Subir Cartas** para darte respuestas con máxima precisión.`;
+      hooks = [`"I was just thinking about you and wanted to say hello... Tell me, how has your day been treating you? ❤️"`];
+    } else if (/gusto|inter[eé]s|hobbi|pasatiempo|le gusta|m[uú]sica|comida|disfruta|hacer en su tiempo|passion/i.test(q)) {
+      let tastesFound = [];
+      if (/music|música|musica|song|cancion/i.test(combinedCorpus)) tastesFound.push('Disfruta hablar de música y canciones especiales');
+      if (/travel|viaj|beach|playa|nature|naturaleza/i.test(combinedCorpus)) tastesFound.push('Le apasiona la naturaleza y el aire libre');
+      if (/cook|cocin|food|comida|wine|vino|dinner/i.test(combinedCorpus)) tastesFound.push('Gusta de la buena gastronomía y momentos tranquilos');
+      if (/read|leer|book|libro|movie|pelicula|cine/i.test(combinedCorpus)) tastesFound.push('Aprecia conversaciones sobre libros, películas y arte');
+      if (/sport|gym|fitness|deporte|caminar|walk/i.test(combinedCorpus)) tastesFound.push('Le gusta mantenerse activo y caminar');
+
+      const tastesSummary = tastesFound.length > 0 
+        ? tastesFound.map(t => `- ${t}`).join('\n')
+        : `- Aprecia la atención genuina, el respeto y las conversaciones emotivas.\n- Registrado como aficionado a conversaciones sinceras y detalladas.`;
+
+      answer = `${dbWarningPrefix}🎨 **Gustos e Intereses de ${client}:**\n${tastesSummary}\n\n💡 *Respuesta sugerida para chatear:*\n"I love learning about what truly makes you happy... Tell me, when you have free time just for yourself, what's your favorite thing to do? ✨"`;
+      hooks = [`"I love learning about what truly makes you happy... Tell me, when you have free time just for yourself, what's your favorite thing to do? ✨"`];
+    } else if (/historia|relaci[oó]n|como vamos|resumen|hilo|antecedente/i.test(q)) {
+      answer = `${dbWarningPrefix}📖 **Historial de Relación con ${client}:**\n` +
+        `- **Total Mensajes en BD:** ${dbMessages.length} diálogos registrados.\n` +
+        `- **Total Cartas en BD:** ${dbLetters.length} cartas procesadas.\n` +
+        `- **Tono de la Relación:** Cálido, de constante apego y reciprocidad con el perfil ${profile}.\n\n` +
+        `💡 *Respuesta sugerida para continuar:*\n"Looking back at how we started talking, I really love how special our bond has become ❤️ Tell me, what's on your heart right now?"`;
+      hooks = [`"Looking back at how we started talking, I really love how special our bond has become ❤️ Tell me, what's on your heart right now?"`];
+    } else if (/d[oó]nde|pa[ií]s|ubicaci[oó]n|ciudad|vive|where|location|from/i.test(q)) {
       let locDetail = 'Registrado en su expediente oficial.';
       const cityMatch = combinedCorpus.match(/(?:live in|from|living in|vivo en)\s+([a-z\s]{3,20})/i);
       if (cityMatch) locDetail = `Menciona en sus conversaciones: "${cityMatch[1].trim()}"`;
-      answer = `📍 **Ubicación de ${client}:**\n- **País:** ${country}\n- **Detalles del Chat:** ${locDetail}\n\n💡 *Respuesta sugerida para enviar:*\n"I've always loved how warm and welcoming people from ${country} are... Tell me, how is your afternoon going today? ❤️"`;
+      answer = `${dbWarningPrefix}📍 **Ubicación de ${client}:**\n- **País:** ${country}\n- **Detalles del Chat:** ${locDetail}\n\n💡 *Respuesta sugerida para enviar:*\n"I've always loved how warm and welcoming people from ${country} are... Tell me, how is your afternoon going today? ❤️"`;
       hooks = [`"I've always loved how warm and welcoming people from ${country} are... Tell me, how is your afternoon going today? ❤️"`];
     } else if (/edad|a[ñn]os|cumple|nacimiento|age|old|born|birth/i.test(q)) {
-      answer = `🎂 **Edad y Nacimiento de ${client}:**\n- **Fecha y Edad:** ${birthDate}\n- **Estado Civil:** ${marital}\n\n💡 *Respuesta sugerida para enviar:*\n"Age is just a number, but your warmth and charm make you truly unforgettable 😉 What's your secret to staying so radiant?"`;
+      answer = `${dbWarningPrefix}🎂 **Edad y Nacimiento de ${client}:**\n- **Fecha y Edad:** ${birthDate}\n- **Estado Civil:** ${marital}\n\n💡 *Respuesta sugerida para enviar:*\n"Age is just a number, but your warmth and charm make you truly unforgettable 😉 What's your secret to staying so radiant?"`;
       hooks = [`"Age is just a number, but your warmth and charm make you truly unforgettable 😉 What's your secret to staying so radiant?"`];
-    } else if (/hijo|hija|familia|llaman|nombre|children|kids|family|daughter|son/i.test(q)) {
+    } else if (/hijo|hija|familia|llaman|children|kids|family|daughter|son/i.test(q)) {
       let famFound = [];
       if (combinedCorpus.includes('daughter') || combinedCorpus.includes('hija')) famFound.push('Menciona tener una hija');
       if (combinedCorpus.includes('son') || combinedCorpus.includes('hijo')) famFound.push('Menciona tener un hijo');
       if (combinedCorpus.includes('dog') || combinedCorpus.includes('cat') || combinedCorpus.includes('perro') || combinedCorpus.includes('gato')) famFound.push('Tiene mascotas queridas');
       const famSummary = famFound.length > 0 ? famFound.join(' y ') : 'Aún no ha especificado nombres de familiares directos en las conversaciones';
-      answer = `👨‍👩‍👧 **Expediente Familiar de ${client}:**\n- **Estado Civil:** ${marital}\n- **Datos Identificados:** ${famSummary}.\n\n💡 *Respuesta sugerida para enviar:*\n"Family is everything to me ❤️ How is your family doing today? Tell me more about the people who make you smile the most."`;
+      answer = `${dbWarningPrefix}👨‍👩‍👧 **Expediente Familiar de ${client}:**\n- **Estado Civil:** ${marital}\n- **Datos Identificados:** ${famSummary}.\n\n💡 *Respuesta sugerida para enviar:*\n"Family is everything to me ❤️ How is your family doing today? Tell me more about the people who make you smile the most."`;
       hooks = [`"Family is everything to me ❤️ How is your family doing today? Tell me more about the people who make you smile the most."`];
     } else if (/cr[eé]dito|saldo|recarga|gasto|puntos|credits|points|money/i.test(q)) {
       const isHighSpending = dbLetters.length > 5 || dbMessages.length > 10;
-      answer = `💰 **Saldo y Poder Adquisitivo de ${client}:**\n- **Nivel de Usuario:** ${isHighSpending ? '💎 CLIENTE VIP (Gasto Constante)' : '🟢 PROSPECTO ACTIVO'}\n- **Disponibilidad:** Usuario activo en plataforma con historial de consumo de cartas y chats.\n\n💡 *Estrategia de Venta:*\n"I was just looking at a cute picture I took earlier and immediately thought of you... Want me to send it over to you? 😉"`;
+      answer = `${dbWarningPrefix}💰 **Saldo y Poder Adquisitivo de ${client}:**\n- **Nivel de Usuario:** ${isHighSpending ? '💎 CLIENTE VIP (Gasto Constante)' : '🟢 PROSPECTO ACTIVO'}\n- **Disponibilidad:** Usuario activo en plataforma con historial de consumo de cartas y chats.\n\n💡 *Estrategia de Venta:*\n"I was just looking at a cute picture I took earlier and immediately thought of you... Want me to send it over to you? 😉"`;
       hooks = [`"I was just looking at a cute picture I took earlier and immediately thought of you... Want me to send it over to you? 😉"`];
     } else if (/trabaj|ocupaci[oó]n|dedica|profesi[oó]n|hace|work|job|career/i.test(q)) {
-      answer = `💼 **Ocupación de ${client}:**\n- **Actividad:** Conecta en horarios de descanso laboral.\n\n💡 *Respuesta sugerida para enviar:*\n"I know how demanding work can be, but talking to you always brings peace to my day ❤️ How was your workday?"`;
+      answer = `${dbWarningPrefix}💼 **Ocupación de ${client}:**\n- **Actividad:** Conecta en horarios de descanso laboral.\n\n💡 *Respuesta sugerida para enviar:*\n"I know how demanding work can be, but talking to you always brings peace to my day ❤️ How was your workday?"`;
       hooks = [`"I know how demanding work can be, but talking to you always brings peace to my day ❤️ How was your workday?"`];
     } else {
       // Ganchos contextuales tácticos
@@ -377,7 +469,7 @@ app.post('/api/intelligence/query', async (req, res) => {
         ];
       }
 
-      answer = `Expediente contextual de ${client} (${country} | ${birthDate}):\n\n` +
+      answer = `${dbWarningPrefix}Expediente contextual de ${client} (${country} | ${birthDate}):\n\n` +
         hooks.map(h => `- ${h}`).join('\n') +
         `\n\n💡 *Estrategia de Continuidad:* Haz preguntas abiertas conectadas a su tiempo libre o sus gustos para incentivar respuestas largas y fluidas.`;
     }
