@@ -960,12 +960,18 @@ app.get('/api/handover/latest', async (req, res) => {
 // ====================================================================
 // RUTA DEL MONITOR (CON NO-CACHE PARA ACTUALIZACIONES INSTANTÁNEAS)
 // ====================================================================
-app.get('/monitor', (req, res) => {
-  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+const serveMonitor = (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private, max-age=0');
   res.set('Pragma', 'no-cache');
   res.set('Expires', '0');
   res.sendFile(path.join(__dirname, 'monitor.html'));
-});
+};
+
+app.get('/', serveMonitor);
+app.get('/monitor', serveMonitor);
+app.get('/monitor.html', serveMonitor);
+app.get('/index.html', serveMonitor);
+app.get('/dashboard', serveMonitor);
 
 app.listen(PORT, () => {
   console.log(`🚀 [APEX CYBERPUNK MATRIX] Servidor activo en puerto ${PORT}`);
