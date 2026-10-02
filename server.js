@@ -557,26 +557,46 @@ app.post('/api/intelligence/query', async (req, res) => {
       let locDetail = 'Registrado en su expediente oficial.';
       const cityMatch = combinedCorpus.match(/(?:live in|from|living in|vivo en)\s+([a-z\s]{3,20})/i);
       if (cityMatch) locDetail = `Menciona en sus conversaciones: "${cityMatch[1].trim()}"`;
-      answer = `📍 **Ubicación de ${client}:**\n- **País:** ${country}\n- **Detalles del Chat:** ${locDetail}\n\n💡 *Respuesta sugerida para enviar:*\n"I've always loved how warm and welcoming people from ${country} are... Tell me, how is your afternoon going today? ❤️"`;
-      hooks = [`"I've always loved how warm and welcoming people from ${country} are... Tell me, how is your afternoon going today? ❤️"`];
+      answer = `📍 **Ubicación & Cultura de ${client} (Español):**\n- **País en Perfil:** ${country}\n- **Detalles del Chat:** ${locDetail}\n\n⚠️ *Regla Anti-TM:* Prohibido mencionar países o ciudades en el chat con el usuario.\n\n💌 **Mensaje Sugerido en Inglés (Listo para Enviar):**\n"I've always loved your warm and welcoming spirit... Tell me, how is your afternoon going today? ❤️"\n\n📝 **Traducción al Español:**\n*"Siempre me ha encantado tu espíritu cálido y acogedor... Dime, ¿cómo va tu tarde hoy? ❤️"*`;
+      hooks = [
+        `"I've always loved your warm and welcoming spirit... Tell me, how is your afternoon going today? ❤️"`,
+        `"Talking with you always brings such a peaceful energy to my day... How are you feeling right now? ✨"`,
+        `"I was just taking a little break and hoping to hear from you 😉 What is on your mind today?"`
+      ];
     } else if (/edad|a[ñn]os|cumple|nacimiento|age|old|born|birth/i.test(q)) {
-      answer = `🎂 **Edad y Nacimiento de ${client}:**\n- **Fecha y Edad:** ${birthDate}\n- **Estado Civil:** ${marital}\n\n💡 *Respuesta sugerida para enviar:*\n"Age is just a number, but your warmth and charm make you truly unforgettable 😉 What's your secret to staying so radiant?"`;
-      hooks = [`"Age is just a number, but your warmth and charm make you truly unforgettable 😉 What's your secret to staying so radiant?"`];
+      answer = `🎂 **Edad y Biografía de ${client} (Español):**\n- **Fecha y Edad:** ${birthDate}\n- **Estado Civil:** ${marital}\n\n💌 **Mensaje Sugerido en Inglés (Listo para Enviar):**\n"Age is just a number, but your warmth and charm make you truly unforgettable 😉 What's your secret to staying so radiant?"\n\n📝 **Traducción al Español:**\n*"La edad es solo un número, pero tu calidez y encanto te hacen inolvidable 😉 ¿Cuál es tu secreto para mantenerte tan radiante?"*`;
+      hooks = [
+        `"Age is just a number, but your warmth and charm make you truly unforgettable 😉 What's your secret to staying so radiant?"`,
+        `"You have such a vibrant energy whenever we talk ❤️ What is your favorite way to unwind when you have some time for yourself?"`,
+        `"Every conversation with you feels so refreshing ✨ Tell me, what was the most beautiful part of your day today?"`
+      ];
     } else if (/hijo|hija|familia|llaman|children|kids|family|daughter|son/i.test(q)) {
       let famFound = [];
       if (combinedCorpus.includes('daughter') || combinedCorpus.includes('hija')) famFound.push('Menciona tener una hija');
       if (combinedCorpus.includes('son') || combinedCorpus.includes('hijo')) famFound.push('Menciona tener un hijo');
       if (combinedCorpus.includes('dog') || combinedCorpus.includes('cat') || combinedCorpus.includes('perro') || combinedCorpus.includes('gato')) famFound.push('Tiene mascotas queridas');
       const famSummary = famFound.length > 0 ? famFound.join(' y ') : 'Aún no ha especificado nombres de familiares directos en las conversaciones';
-      answer = `👨‍👩‍👧 **Expediente Familiar de ${client}:**\n- **Estado Civil:** ${marital}\n- **Datos Identificados:** ${famSummary}.\n\n💡 *Respuesta sugerida para enviar:*\n"Family is everything to me ❤️ How is your family doing today? Tell me more about the people who make you smile the most."`;
-      hooks = [`"Family is everything to me ❤️ How is your family doing today? Tell me more about the people who make you smile the most."`];
+      answer = `👨‍👩‍👧 **Expediente Familiar de ${client} (Español):**\n- **Estado Civil:** ${marital}\n- **Datos Identificados:** ${famSummary}.\n\n💌 **Mensaje Sugerido en Inglés (Listo para Enviar):**\n"Family is everything to me ❤️ How is your family doing today? Tell me more about the people who make you smile the most."\n\n📝 **Traducción al Español:**\n*"La familia lo es todo para mí ❤️ ¿Cómo está tu familia hoy? Cuéntame más sobre las personas que más te hacen sonreír."*`;
+      hooks = [
+        `"Family is everything to me ❤️ How is your family doing today? Tell me more about the people who make you smile the most."`,
+        `"The people closest to our hearts are what matter most ❤️ What is something sweet that made you smile today?"`,
+        `"I love hearing about the things you cherish in life ✨ Tell me what brings you the greatest joy lately."`
+      ];
     } else if (/cr[eé]dito|saldo|recarga|gasto|puntos|credits|points|money/i.test(q)) {
       const isHighSpending = dbLetters.length > 5 || dbMessages.length > 10;
-      answer = `💰 **Saldo y Poder Adquisitivo de ${client}:**\n- **Nivel de Usuario:** ${isHighSpending ? '💎 CLIENTE VIP (Gasto Constante)' : '🟢 PROSPECTO ACTIVO'}\n- **Disponibilidad:** Usuario activo en plataforma con historial de consumo de cartas y chats.\n\n💡 *Estrategia de Venta:*\n"I was just looking at a cute picture I took earlier and immediately thought of you... Want me to send it over to you? 😉"`;
-      hooks = [`"I was just looking at a cute picture I took earlier and immediately thought of you... Want me to send it over to you? 😉"`];
+      answer = `💰 **Diagnóstico Comercial de ${client} (Español):**\n- **Nivel de Usuario:** ${isHighSpending ? '💎 CLIENTE VIP (Gasto Constante)' : '🟢 PROSPECTO ACTIVO'}\n- **Directriz de Oro:** ⚠️ *NUNCA mencionar créditos, recargas ni pagos.*\n\n💌 **Mensaje Táctico en Inglés (Listo para Enviar):**\n"I was just looking at a cute picture I took earlier and immediately thought of you... Want me to send it over to you? 😉"\n\n📝 **Traducción al Español:**\n*"Estaba mirando una foto linda que me tomé más temprano y pensé en ti de inmediato... ¿Quieres que te la envíe? 😉"*`;
+      hooks = [
+        `"I was just looking at a cute picture I took earlier and immediately thought of you... Want me to send it over to you? 😉"`,
+        `"I feel so close to you when we talk, but I really miss looking into your eyes... Send me a picture of your smile, and I'll send you one in return 😉"`,
+        `"You have such a special place in my thoughts today ❤️ What are you up to right at this moment?"`
+      ];
     } else if (/trabaj|ocupaci[oó]n|dedica|profesi[oó]n|hace|work|job|career/i.test(q)) {
-      answer = `💼 **Ocupación de ${client}:**\n- **Actividad:** Conecta en horarios de descanso laboral.\n\n💡 *Respuesta sugerida para enviar:*\n"I know how demanding work can be, but talking to you always brings peace to my day ❤️ How was your workday?"`;
-      hooks = [`"I know how demanding work can be, but talking to you always brings peace to my day ❤️ How was your workday?"`];
+      answer = `💼 **Ocupación de ${client} (Español):**\n- **Actividad:** Conecta en horarios de descanso laboral.\n\n💌 **Mensaje Sugerido en Inglés (Listo para Enviar):**\n"I know how demanding work can be, but talking to you always brings peace to my day ❤️ How was your workday?"\n\n📝 **Traducción al Español:**\n*"Sé lo exigente que puede ser el trabajo, pero hablar contigo siempre trae paz a mi día ❤️ ¿Cómo estuvo tu jornada laboral?"*`;
+      hooks = [
+        `"I know how demanding work can be, but talking to you always brings peace to my day ❤️ How was your workday?"`,
+        `"Make sure to take a nice deep breath and take care of yourself today 😉 What is your favorite way to unwind in the evenings?"`,
+        `"I'm taking a sweet little break and wanted to send you some warmth ❤️ What's keeping you busy today?"`
+      ];
     } else {
       // Ganchos contextuales tácticos
       if (lang === 'pt') {
@@ -594,12 +614,12 @@ app.post('/api/intelligence/query', async (req, res) => {
       } else {
         hooks = [
           `"I was just sitting here thinking about our last conversation, and it brought such a genuine smile to my face ❤️ How are you doing today?"`,
-          `"You have this unique charm that keeps me checking my phone just hoping it's you... What are you up to right now? 😉"`,
-          `"Every message from you truly brightens my whole day. Tell me, what was the best part of your morning?"`
+          `"You have this unique charm that always makes my day brighter... What are you up to right now? 😉"`,
+          `"Every message from you brings such a warm energy. Tell me, what was the best part of your day?"`
         ];
       }
 
-      answer = `Expediente contextual de ${client} (${country} | ${birthDate}):\n\n` +
+      answer = `Expediente contextual de ${client} (Edad: ${birthDate}):\n\n` +
         hooks.map(h => `- ${h}`).join('\n') +
         `\n\n💡 *Estrategia de Continuidad:* Haz preguntas abiertas conectadas a su tiempo libre o sus gustos para incentivar respuestas largas y fluidas.`;
     }

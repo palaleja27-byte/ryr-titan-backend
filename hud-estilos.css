@@ -795,9 +795,33 @@
 .copy-msg-btn { background: #064e3b; color: #34d399; border: 1px solid #10b981; padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; }
 .copy-msg-btn:hover { background: #10b981; color: #060913; }
 
-.intel-quick-actions { display: flex; gap: 5px; overflow-x: auto; padding: 4px 0; }
-.intel-quick-btn { background: #1c2541; border: 1px solid #3a506b; color: #94a3b8; padding: 4px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; cursor: pointer; white-space: nowrap; }
-.intel-quick-btn:hover { background: #8b5cf6; color: #fff; border-color: #8b5cf6; }
+.intel-quick-actions {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 6px !important;
+  padding: 4px 0 !important;
+}
+
+.intel-quick-btn {
+  background: #1c2541 !important;
+  border: 1px solid #3a506b !important;
+  color: #c7d2fe !important;
+  padding: 4px 9px !important;
+  border-radius: 5px !important;
+  font-size: 10.5px !important;
+  font-weight: 800 !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+  transition: all 0.15s ease !important;
+}
+
+.intel-quick-btn:hover {
+  background: #8b5cf6 !important;
+  color: #ffffff !important;
+  border-color: #a78bfa !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.4) !important;
+}
 
 .intel-input-box { padding: 10px 12px; background: #060913; border-top: 1px solid #1e293b; display: flex; gap: 8px; }
 .intel-input-box input { flex: 1; padding: 9px 12px; background: #1c2541; border: 1px solid #3a506b; color: #fff; border-radius: 6px; outline: none; font-size: 12px; }

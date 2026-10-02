@@ -1242,60 +1242,126 @@
 
       const dropdown = document.createElement('div');
       dropdown.className = 'ryr-chat-hooks-dropdown';
-      dropdown.innerHTML = `<div style="color:#94a3b8; font-size:11px; text-align:center; padding:10px;">🤖 Razonando contexto y respuestas en tiempo real (${detectedLang.name})...</div>`;
       toolsWrapper.appendChild(dropdown);
 
       const isSyncedInDb = syncedChatsMemory.has(String(clientId).toLowerCase()) || (clientName && syncedChatsMemory.has(clientName.toLowerCase()));
-      const showMissingHistoryWarning = !isSyncedInDb && clientMessages.length <= 1 && (!extractMailThreadContext() || extractMailThreadContext().length === 0);
+      const showMissingHistoryWarning = !isSyncedInDb && clientMessages.length <= 2 && (!extractMailThreadContext() || extractMailThreadContext().length === 0);
 
       const generateSmartContextualHooks = () => {
         const fullChatString = clientMessages.map(m => m.text).join(' ').toLowerCase();
         const lastMsgLower = (lastClientMsg || '').toLowerCase();
         const rawBodyText = document.body.innerText.toLowerCase();
 
-        // 1. Detectar si hubo reacción a Newsfeed / Post
+        // 1. Detectar si habla de café, comida, bebida o foto de café
+        const hasCoffeeOrFood = /(coffee|caf[eé]|tea|drink|drinking|cup|breakfast|dinner|lunch|comiendo|tomando|delici|taza)/i.test(fullChatString) || /(coffee|caf[eé]|tea|cup)/i.test(lastMsgLower);
+
+        // 2. Detectar si pregunta si nos vamos o si estamos ocupados
+        const hasLeavingOrBusy = /(leaving|leaving already|have something to do|going away|say goodbye|busy|ocupad|te vas|tienes algo que hacer|te tienes que ir)/i.test(lastMsgLower) || /(leaving|have something to do)/i.test(fullChatString);
+
+        // 3. Detectar si hubo reacción a Newsfeed / Post
         const hasNewsfeedLiked = rawBodyText.includes('liked the newsfeed post') || rawBodyText.includes('liked your post') || lastMsgLower.includes('newsfeed') || lastMsgLower.includes('post');
 
-        // 2. Detectar piropos, elogios o nombres cariñosos
+        // 4. Detectar piropos, elogios o nombres cariñosos
         const isCompliment = /(love|blonde|beautiful|gorgeous|sexy|angel|queen|honey|darling|sweetheart|linda|hermosa|rubia|amor|cielo|coraz[oó]n|princesa|preciosa)/i.test(lastMsgLower);
 
-        // 3. Detectar saludo o pregunta de cómo está
+        // 5. Detectar saludo o pregunta de cómo está
         const isGreeting = /(how are you|how is your day|how are things|what are you up to|hello|hi\b|hey\b|good morning|good afternoon|good evening|c[oó]mo est[aá]s|qu[eé] tal|hola)/i.test(lastMsgLower);
-
-        // 4. Detectar trabajo o rutina
-        const isWork = /(work|job|busy|tired|day at work|hard day|office|boss|shift|trabaj|ocupad|cansad|jornada)/i.test(lastMsgLower);
 
         let options = [];
 
-        if (hasNewsfeedLiked) {
+        if (hasCoffeeOrFood || (hasLeavingOrBusy && hasCoffeeOrFood)) {
           if (detectedLang.code === 'es') {
             options = [
               {
-                target: `Vi que te gustó mi publicación... Me alegra muchísimo que hayas conectado con ese pensamiento ❤️ ¿Qué tipo de momentos te transmiten más paz?`,
-                es: `Conexión emocional directa con la publicación de fotos/noticias y pregunta de intimidad.`
+                target: `¡Ese café se ve delicioso! ❤️ Jamás me iría sin antes tomarme un lindo momento para hablar contigo... ¿Cómo va tu tarde?`,
+                es: `Le aseguras que no te vas, elogias su café y le das atención cálida y exclusiva.`
               },
               {
-                target: `Me encanta saber que estás atento a mis pensamientos y fotos 😉 ¿Qué fue lo primero que sentiste al verla?`,
-                es: `Halago sutil sobre su atención hacia tu contenido y llamada a compartir sensaciones.`
+                target: `¡Ver tu café me dio antojo de uno a mí también! 😉 Cuéntame, ¿estás disfrutando de un momento relajante hoy?`,
+                es: `Complicidad divertida sobre el café y pregunta abierta sobre su descanso.`
               },
               {
-                target: `Esa foto guarda un recuerdo muy especial para mí ✨ Dime, ¿qué fue lo más bonito o interesante que te ocurrió hoy?`,
-                es: `Conversación fluida sobre recuerdos y apertura para que cuente su día.`
+                target: `Disfruta cada sorbo de ese café ❤️ Siempre tengo tiempo para ti... ¿Qué planes tienes para el resto de tu día?`,
+                es: `Validas tu interés sincero en ella y abres conversación sobre su rutina.`
               }
             ];
           } else if (detectedLang.code === 'pt') {
             options = [
               {
-                target: `Vi que você curtiu minha publicação... Fico muito feliz que tenha se identificado com esse pensamento ❤️ Que tipo de momentos te trazem mais paz?`,
-                es: `Conexión emocional sobre el post.`
+                target: `Esse café parece delicioso! ❤️ Eu jamais iria embora sem antes ter um momento especial com você... Como está sendo sua tarde?`,
+                es: `Aseguras tu presencia y elogias su café.`
               },
               {
-                target: `Adoro saber que você acompanha meus pensamentos e fotos 😉 O que você sentiu quando a viu?`,
-                es: `Halago sobre su atención al perfil.`
+                target: `Ver o seu café me deu uma vontade de tomar um também! 😉 Me conta, está tendo um momento tranquilo hoje?`,
+                es: `Complicidad sobre el café y su día.`
               },
               {
-                target: `Essa foto guarda uma lembrança muito especial para mim ✨ Me conta, qual foi a melhor parte do seu dia hoje?`,
-                es: `Pregunta abierta sobre su día.`
+                target: `Aproveite cada gole desse café ❤️ Sempre tenho tempo para falar com você... O que você vai fazer mais tarde?`,
+                es: `Atención exclusiva y pregunta sobre planes.`
+              }
+            ];
+          } else {
+            options = [
+              {
+                target: `That coffee looks so delicious! ❤️ I could never just leave without spending some sweet time talking with you... How is your afternoon going?`,
+                es: `Le aseguras que te quedas a hablar, elogias su foto de café y preguntas por su tarde.`
+              },
+              {
+                target: `Seeing your coffee actually made me crave one too 😉 Tell me, are you enjoying a nice and relaxing afternoon?`,
+                es: `Complicidad coqueta sobre el café y curiosidad sobre su momento de relax.`
+              },
+              {
+                target: `Enjoy every single sip of that delicious coffee! ❤️ I always love making time just for you... What are your plans for the rest of today?`,
+                es: `Validación afectiva y apertura de diálogo sobre su rutina.`
+              }
+            ];
+          }
+        } else if (hasLeavingOrBusy) {
+          if (detectedLang.code === 'es') {
+            options = [
+              {
+                target: `¡Para nada! Siempre tengo un momento especial reservado solo para ti ❤️ Dime, ¿qué estás haciendo justo ahora?`,
+                es: `Le confirmas que estás disponible y muestras interés genuino.`
+              },
+              {
+                target: `Nunca estoy demasiado ocupada para alguien que me hace sonreír tanto 😉 ¿Cómo te estás sintiendo hoy?`,
+                es: `Elogio afectuoso y pregunta sobre sus emociones.`
+              },
+              {
+                target: `Estaba tomándome una pequeña pausa, pero hablar contigo es mi momento favorito del día ✨ ¿Qué tienes planeado para hoy?`,
+                es: `Validación de la conexión y apertura de conversación.`
+              }
+            ];
+          } else {
+            options = [
+              {
+                target: `Not at all! I always want to make a special moment just to chat with you ❤️ Tell me, what's on your mind right now?`,
+                es: `Le aseguras tu atención y preguntas qué piensa en este momento.`
+              },
+              {
+                target: `I'm never too busy for someone who brings such a genuine smile to my face 😉 How are you feeling today?`,
+                es: `Halago dulce y pregunta afectuosa sobre su estado de ánimo.`
+              },
+              {
+                target: `I was just taking a little breather, but hearing from you is always the highlight of my day ✨ What are you up to?`,
+                es: `Creación de complicidad romántica y pregunta cotidiana.`
+              }
+            ];
+          }
+        } else if (hasNewsfeedLiked) {
+          if (detectedLang.code === 'es') {
+            options = [
+              {
+                target: `Vi que te gustó mi publicación... Me alegra muchísimo que hayas conectado con ese pensamiento ❤️ ¿Qué tipo de momentos te transmiten más paz?`,
+                es: `Conexión emocional directa con la publicación y pregunta de intimidad.`
+              },
+              {
+                target: `Me encanta saber que estás atento a mis pensamientos y fotos 😉 ¿Qué fue lo primero que sentiste al verla?`,
+                es: `Halago sutil sobre su atención y llamada a compartir sensaciones.`
+              },
+              {
+                target: `Esa foto guarda un recuerdo muy especial para mí ✨ Dime, ¿qué fue lo más bonito que te ocurrió hoy?`,
+                es: `Conversación fluida sobre recuerdos y apertura de día.`
               }
             ];
           } else {
@@ -1330,21 +1396,6 @@
                 es: `Gancho de reciprocidad e intercambio de fotos cotidianas.`
               }
             ];
-          } else if (detectedLang.code === 'pt') {
-            options = [
-              {
-                target: `Você sempre sabe como me fazer sorrir com suas palavras doces 😉 Como está sendo o seu dia hoje? ❤️`,
-                es: `Devolución cariñosa y pregunta sobre su día.`
-              },
-              {
-                target: `Ter notícias suas é sempre a melhor parte do meu dia ❤️ Me conta, o que você está fazendo agora?`,
-                es: `Validación afectiva y curiosidad.`
-              },
-              {
-                target: `Estava aqui sorrindo ao pensar em você! Me manda uma foto do seu sorriso agora e eu te mando uma especial em troca 😉 Combinado?`,
-                es: `Gancho de intercambio de fotos.`
-              }
-            ];
           } else {
             options = [
               {
@@ -1377,21 +1428,6 @@
                 es: `Creación de complicidad y enfoque en emociones positivas.`
               }
             ];
-          } else if (detectedLang.code === 'pt') {
-            options = [
-              {
-                target: `Estou muito bem, e ver sua mensagem deixou meu dia bem mais especial ❤️ Como começou a sua manhã?`,
-                es: `Respuesta amable y pregunta cotidiana.`
-              },
-              {
-                target: `Estava tirando uma pausa e torcendo para falar com você 😉 O que mais tem ocupado seu tempo hoje?`,
-                es: `Interés en su rutina.`
-              },
-              {
-                target: `O tempo sempre passa mais leve quando conversamos ✨ Me conta algo que te fez sorrir hoje.`,
-                es: `Enfoque en emociones positivas.`
-              }
-            ];
           } else {
             options = [
               {
@@ -1409,7 +1445,7 @@
             ];
           }
         } else {
-          // Apertura para usuario nuevo (Cold / Atracción pura - Cero ubicaciones / Cero TM)
+          // Apertura para usuario nuevo (Atracción pura - Cero ubicaciones / Cero TM)
           if (detectedLang.code === 'es') {
             options = [
               {
@@ -1423,21 +1459,6 @@
               {
                 target: `Tu sonrisa de verdad me llamó la atención ✨ ¿Qué es algo que te apasione profundamente en la vida?`,
                 es: `Conversación profunda sobre pasiones sin compromisos geográficos.`
-              }
-            ];
-          } else if (detectedLang.code === 'pt') {
-            options = [
-              {
-                target: `Você tem um olhar tão doce e uma energia muito boa nas suas fotos ❤️ Me diz, como você mais gosta de relaxar num dia livre?`,
-                es: `Atracción inicial sobre hobbies.`
-              },
-              {
-                target: `Tive uma intuição boa de vir te dar um oi hoje 😉 Me conta um segredo ou sonho seu que pouca gente conhece...`,
-                es: `Gancho de intriga y curiosidad.`
-              },
-              {
-                target: `O seu sorriso realmente me chamou a atenção ✨ O que é algo que te apaixona de verdade na vida?`,
-                es: `Pregunta sobre sus pasiones personales.`
               }
             ];
           } else {
@@ -1470,7 +1491,7 @@
         if (showMissingHistoryWarning) {
           warningHtml = `
             <div class="ryr-no-info-warning">
-              <span style="font-size:10.5px; line-height:1.3;">⚠️ <b>Sin historial previo subido:</b> Sube las conversaciones para contexto 360°. Generando opciones seguras:</span>
+              <span style="font-size:10.5px; line-height:1.3;">⚠️ <b>Sin historial previo subido:</b> Sube las conversaciones para contexto 360°. Opciones seguras:</span>
               <button class="ryr-no-info-btn" id="ryr-quick-sync-btn">⚡ Subir Ahora</button>
             </div>
           `;
@@ -1525,44 +1546,8 @@
         });
       };
 
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
-
-        const queryGoal = hasConversationHistory
-          ? `dame 3 respuestas magnéticas en ${detectedLang.name} para responder a: "${lastClientMsg}" sin nombrar ubicaciones, países ni citas presenciales`
-          : `dame 3 ganchos magnéticos de apertura en ${detectedLang.name} sin nombrar ubicaciones, países ni citas presenciales`;
-
-        const res = await fetch(`${API_URL}/api/intelligence/query`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            query: queryGoal,
-            clientName,
-            profileName: sessionData.profileName,
-            clientId,
-            bioData,
-            targetLang: detectedLang.code,
-            hasHistory: hasConversationHistory,
-            liveMarkdown: buildCurrentMarkdownTranscript(clientName, clientId, bioData, extractMailThreadContext())
-          })
-        });
-        clearTimeout(timeoutId);
-
-        const data = await res.json();
-        const cleanHooks = (data.hooks && Array.isArray(data.hooks) && data.hooks.length > 0)
-          ? data.hooks.map(h => ({ target: h.replace(/^"|"$/g, '').trim(), es: 'Generado con contexto del servidor.' }))
-          : null;
-
-        if (cleanHooks && cleanHooks.length > 0) {
-          renderHooks(cleanHooks.slice(0, 3));
-        } else {
-          renderHooks(generateSmartContextualHooks());
-        }
-      } catch (err) {
-        renderHooks(generateSmartContextualHooks());
-      }
+      // Generación instantánea en 0ms con razonamiento contextual de 3 opciones
+      renderHooks(generateSmartContextualHooks());
     };
   }
 
@@ -2827,17 +2812,16 @@
     });
   }
 
-  // 18. BARRA SUPERIOR HUD
+  // 18. BARRA SUPERIOR HUD (CERO PARPADEO & CERO BAILE DE BOTONES)
   function renderFloatingBar() {
     let bar = document.getElementById('ryr-titan-bar');
     if (!bar) {
       bar = document.createElement('div');
       bar.id = 'ryr-titan-bar';
       document.body.prepend(bar);
+      document.body.style.setProperty('margin-top', '38px', 'important');
+      bar.style.setProperty('z-index', '2147483647', 'important');
     }
-
-    document.body.style.setProperty('margin-top', '38px', 'important');
-    bar.style.setProperty('z-index', '2147483647', 'important');
 
     const isAfk = isOperatorAfk();
     const afkText = isAfk ? `💤 INACTIVO (${Math.floor(getIdleSeconds() / 60)}m)` : `⚡ Activo`;
@@ -2847,67 +2831,95 @@
     const prospectClass = prospect.isCompleted ? 'green-letters' : 'primary';
     const prospectTimeText = prospect.isCompleted ? 'OK' : prospect.formattedTime;
 
-    bar.innerHTML = `
-      <div class="ryr-section ryr-section-metrics">
-        <span class="ryr-badge primary ryr-badge-operator ryr-hide-on-mobile">👤 ${sessionData.operator || 'walther'} [${sessionData.shift || 'Mañana'}]</span>
-        <span class="ryr-badge ryr-badge-profile ryr-hide-on-mobile">🎯 ${sessionData.profileName || 'HORACIO'}</span>
-        <span class="ryr-badge ${afkClass} ryr-badge-afk ryr-hide-on-mobile">${afkText}</span>
-        <span class="ryr-badge ${prospectClass}">🎯 Tráfico: ${prospectTimeText} [${prospect.count}/${prospect.quota}]</span>
-        <span class="ryr-badge ryr-badge-speed ryr-hide-on-mobile" title="Latencia de procesamiento DOM">${PerformanceSentinel.lastLoopDurationMs}ms Lag</span>
-      </div>
-      <div class="ryr-section ryr-section-actions">
-        <button id="ryr-btn-open-sup-chat" class="ryr-btn-sup-chat">💬 Chat Sup</button>
-        <button id="ryr-btn-save-handover" class="ryr-btn-handover" style="background:rgba(6,78,59,0.5); color:#34d399; border:1px solid rgba(16,185,129,0.5); padding:3px 8px; border-radius:4px; font-weight:bold; font-size:11px; cursor:pointer;">📋 Entregar Turno</button>
-        <button id="ryr-btn-view-handover" class="ryr-btn-handover" style="background:rgba(30,27,75,0.5); color:#c4b5fd; border:1px solid rgba(139,92,246,0.5); padding:3px 8px; border-radius:4px; font-weight:bold; font-size:11px; cursor:pointer;">📖 Ver Relevo</button>
-        <button id="ryr-btn-open-intel" class="ryr-btn-intel">🧠 Investigar</button>
-        <span class="ryr-badge green-letters">✉️ Read: ${totalGlobalReadLetters}</span>
-        <button id="ryr-btn-disconnect" class="ryr-btn-logout">🔴 Salir</button>
-      </div>
-    `;
+    if (!bar.hasAttribute('data-initialized')) {
+      bar.setAttribute('data-initialized', 'true');
+      bar.innerHTML = `
+        <div class="ryr-section ryr-section-metrics">
+          <span id="ryr-badge-operator" class="ryr-badge primary ryr-badge-operator ryr-hide-on-mobile">👤 ${sessionData.operator || 'walther'} [${sessionData.shift || 'Mañana'}]</span>
+          <span id="ryr-badge-profile" class="ryr-badge ryr-badge-profile ryr-hide-on-mobile">🎯 ${sessionData.profileName || 'HORACIO'}</span>
+          <span id="ryr-badge-afk" class="ryr-badge ${afkClass} ryr-badge-afk ryr-hide-on-mobile">${afkText}</span>
+          <span id="ryr-badge-traffic" class="ryr-badge ${prospectClass}">🎯 Tráfico: ${prospectTimeText} [${prospect.count}/${prospect.quota}]</span>
+          <span id="ryr-badge-lag" class="ryr-badge ryr-badge-speed ryr-hide-on-mobile" title="Latencia de procesamiento DOM">${PerformanceSentinel.lastLoopDurationMs}ms Lag</span>
+        </div>
+        <div class="ryr-section ryr-section-actions">
+          <button id="ryr-btn-open-sup-chat" class="ryr-btn-sup-chat">💬 Chat Sup</button>
+          <button id="ryr-btn-save-handover" class="ryr-btn-handover" style="background:rgba(6,78,59,0.5); color:#34d399; border:1px solid rgba(16,185,129,0.5); padding:3px 8px; border-radius:4px; font-weight:bold; font-size:11px; cursor:pointer;">📋 Entregar Turno</button>
+          <button id="ryr-btn-view-handover" class="ryr-btn-handover" style="background:rgba(30,27,75,0.5); color:#c4b5fd; border:1px solid rgba(139,92,246,0.5); padding:3px 8px; border-radius:4px; font-weight:bold; font-size:11px; cursor:pointer;">📖 Ver Relevo</button>
+          <button id="ryr-btn-open-intel" class="ryr-btn-intel">🧠 Investigar</button>
+          <span id="ryr-badge-read" class="ryr-badge green-letters">✉️ Read: ${totalGlobalReadLetters}</span>
+          <button id="ryr-btn-disconnect" class="ryr-btn-logout">🔴 Salir</button>
+        </div>
+      `;
 
-    const btnSupChat = document.getElementById('ryr-btn-open-sup-chat');
-    if (btnSupChat) btnSupChat.onclick = toggleSupervisorChatModal;
+      const btnSupChat = document.getElementById('ryr-btn-open-sup-chat');
+      if (btnSupChat) btnSupChat.onclick = toggleSupervisorChatModal;
 
-    const btnSaveHandover = document.getElementById('ryr-btn-save-handover');
-    if (btnSaveHandover) btnSaveHandover.onclick = triggerSaveShiftHandover;
+      const btnSaveHandover = document.getElementById('ryr-btn-save-handover');
+      if (btnSaveHandover) btnSaveHandover.onclick = triggerSaveShiftHandover;
 
-    const btnViewHandover = document.getElementById('ryr-btn-view-handover');
-    if (btnViewHandover) btnViewHandover.onclick = triggerViewShiftHandover;
+      const btnViewHandover = document.getElementById('ryr-btn-view-handover');
+      if (btnViewHandover) btnViewHandover.onclick = triggerViewShiftHandover;
 
-    const btnOpenIntel = document.getElementById('ryr-btn-open-intel');
-    if (btnOpenIntel) {
-      btnOpenIntel.onclick = () => {
-        const panel = document.getElementById('ryr-intel-panel');
-        if (panel) {
-          panel.classList.toggle('open');
-          loadActiveDossier();
-        }
-      };
-    }
-
-    const btnLogout = document.getElementById('ryr-btn-disconnect');
-    if (btnLogout) {
-      btnLogout.onclick = () => {
-        if (confirm('¿Deseas finalizar tu turno y desconectar el monitoreo?')) {
-          fetch(`${API_URL}/api/telemetry`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              operator: sessionData.operator,
-              shift: sessionData.shift,
-              profile: sessionData.profileName,
-              status: 'OFFLINE',
-              timestamp: Date.now()
-            })
-          }).catch(() => {});
-
-          if (isContextValid()) {
-            chrome.storage.local.set({ monitoringActive: false }, () => {
-              removeFloatingBar();
-            });
+      const btnOpenIntel = document.getElementById('ryr-btn-open-intel');
+      if (btnOpenIntel) {
+        btnOpenIntel.onclick = () => {
+          const panel = document.getElementById('ryr-intel-panel');
+          if (panel) {
+            panel.classList.toggle('open');
+            loadActiveDossier();
           }
-        }
-      };
+        };
+      }
+
+      const btnLogout = document.getElementById('ryr-btn-disconnect');
+      if (btnLogout) {
+        btnLogout.onclick = () => {
+          if (confirm('¿Deseas finalizar tu turno y desconectar el monitoreo?')) {
+            fetch(`${API_URL}/api/telemetry`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                operator: sessionData.operator,
+                shift: sessionData.shift,
+                profile: sessionData.profileName,
+                status: 'OFFLINE',
+                timestamp: Date.now()
+              })
+            }).catch(() => {});
+
+            if (isContextValid()) {
+              chrome.storage.local.set({ monitoringActive: false }, () => {
+                removeFloatingBar();
+              });
+            }
+          }
+        };
+      }
+    } else {
+      // ACTUALIZACIÓN IN-PLACE ULTRA-ESTABLE (CERO REFLOW, CERO PARPADEO)
+      const bOp = document.getElementById('ryr-badge-operator');
+      if (bOp) bOp.innerText = `👤 ${sessionData.operator || 'walther'} [${sessionData.shift || 'Mañana'}]`;
+
+      const bProf = document.getElementById('ryr-badge-profile');
+      if (bProf) bProf.innerText = `🎯 ${sessionData.profileName || 'HORACIO'}`;
+
+      const bAfk = document.getElementById('ryr-badge-afk');
+      if (bAfk) {
+        bAfk.className = `ryr-badge ${afkClass} ryr-badge-afk ryr-hide-on-mobile`;
+        bAfk.innerText = afkText;
+      }
+
+      const bTraf = document.getElementById('ryr-badge-traffic');
+      if (bTraf) {
+        bTraf.className = `ryr-badge ${prospectClass}`;
+        bTraf.innerText = `🎯 Tráfico: ${prospectTimeText} [${prospect.count}/${prospect.quota}]`;
+      }
+
+      const bLag = document.getElementById('ryr-badge-lag');
+      if (bLag) bLag.innerText = `${PerformanceSentinel.lastLoopDurationMs}ms Lag`;
+
+      const bRead = document.getElementById('ryr-badge-read');
+      if (bRead) bRead.innerText = `✉️ Read: ${totalGlobalReadLetters}`;
     }
   }
 
