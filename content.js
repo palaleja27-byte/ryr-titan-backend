@@ -297,10 +297,22 @@
       const res = await fetch(`${API_URL}/api/supervisor/messages/${encodeURIComponent(rawOp)}?role=${isSupervisorChatOpen ? 'OPERATOR' : ''}`);
       const data = await res.json();
       if (data && Array.isArray(data.messages)) {
-        supervisorMessagesHistory = data.messages;
+        const serverMessages = [...data.messages];
+        const seenIds = new Set(serverMessages.map(m => String(m.id)));
+        
+        // Mantener mensajes locales optimistas no confirmados
+        supervisorMessagesHistory.forEach(localM => {
+          if (!seenIds.has(String(localM.id))) {
+            serverMessages.push(localM);
+            seenIds.add(String(localM.id));
+          }
+        });
+
+        serverMessages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        supervisorMessagesHistory = serverMessages;
         renderSupervisorChatMessages();
 
-        const unreadSupMessages = data.messages.filter(m => m.sender === 'SUPERVISOR' && !m.read && !seenSupervisorMessageIds.has(m.id));
+        const unreadSupMessages = supervisorMessagesHistory.filter(m => m.sender === 'SUPERVISOR' && !m.read && !seenSupervisorMessageIds.has(m.id));
         const supChatBtn = document.getElementById('ryr-btn-open-sup-chat');
         if (supChatBtn) {
           if (unreadSupMessages.length > 0 && !isSupervisorChatOpen) {

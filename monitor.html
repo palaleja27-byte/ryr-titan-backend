@@ -1110,11 +1110,13 @@
 
     // 6. CHAT DIRECTO CON OPERADOR (BIDIRECCIONAL Y EDITABLE EN TIEMPO REAL)
     let chatStreamPollInterval = null;
+    let localChatMessagesMap = new Map(); // operatorKey -> Array of messages
 
     window.openDirectComms = (opName) => {
       activeChatOperator = (opName || '').trim();
       document.getElementById('chat-target-name').innerText = `💬 COMMS CON: ${activeChatOperator.toUpperCase()}`;
       document.getElementById('live-chat-drawer').style.display = 'flex';
+      renderLocalChatMessages();
       refreshChatStream();
 
       if (chatStreamPollInterval) clearInterval(chatStreamPollInterval);
@@ -1122,7 +1124,7 @@
         if (document.getElementById('live-chat-drawer').style.display !== 'none') {
           refreshChatStream();
         }
-      }, 2000);
+      }, 1500);
     };
 
     window.closeDirectComms = () => {
@@ -1133,41 +1135,64 @@
       }
     };
 
+    function renderLocalChatMessages() {
+      const stream = document.getElementById('chat-stream-box');
+      if (!stream || !activeChatOperator) return;
+
+      const opKey = activeChatOperator.toLowerCase().replace(/\[.*?\]/g, '').trim();
+      const messages = localChatMessagesMap.get(opKey) || [];
+
+      if (messages.length === 0) {
+        stream.innerHTML = '<div style="color:var(--text-muted); font-size:11px; text-align:center; padding:20px;">Sin mensajes previos. Inicia la comunicación directa abajo.</div>';
+        return;
+      }
+
+      stream.innerHTML = messages.map(m => {
+        const isSup = m.sender === 'SUPERVISOR';
+        const timeStr = m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+        const editedTag = m.isEdited ? '<span style="font-size:9.5px; color:#fbbf24; font-style:italic;"> (editado)</span>' : '';
+        const checkmark = isSup 
+          ? (m.read ? '<span style="color:#22c55e; font-weight:900; font-size:11px; margin-left:3px;" title="Leído por el operador">✓✓</span>' : '<span style="color:#94a3b8; font-weight:900; font-size:11px; margin-left:3px;" title="Entregado">✓</span>')
+          : (m.read ? '<span style="color:#22c55e; font-weight:900; font-size:11px; margin-left:3px;" title="Leído">✓✓</span>' : '<span style="color:#94a3b8; font-weight:900; font-size:11px; margin-left:3px;" title="Recibido">✓</span>');
+        
+        return `
+          <div style="align-self:${isSup ? 'flex-end' : 'flex-start'}; background:${isSup ? '#1e1b4b' : '#064e3b'}; border:1px solid ${isSup ? '#6366f1' : '#10b981'}; padding:8px 11px; border-radius:8px; max-width:85%; position:relative;" id="msg-card-${m.id}">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:9.5px; opacity:0.85; font-weight:bold; margin-bottom:3px;">
+              <span>${isSup ? '👮 Supervisor' : `💼 ${activeChatOperator}`} ${timeStr ? '• ' + timeStr : ''} ${editedTag}</span>
+              <div style="display:flex; align-items:center; gap:3px;">
+                <button type="button" onclick="editSupervisorMessage('${m.id}', '${(m.text || '').replace(/'/g, "\\'")}')" style="background:transparent; border:none; color:#a5b4fc; cursor:pointer; font-size:10.5px; padding:0 2px;" title="Editar mensaje">✏️</button>
+                ${checkmark}
+              </div>
+            </div>
+            <div style="font-size:11.5px; word-break:break-word; line-height:1.4;">${m.text}</div>
+          </div>
+        `;
+      }).join('');
+      stream.scrollTop = stream.scrollHeight;
+    }
+
     async function refreshChatStream() {
       if (!activeChatOperator) return;
+      const opKey = activeChatOperator.toLowerCase().replace(/\[.*?\]/g, '').trim();
       try {
         const res = await fetch(`${API_URL}/api/supervisor/messages/${encodeURIComponent(activeChatOperator)}?role=SUPERVISOR`);
         const data = await res.json();
-        const stream = document.getElementById('chat-stream-box');
-        if (!stream) return;
-
-        if (!data.messages || data.messages.length === 0) {
-          stream.innerHTML = '<div style="color:var(--text-muted); font-size:11px; text-align:center; padding:20px;">Sin mensajes previos. Inicia la comunicación directa abajo.</div>';
-          return;
-        }
-
-        stream.innerHTML = (data.messages || []).map(m => {
-          const isSup = m.sender === 'SUPERVISOR';
-          const timeStr = m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-          const editedTag = m.isEdited ? '<span style="font-size:9.5px; color:#fbbf24; font-style:italic;"> (editado)</span>' : '';
-          const checkmark = isSup 
-            ? (m.read ? '<span style="color:#22c55e; font-weight:900; font-size:11px; margin-left:3px;" title="Leído por el operador">✓✓</span>' : '<span style="color:#94a3b8; font-weight:900; font-size:11px; margin-left:3px;" title="Entregado">✓</span>')
-            : (m.read ? '<span style="color:#22c55e; font-weight:900; font-size:11px; margin-left:3px;" title="Leído">✓✓</span>' : '<span style="color:#94a3b8; font-weight:900; font-size:11px; margin-left:3px;" title="Recibido">✓</span>');
+        if (data && Array.isArray(data.messages)) {
+          let currentList = localChatMessagesMap.get(opKey) || [];
+          const seenIds = new Set(data.messages.map(m => String(m.id)));
           
-          return `
-            <div style="align-self:${isSup ? 'flex-end' : 'flex-start'}; background:${isSup ? '#1e1b4b' : '#064e3b'}; border:1px solid ${isSup ? '#6366f1' : '#10b981'}; padding:8px 11px; border-radius:8px; max-width:85%; position:relative;" id="msg-card-${m.id}">
-              <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:9.5px; opacity:0.85; font-weight:bold; margin-bottom:3px;">
-                <span>${isSup ? '👮 Supervisor' : `💼 ${activeChatOperator}`} ${timeStr ? '• ' + timeStr : ''} ${editedTag}</span>
-                <div style="display:flex; align-items:center; gap:3px;">
-                  <button type="button" onclick="editSupervisorMessage('${m.id}', '${m.text.replace(/'/g, "\\'")}')" style="background:transparent; border:none; color:#a5b4fc; cursor:pointer; font-size:10.5px; padding:0 2px;" title="Editar mensaje">✏️</button>
-                  ${checkmark}
-                </div>
-              </div>
-              <div style="font-size:11.5px; word-break:break-word; line-height:1.4;">${m.text}</div>
-            </div>
-          `;
-        }).join('');
-        stream.scrollTop = stream.scrollHeight;
+          // Mantener mensajes locales optimistas no confirmados aún
+          currentList.forEach(localM => {
+            if (!seenIds.has(String(localM.id))) {
+              data.messages.push(localM);
+              seenIds.add(String(localM.id));
+            }
+          });
+
+          data.messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+          localChatMessagesMap.set(opKey, data.messages);
+          renderLocalChatMessages();
+        }
       } catch (err) {}
     }
 
@@ -1177,6 +1202,16 @@
       const cleanNewText = newText.trim();
       if (!cleanNewText || cleanNewText === currentText) return;
 
+      const opKey = activeChatOperator.toLowerCase().replace(/\[.*?\]/g, '').trim();
+      let list = localChatMessagesMap.get(opKey) || [];
+      list.forEach(m => {
+        if (String(m.id) === String(msgId)) {
+          m.text = cleanNewText;
+          m.isEdited = true;
+        }
+      });
+      renderLocalChatMessages();
+
       try {
         await fetch(`${API_URL}/api/supervisor/edit-message`, {
           method: 'POST',
@@ -1184,9 +1219,7 @@
           body: JSON.stringify({ id: msgId, text: cleanNewText, operatorName: activeChatOperator })
         });
         refreshChatStream();
-      } catch (e) {
-        alert('Error al editar mensaje');
-      }
+      } catch (e) {}
     };
 
     const sendSupervisorChatAction = async () => {
@@ -1195,12 +1228,28 @@
       if (!text || !activeChatOperator) return;
 
       input.value = '';
-      await fetch(`${API_URL}/api/supervisor/send-message`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ operatorName: activeChatOperator, text })
+      const opKey = activeChatOperator.toLowerCase().replace(/\[.*?\]/g, '').trim();
+      const tempId = `sup_tmp_${Date.now()}`;
+      let list = localChatMessagesMap.get(opKey) || [];
+      list.push({
+        id: tempId,
+        sender: 'SUPERVISOR',
+        text: text,
+        timestamp: Date.now(),
+        read: false,
+        isEdited: false
       });
-      refreshChatStream();
+      localChatMessagesMap.set(opKey, list);
+      renderLocalChatMessages();
+
+      try {
+        await fetch(`${API_URL}/api/supervisor/send-message`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ operatorName: activeChatOperator, text })
+        });
+        refreshChatStream();
+      } catch (e) {}
     };
 
     document.getElementById('btn-send-chat-msg').onclick = sendSupervisorChatAction;
