@@ -1108,45 +1108,108 @@
       loadFines();
     };
 
-    // 6. CHAT DIRECTO CON OPERADOR
+    // 6. CHAT DIRECTO CON OPERADOR (BIDIRECCIONAL Y EDITABLE EN TIEMPO REAL)
+    let chatStreamPollInterval = null;
+
     window.openDirectComms = (opName) => {
-      activeChatOperator = opName;
-      document.getElementById('chat-target-name').innerText = `💬 COMMS CON: ${opName.toUpperCase()}`;
+      activeChatOperator = (opName || '').trim();
+      document.getElementById('chat-target-name').innerText = `💬 COMMS CON: ${activeChatOperator.toUpperCase()}`;
       document.getElementById('live-chat-drawer').style.display = 'flex';
       refreshChatStream();
+
+      if (chatStreamPollInterval) clearInterval(chatStreamPollInterval);
+      chatStreamPollInterval = setInterval(() => {
+        if (document.getElementById('live-chat-drawer').style.display !== 'none') {
+          refreshChatStream();
+        }
+      }, 2000);
+    };
+
+    window.closeDirectComms = () => {
+      document.getElementById('live-chat-drawer').style.display = 'none';
+      if (chatStreamPollInterval) {
+        clearInterval(chatStreamPollInterval);
+        chatStreamPollInterval = null;
+      }
     };
 
     async function refreshChatStream() {
       if (!activeChatOperator) return;
-      const res = await fetch(`${API_URL}/api/supervisor/messages/${activeChatOperator}`);
-      const data = await res.json();
-      const stream = document.getElementById('chat-stream-box');
+      try {
+        const res = await fetch(`${API_URL}/api/supervisor/messages/${encodeURIComponent(activeChatOperator)}?role=SUPERVISOR`);
+        const data = await res.json();
+        const stream = document.getElementById('chat-stream-box');
+        if (!stream) return;
 
-      stream.innerHTML = (data.messages || []).map(m => {
-        const isSup = m.sender === 'SUPERVISOR';
-        return `
-          <div style="align-self:${isSup ? 'flex-end' : 'flex-start'}; background:${isSup ? '#1e1b4b' : '#064e3b'}; border:1px solid ${isSup ? '#6366f1' : '#10b981'}; padding:6px 10px; border-radius:6px; max-width:85%;">
-            <div style="font-size:9.5px; opacity:0.75; font-weight:bold;">${isSup ? '👮 Supervisor' : `💼 ${activeChatOperator}`}</div>
-            <div>${m.text}</div>
-          </div>
-        `;
-      }).join('');
-      stream.scrollTop = stream.scrollHeight;
+        if (!data.messages || data.messages.length === 0) {
+          stream.innerHTML = '<div style="color:var(--text-muted); font-size:11px; text-align:center; padding:20px;">Sin mensajes previos. Inicia la comunicación directa abajo.</div>';
+          return;
+        }
+
+        stream.innerHTML = (data.messages || []).map(m => {
+          const isSup = m.sender === 'SUPERVISOR';
+          const timeStr = m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+          const editedTag = m.isEdited ? '<span style="font-size:9.5px; color:#fbbf24; font-style:italic;"> (editado)</span>' : '';
+          const checkmark = isSup 
+            ? (m.read ? '<span style="color:#22c55e; font-weight:900; font-size:11px; margin-left:3px;" title="Leído por el operador">✓✓</span>' : '<span style="color:#94a3b8; font-weight:900; font-size:11px; margin-left:3px;" title="Entregado">✓</span>')
+            : (m.read ? '<span style="color:#22c55e; font-weight:900; font-size:11px; margin-left:3px;" title="Leído">✓✓</span>' : '<span style="color:#94a3b8; font-weight:900; font-size:11px; margin-left:3px;" title="Recibido">✓</span>');
+          
+          return `
+            <div style="align-self:${isSup ? 'flex-end' : 'flex-start'}; background:${isSup ? '#1e1b4b' : '#064e3b'}; border:1px solid ${isSup ? '#6366f1' : '#10b981'}; padding:8px 11px; border-radius:8px; max-width:85%; position:relative;" id="msg-card-${m.id}">
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:9.5px; opacity:0.85; font-weight:bold; margin-bottom:3px;">
+                <span>${isSup ? '👮 Supervisor' : `💼 ${activeChatOperator}`} ${timeStr ? '• ' + timeStr : ''} ${editedTag}</span>
+                <div style="display:flex; align-items:center; gap:3px;">
+                  <button type="button" onclick="editSupervisorMessage('${m.id}', '${m.text.replace(/'/g, "\\'")}')" style="background:transparent; border:none; color:#a5b4fc; cursor:pointer; font-size:10.5px; padding:0 2px;" title="Editar mensaje">✏️</button>
+                  ${checkmark}
+                </div>
+              </div>
+              <div style="font-size:11.5px; word-break:break-word; line-height:1.4;">${m.text}</div>
+            </div>
+          `;
+        }).join('');
+        stream.scrollTop = stream.scrollHeight;
+      } catch (err) {}
     }
 
-    document.getElementById('btn-send-chat-msg').onclick = async () => {
+    window.editSupervisorMessage = async (msgId, currentText) => {
+      const newText = prompt('Editar mensaje de supervisión:', currentText);
+      if (newText === null) return;
+      const cleanNewText = newText.trim();
+      if (!cleanNewText || cleanNewText === currentText) return;
+
+      try {
+        await fetch(`${API_URL}/api/supervisor/edit-message`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: msgId, text: cleanNewText, operatorName: activeChatOperator })
+        });
+        refreshChatStream();
+      } catch (e) {
+        alert('Error al editar mensaje');
+      }
+    };
+
+    const sendSupervisorChatAction = async () => {
       const input = document.getElementById('input-chat-msg');
       const text = input.value.trim();
       if (!text || !activeChatOperator) return;
 
+      input.value = '';
       await fetch(`${API_URL}/api/supervisor/send-message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ operatorName: activeChatOperator, text })
       });
-      input.value = '';
       refreshChatStream();
     };
+
+    document.getElementById('btn-send-chat-msg').onclick = sendSupervisorChatAction;
+    document.getElementById('input-chat-msg').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        sendSupervisorChatAction();
+      }
+    });
 
     // ====================================================================
     // 6.1 POLLING & RENDER DE LOGS DE SUBIDA EN TIEMPO REAL

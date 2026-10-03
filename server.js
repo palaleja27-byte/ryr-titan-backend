@@ -171,11 +171,11 @@ app.post('/api/chats/audit-deep', async (req, res) => {
       extracted_at: new Date().toISOString()
     }).select().single();
 
-    // C. Inserción Deduplicada de Mensajes Individuales
+    // C. Inserción Deduplicada de Mensajes Individuales (Nunca Sobreescribe ni Duplica)
     const msgCount = Array.isArray(messages) ? messages.length : 0;
     if (msgCount > 0) {
       const messagesToInsert = messages.map(m => ({
-        id: m.id || `msg_${m.isOperator ? 'OP' : 'RU'}_${String(clientId)}_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+        id: m.id || `msg_${String(clientId).trim()}_${m.isOperator ? 'OP' : 'RU'}_${(m.text || '').substring(0, 30).replace(/[^a-z0-9]/gi, '_')}_${(m.time || 'rec').replace(/[^a-z0-9]/gi, '')}`,
         conversation_id: convRow ? convRow.id : null,
         client_id: String(clientId).trim(),
         profile_name: profile || 'HORACIO',
@@ -187,22 +187,30 @@ app.post('/api/chats/audit-deep', async (req, res) => {
         message_date: m.date || new Date().toLocaleDateString()
       }));
 
-      await supabase.from('messages').upsert(messagesToInsert, { onConflict: 'id', ignoreDuplicates: true });
+      await supabase.from('messages').upsert(messagesToInsert, { onConflict: 'id', ignoreDuplicates: true }).catch(() => {});
     }
 
-    // D. Inserción de Cartas / Hilos de Mails
+    // D. Inserción Deduplicada de Cartas / Hilos de Mails (Desde la primera hasta la última)
     const letterCount = Array.isArray(letters) ? letters.length : 0;
     if (letterCount > 0) {
       const mailsToInsert = letters.map(l => ({
+        id: l.id || `mail_${String(clientId).trim()}_${l.isOutgoing ? 'OUT' : 'IN'}_${(l.preview || l.fullText || '').substring(0, 35).replace(/[^a-z0-9]/gi, '_')}_${(l.date || 'rec').replace(/[^a-z0-9]/gi, '')}`,
         client_id: String(clientId).trim(),
         profile_name: profile || 'HORACIO',
         direction: l.isOutgoing ? 'OUTGOING' : 'INCOMING',
         letter_date: l.date || 'Fecha Reciente',
-        letter_preview: l.preview,
+        letter_preview: l.preview || l.fullText || '',
         status: 'read'
       }));
 
-      await supabase.from('mails_history').insert(mailsToInsert);
+      await supabase.from('mails_history').upsert(mailsToInsert, { onConflict: 'id', ignoreDuplicates: true }).catch(async () => {
+        // Fallback si la tabla no tiene constraint id único
+        await supabase.from('mails_history').insert(mailsToInsert.map(m => {
+          const copy = { ...m };
+          delete copy.id;
+          return copy;
+        })).catch(() => {});
+      });
     }
 
     // Guardar en memoria de alta disponibilidad (Garantiza visualización inmediata en modal)
@@ -853,55 +861,198 @@ app.put('/api/fines/:id/status', async (req, res) => {
 });
 
 // ====================================================================
-// 10. ENDPOINT: COMUNICACIÓN DIRECTA SUPERVISOR ↔ OPERADOR
+// 10. ENDPOINT: COMUNICACIÓN DIRECTA SUPERVISOR ↔ OPERADOR (BIDIRECCIONAL, LECTURA Y EDICIÓN)
 // ====================================================================
+const liveSupervisorChatMemory = new Map(); // operatorKey -> Array of messages
+
+function normalizeOpKey(name) {
+  if (!name) return 'walther';
+  return String(name)
+    .replace(/\[.*?\]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function getSupervisorChatList(opName) {
+  const clean = normalizeOpKey(opName);
+  if (!liveSupervisorChatMemory.has(clean)) {
+    for (const [k, v] of liveSupervisorChatMemory.entries()) {
+      if (k === clean || (clean && k && (k.includes(clean) || clean.includes(k)))) {
+        return { key: k, list: v };
+      }
+    }
+    liveSupervisorChatMemory.set(clean, []);
+    return { key: clean, list: liveSupervisorChatMemory.get(clean) };
+  }
+  return { key: clean, list: liveSupervisorChatMemory.get(clean) };
+}
+
 app.get('/api/supervisor/messages/:operator', async (req, res) => {
   try {
-    const { operator } = req.params;
-    const { data } = await supabase.from('supervisor_chat')
-      .select('*')
-      .eq('operator_name', operator)
-      .order('created_at', { ascending: true })
-      .limit(30);
+    const rawOp = (req.params.operator || '').trim();
+    const opKey = normalizeOpKey(rawOp);
+    const role = (req.query.role || '').toUpperCase(); // 'OPERATOR' o 'SUPERVISOR'
 
-    const messages = (data || []).map(m => ({
-      id: m.id,
-      sender: m.sender,
-      text: m.message_text,
-      timestamp: new Date(m.created_at).getTime()
-    }));
+    const { key: exactKey, list: memMessages } = getSupervisorChatList(opKey);
 
-    res.json({ success: true, messages });
+    // 2. Intentar consultar Supabase para historial histórico
+    try {
+      const { data } = await supabase.from('supervisor_chat')
+        .select('*')
+        .or(`operator_name.ilike.%${opKey}%,operator_name.ilike.%${rawOp}%`)
+        .order('created_at', { ascending: true })
+        .limit(50);
+
+      if (data && data.length > 0) {
+        const seenIds = new Set(memMessages.map(m => String(m.id)));
+        data.forEach(dbMsg => {
+          const strId = String(dbMsg.id);
+          if (!seenIds.has(strId)) {
+            memMessages.push({
+              id: strId,
+              sender: dbMsg.sender,
+              text: dbMsg.message_text,
+              timestamp: new Date(dbMsg.created_at).getTime(),
+              isEdited: Boolean(dbMsg.is_edited),
+              read: Boolean(dbMsg.is_read)
+            });
+            seenIds.add(strId);
+          }
+        });
+        memMessages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        liveSupervisorChatMemory.set(exactKey, memMessages);
+      }
+    } catch (dbErr) {
+      // Si falla BD, la memoria RAM asegura 100% de uptime
+    }
+
+    // Si el rol que consulta lee los mensajes del otro, marcar como leídos (Doble chulito verde)
+    if (role === 'OPERATOR') {
+      let changed = false;
+      memMessages.forEach(m => {
+        if (m.sender === 'SUPERVISOR' && !m.read) {
+          m.read = true;
+          changed = true;
+        }
+      });
+      if (changed) {
+        liveSupervisorChatMemory.set(exactKey, memMessages);
+        try {
+          await supabase.from('supervisor_chat').update({ is_read: true }).ilike('operator_name', `%${opKey}%`).eq('sender', 'SUPERVISOR');
+        } catch (e) {}
+      }
+    } else if (role === 'SUPERVISOR') {
+      let changed = false;
+      memMessages.forEach(m => {
+        if (m.sender !== 'SUPERVISOR' && !m.read) {
+          m.read = true;
+          changed = true;
+        }
+      });
+      if (changed) {
+        liveSupervisorChatMemory.set(exactKey, memMessages);
+        try {
+          await supabase.from('supervisor_chat').update({ is_read: true }).ilike('operator_name', `%${opKey}%`).neq('sender', 'SUPERVISOR');
+        } catch (e) {}
+      }
+    }
+
+    res.json({ success: true, messages: memMessages });
   } catch (err) {
     res.json({ success: true, messages: [] });
+  }
+});
+
+app.post('/api/supervisor/mark-read', async (req, res) => {
+  try {
+    const { operatorName, role } = req.body;
+    const { key: exactKey, list } = getSupervisorChatList(operatorName);
+
+    list.forEach(m => {
+      if (role === 'OPERATOR' && m.sender === 'SUPERVISOR') {
+        m.read = true;
+      } else if (role === 'SUPERVISOR' && m.sender !== 'SUPERVISOR') {
+        m.read = true;
+      }
+    });
+
+    liveSupervisorChatMemory.set(exactKey, list);
+
+    try {
+      if (role === 'OPERATOR') {
+        await supabase.from('supervisor_chat').update({ is_read: true }).ilike('operator_name', `%${exactKey}%`).eq('sender', 'SUPERVISOR');
+      } else if (role === 'SUPERVISOR') {
+        await supabase.from('supervisor_chat').update({ is_read: true }).ilike('operator_name', `%${exactKey}%`).neq('sender', 'SUPERVISOR');
+      }
+    } catch (e) {}
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
 app.post('/api/supervisor/send-message', async (req, res) => {
   try {
     const { operatorName, text, isBroadcast } = req.body;
-    if (!text) return res.status(400).json({ error: 'Texto requerido' });
+    if (!text || !text.trim()) return res.status(400).json({ error: 'Texto requerido' });
+
+    const cleanText = text.trim();
 
     if (isBroadcast) {
       const activeOps = Array.from(liveOperatorTelemetry.values()).map(o => o.operator);
       const uniqueOps = Array.from(new Set(activeOps));
+      if (uniqueOps.length === 0) uniqueOps.push('walther', 'bill');
 
-      const inserts = uniqueOps.map(op => ({
-        operator_name: op,
-        sender: 'SUPERVISOR',
-        message_text: `📢 [ANUNCIO AGENCIA] ${text}`
-      }));
-
-      await supabase.from('supervisor_chat').insert(inserts);
-    } else {
-      await supabase.from('supervisor_chat').insert({
-        operator_name: operatorName,
-        sender: 'SUPERVISOR',
-        message_text: text
+      uniqueOps.forEach(op => {
+        const { key: exactKey, list } = getSupervisorChatList(op);
+        list.push({
+          id: `sup_bc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          sender: 'SUPERVISOR',
+          text: `📢 [ANUNCIO GENERAL] ${cleanText}`,
+          timestamp: Date.now(),
+          read: false,
+          isEdited: false
+        });
+        if (list.length > 50) list.shift();
+        liveSupervisorChatMemory.set(exactKey, list);
       });
+
+      try {
+        const inserts = uniqueOps.map(op => ({
+          operator_name: normalizeOpKey(op),
+          sender: 'SUPERVISOR',
+          message_text: `📢 [ANUNCIO GENERAL] ${cleanText}`,
+          is_read: false
+        }));
+        await supabase.from('supervisor_chat').insert(inserts);
+      } catch (e) {}
+    } else {
+      const { key: exactKey, list } = getSupervisorChatList(operatorName);
+      const msgId = `sup_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+      list.push({
+        id: msgId,
+        sender: 'SUPERVISOR',
+        text: cleanText,
+        timestamp: Date.now(),
+        read: false,
+        isEdited: false
+      });
+      if (list.length > 50) list.shift();
+      liveSupervisorChatMemory.set(exactKey, list);
+
+      try {
+        await supabase.from('supervisor_chat').insert({
+          operator_name: exactKey,
+          sender: 'SUPERVISOR',
+          message_text: cleanText,
+          is_read: false
+        });
+      } catch (e) {}
     }
 
-    res.json({ success: true, message: 'Mensaje enviado con éxito' });
+    res.json({ success: true, message: 'Mensaje de supervisor emitido con éxito' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -910,12 +1061,67 @@ app.post('/api/supervisor/send-message', async (req, res) => {
 app.post('/api/operator/reply-message', async (req, res) => {
   try {
     const { operatorName, text } = req.body;
-    await supabase.from('supervisor_chat').insert({
-      operator_name: operatorName || 'walther',
+    if (!text || !text.trim()) return res.status(400).json({ error: 'Texto requerido' });
+
+    const { key: exactKey, list } = getSupervisorChatList(operatorName);
+    const cleanText = text.trim();
+    const msgId = `op_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+    list.push({
+      id: msgId,
       sender: 'OPERATOR',
-      message_text: text
+      text: cleanText,
+      timestamp: Date.now(),
+      read: false,
+      isEdited: false
     });
-    res.json({ success: true });
+    if (list.length > 50) list.shift();
+    liveSupervisorChatMemory.set(exactKey, list);
+
+    try {
+      await supabase.from('supervisor_chat').insert({
+        operator_name: exactKey,
+        sender: 'OPERATOR',
+        message_text: cleanText,
+        is_read: false
+      });
+    } catch (e) {}
+
+    res.json({ success: true, id: msgId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint para editar cualquier mensaje del chat de supervisión
+app.post('/api/supervisor/edit-message', async (req, res) => {
+  try {
+    const { id, text, operatorName } = req.body;
+    if (!id || !text) return res.status(400).json({ error: 'ID y texto son requeridos' });
+
+    const cleanText = text.trim();
+
+    // Buscar y actualizar en todas las listas en memoria
+    for (const [k, list] of liveSupervisorChatMemory.entries()) {
+      list.forEach(m => {
+        if (String(m.id) === String(id)) {
+          m.text = cleanText;
+          m.isEdited = true;
+        }
+      });
+    }
+
+    // Actualizar también en Supabase si es un ID numérico o existe
+    try {
+      if (!isNaN(id) && Number(id) > 0) {
+        await supabase.from('supervisor_chat').update({
+          message_text: cleanText,
+          is_edited: true
+        }).eq('id', Number(id));
+      }
+    } catch (e) {}
+
+    res.json({ success: true, message: 'Mensaje editado con éxito' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1084,18 +1290,17 @@ app.post('/api/audit/realtime-check', async (req, res) => {
 // ====================================================================
 app.post('/api/handover/generate-and-save', async (req, res) => {
   try {
-    const { operator, shift, profileName, profileId } = req.body;
+    const { operator, shift, profileName, profileId, reportMarkdown: incomingMarkdown } = req.body;
 
-    const reportMarkdown = `# RELEVO DE TURNO | PERFIL: ${profileName || 'HORACIO'}\n` +
+    const reportMarkdown = incomingMarkdown || (`# 📋 RELEVO DE TURNO | PERFIL: ${profileName || 'HORACIO'}\n` +
       `- **Operador Saliente:** ${operator || 'walther'} [Turno: ${shift || 'Mañana'}]\n` +
       `- **Fecha y Hora:** ${new Date().toLocaleString()}\n` +
       `---\n` +
-      `### 📌 Resumen de Clientes Calientes:\n` +
-      `- **Jeanneth (VIP 2726 cartas):** Muy cariñosa, esperando fotos del fin de semana. No ofrecer viajes ni romper su apodo favorito.\n` +
-      `- **Sarah (Nueva 3 cartas):** Conectada y con créditos activos. Mantener preguntas abiertas sobre sus pasatiempos.\n\n` +
+      `### 📌 Resumen de Conversaciones del Turno:\n` +
+      `- Clientes activos monitoreados con éxito en la sesión.\n\n` +
       `### ⚠️ Instrucciones para el Turno Siguiente:\n` +
-      `- Responder con prioridad las cartas leídas pendientes para evitar acumulación.\n` +
-      `- Cumplir con las 10 prospecciones por cada ciclo de 30 minutos.`;
+      `- Responder con prioridad las cartas leídas y chats con balance activo.\n` +
+      `- Cumplir con la cuota de prospecciones por ciclo.`);
 
     await supabase.from('shift_handovers').insert({
       profile_name: profileName || 'HORACIO',
@@ -1105,7 +1310,7 @@ app.post('/api/handover/generate-and-save', async (req, res) => {
       report_markdown: reportMarkdown
     });
 
-    res.json({ success: true, message: 'Relevo guardado' });
+    res.json({ success: true, message: 'Relevo guardado con éxito' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

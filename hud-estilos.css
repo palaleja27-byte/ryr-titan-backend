@@ -426,12 +426,12 @@
   background: rgba(11, 19, 43, 0.98) !important;
   backdrop-filter: blur(16px) !important;
   border: 1.5px solid #8b5cf6 !important;
-  border-radius: 10px !important;
-  padding: 12px !important;
+  border-radius: 9px !important;
+  padding: 8px 10px !important;
   display: flex !important;
   flex-direction: column !important;
-  gap: 8px !important;
-  width: 440px !important;
+  gap: 6px !important;
+  width: 360px !important;
   max-width: 94vw !important;
   z-index: 9999999 !important;
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.95), 0 0 15px rgba(139, 92, 246, 0.3) !important;
@@ -442,16 +442,16 @@
   background: #060913 !important;
   border: 1px solid #1e293b !important;
   color: #f1f5f9 !important;
-  padding: 9px 12px !important;
-  border-radius: 7px !important;
-  font-size: 11.5px !important;
-  line-height: 1.4 !important;
+  padding: 7px 10px !important;
+  border-radius: 6px !important;
+  font-size: 11px !important;
+  line-height: 1.35 !important;
   cursor: pointer !important;
   text-align: left !important;
   transition: all 0.15s ease !important;
   display: flex !important;
   flex-direction: column !important;
-  gap: 4px !important;
+  gap: 3px !important;
 }
 
 .ryr-hook-option:hover {
@@ -474,6 +474,103 @@
   font-style: italic !important;
   border-top: 1px dashed rgba(255, 255, 255, 0.08) !important;
   padding-top: 3px !important;
+}
+
+.ryr-hook-header {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  margin-bottom: 2px !important;
+}
+
+.ryr-hook-edit-btn {
+  background: rgba(139, 92, 246, 0.25) !important;
+  border: 1px solid #8b5cf6 !important;
+  color: #c4b5fd !important;
+  border-radius: 4px !important;
+  padding: 1px 7px !important;
+  font-size: 9.5px !important;
+  font-weight: 800 !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+}
+
+.ryr-hook-edit-btn:hover {
+  background: #8b5cf6 !important;
+  color: #ffffff !important;
+  transform: translateY(-1px) !important;
+}
+
+.ryr-inline-editor {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+  margin-top: 6px !important;
+  padding: 8px !important;
+  background: #0b132b !important;
+  border: 1px solid #38bdf8 !important;
+  border-radius: 6px !important;
+}
+
+.ryr-inline-editor textarea {
+  width: 100% !important;
+  box-sizing: border-box !important;
+  min-height: 65px !important;
+  background: #060913 !important;
+  border: 1px solid #1e293b !important;
+  color: #ffffff !important;
+  border-radius: 4px !important;
+  padding: 7px 9px !important;
+  font-size: 11.5px !important;
+  line-height: 1.4 !important;
+  resize: vertical !important;
+  outline: none !important;
+  font-family: inherit !important;
+}
+
+.ryr-inline-editor textarea:focus {
+  border-color: #38bdf8 !important;
+}
+
+.ryr-inline-editor-actions {
+  display: flex !important;
+  gap: 6px !important;
+  justify-content: flex-end !important;
+  align-items: center !important;
+}
+
+.ryr-inline-editor-actions button {
+  padding: 3px 9px !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  border: none !important;
+  transition: all 0.15s ease !important;
+}
+
+.ryr-btn-save-inline {
+  background: #10b981 !important;
+  color: #060913 !important;
+}
+.ryr-btn-save-inline:hover {
+  background: #34d399 !important;
+}
+
+.ryr-btn-trans-inline {
+  background: #06b6d4 !important;
+  color: #060913 !important;
+}
+.ryr-btn-trans-inline:hover {
+  background: #38bdf8 !important;
+}
+
+.ryr-btn-cancel-inline {
+  background: #334155 !important;
+  color: #f1f5f9 !important;
+}
+.ryr-btn-cancel-inline:hover {
+  background: #475569 !important;
 }
 
 /* AVISO DE SIN CONTEXTO PREVIO */
@@ -660,13 +757,13 @@
   font-size: 11px;
 }
 
-/* BARRA Y BOTONES DE CARTAS CONTEXTUALES EN MAILS/THREAD (COLUMNA COMPACTA CON BOTÓN DE RESPUESTA ARRIBA) */
+/* BARRA Y BOTONES DE CARTAS CONTEXTUALES EN MAILS/THREAD (HORIZONTAL AL LADO DE TRADUCIR) */
 .ryr-letter-tools-box {
   display: inline-flex !important;
-  flex-direction: column !important;
+  flex-direction: row !important;
   justify-content: center !important;
-  align-items: stretch !important;
-  gap: 3px !important;
+  align-items: center !important;
+  gap: 6px !important;
   margin-right: 8px !important;
   margin-left: 4px !important;
   z-index: 999999 !important;
@@ -674,7 +771,7 @@
   vertical-align: middle !important;
   flex-shrink: 0 !important;
   height: auto !important;
-  min-height: 48px !important;
+  min-height: 36px !important;
   box-sizing: border-box !important;
   overflow: visible !important;
 }
@@ -684,19 +781,21 @@
   background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
   color: #ffffff !important;
   border: 1px solid #34d399 !important;
-  padding: 2px 10px !important;
-  border-radius: 4px !important;
-  font-size: 10px !important;
+  padding: 0 12px !important;
+  border-radius: 6px !important;
+  font-size: 11px !important;
   font-weight: 800 !important;
   cursor: pointer !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
-  gap: 4px !important;
-  box-shadow: 0 1px 5px rgba(16, 185, 129, 0.45) !important;
+  gap: 5px !important;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.45) !important;
   transition: all 0.15s ease !important;
-  height: 22px !important;
-  line-height: 22px !important;
+  height: 32px !important;
+  line-height: 32px !important;
+  min-width: 130px !important;
+  flex-shrink: 0 !important;
   box-sizing: border-box !important;
   white-space: nowrap !important;
   visibility: visible !important;
@@ -705,7 +804,7 @@
 
 .ryr-letter-drafter-btn:hover {
   transform: translateY(-1px) !important;
-  box-shadow: 0 3px 12px rgba(16, 185, 129, 0.7) !important;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.7) !important;
   background: linear-gradient(135deg, #059669 0%, #047857 100%) !important;
 }
 
@@ -714,19 +813,21 @@
   background: linear-gradient(135deg, #06b6d4 0%, #0284c7 100%) !important;
   color: #ffffff !important;
   border: 1px solid #38bdf8 !important;
-  padding: 2px 10px !important;
-  border-radius: 4px !important;
-  font-size: 10px !important;
+  padding: 0 12px !important;
+  border-radius: 6px !important;
+  font-size: 11px !important;
   font-weight: 800 !important;
   cursor: pointer !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
-  gap: 4px !important;
-  box-shadow: 0 1px 4px rgba(6, 182, 212, 0.35) !important;
+  gap: 5px !important;
+  box-shadow: 0 2px 8px rgba(6, 182, 212, 0.35) !important;
   transition: all 0.15s ease !important;
-  height: 22px !important;
-  line-height: 22px !important;
+  height: 32px !important;
+  line-height: 32px !important;
+  min-width: 135px !important;
+  flex-shrink: 0 !important;
   box-sizing: border-box !important;
   white-space: nowrap !important;
   visibility: visible !important;
@@ -735,8 +836,97 @@
 
 .ryr-letter-translate-btn:hover {
   transform: translateY(-1px) !important;
-  box-shadow: 0 3px 10px rgba(6, 182, 212, 0.55) !important;
+  box-shadow: 0 4px 14px rgba(6, 182, 212, 0.55) !important;
 }
+
+/* MENÚ FLOTANTE DE CARTAS SUGERIDAS (3 OPCIONES RAZONADAS) */
+.ryr-letter-hooks-dropdown {
+  position: absolute !important;
+  bottom: 44px !important;
+  right: 0 !important;
+  background: rgba(11, 19, 43, 0.98) !important;
+  backdrop-filter: blur(16px) !important;
+  border: 1.5px solid #10b981 !important;
+  border-radius: 9px !important;
+  padding: 8px 10px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+  width: 410px !important;
+  max-width: 95vw !important;
+  max-height: 480px !important;
+  overflow-y: auto !important;
+  z-index: 99999999 !important;
+  box-shadow: 0 16px 45px rgba(0, 0, 0, 0.95), 0 0 20px rgba(16, 185, 129, 0.35) !important;
+  animation: ryrToastSlide 0.2s ease-out !important;
+}
+
+.ryr-letter-option-card {
+  background: #060913 !important;
+  border: 1px solid #1e293b !important;
+  color: #f1f5f9 !important;
+  padding: 8px 10px !important;
+  border-radius: 6px !important;
+  font-size: 11px !important;
+  line-height: 1.35 !important;
+  cursor: pointer !important;
+  text-align: left !important;
+  transition: all 0.15s ease !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 3px !important;
+}
+
+.ryr-letter-option-card:hover {
+  background: #064e3b !important;
+  border-color: #10b981 !important;
+  color: #ffffff !important;
+  transform: translateX(2px) !important;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.4) !important;
+}
+
+.ryr-letter-option-title {
+  font-weight: 800 !important;
+  color: #34d399 !important;
+  font-size: 11px !important;
+  text-transform: uppercase !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+}
+
+.ryr-letter-option-badge {
+  background: rgba(52, 211, 153, 0.2) !important;
+  border: 1px solid #34d399 !important;
+  color: #34d399 !important;
+  padding: 1px 6px !important;
+  border-radius: 4px !important;
+  font-size: 9.5px !important;
+  font-weight: 800 !important;
+}
+
+.ryr-letter-option-rationale {
+  font-size: 10.5px !important;
+  color: #fbbf24 !important;
+  font-style: italic !important;
+  background: rgba(245, 158, 11, 0.1) !important;
+  padding: 4px 8px !important;
+  border-radius: 4px !important;
+  border-left: 2px solid #f59e0b !important;
+}
+
+.ryr-letter-option-preview {
+  font-size: 11px !important;
+  color: #cbd5e1 !important;
+  white-space: pre-line !important;
+  max-height: 90px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  line-height: 1.35 !important;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08) !important;
+  padding-top: 4px !important;
+}
+
 
 /* RESPONSIVE HUD BAR (PANTALLAS PEQUEÑAS / MÓVIL) */
 @media (max-width: 1200px) {
