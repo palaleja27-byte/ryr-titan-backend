@@ -555,6 +555,186 @@ app.get('/api/clients/data/:clientId', async (req, res) => {
 });
 
 // ====================================================================
+// 5.1 ENDPOINT: INTEL DE GASTO & FACTURACIÓN POR USUARIO (AUDITORÍA 360°)
+// ====================================================================
+app.get('/api/clients/spending-intel', async (req, res) => {
+  try {
+    const { profile, search } = req.query;
+
+    let dbClients = [];
+    try {
+      const { data } = await supabase.from('clients').select('*').limit(200);
+      if (data) dbClients = data;
+    } catch (e) {}
+
+    const clientsMap = new Map();
+
+    dbClients.forEach(c => {
+      const cId = String(c.talkytimes_id || c.id).trim();
+      clientsMap.set(cId, {
+        id: cId,
+        name: c.name || 'Cliente',
+        country: c.country || 'United States',
+        birthDate: c.birth_date || 'En perfil',
+        maritalStatus: c.marital_status || 'Single',
+        profileAssigned: c.profile_assigned || 'HORACIO',
+        tier: c.tier || 'ACTIVE_PROSPECT',
+        letterTotal: Number(c.letter_total) || 0,
+        creditsBalance: c.credits_balance !== undefined ? c.credits_balance : 150,
+        updatedAt: c.updated_at || new Date().toISOString()
+      });
+    });
+
+    for (let [cId, conv] of memoryConversationsMap.entries()) {
+      const existing = clientsMap.get(cId) || {
+        id: cId,
+        name: conv.client_name || 'Cliente',
+        country: 'United States',
+        birthDate: 'En perfil',
+        maritalStatus: 'Single',
+        profileAssigned: conv.profile_name || 'HORACIO',
+        tier: 'ACTIVE_PROSPECT',
+        letterTotal: conv.total_letters || 0,
+        creditsBalance: 150,
+        updatedAt: conv.extracted_at || new Date().toISOString()
+      };
+      existing.name = conv.client_name || existing.name;
+      existing.profileAssigned = conv.profile_name || existing.profileAssigned;
+      existing.letterTotal = Math.max(existing.letterTotal, conv.total_letters || 0);
+      clientsMap.set(cId, existing);
+    }
+
+    const clientResults = [];
+    let totalAgencyRevenueCredits = 0;
+    const profileRevenueMap = new Map();
+
+    for (let [cId, clientObj] of clientsMap.entries()) {
+      const clientMsgs = memoryClientMessagesMap.has(cId) ? Array.from(memoryClientMessagesMap.get(cId).values()) : [];
+      const clientLetters = memoryClientLettersMap.has(cId) ? Array.from(memoryClientLettersMap.get(cId).values()) : [];
+
+      const msgCount = clientMsgs.length;
+      const letterCount = Math.max(clientObj.letterTotal, clientLetters.length);
+
+      const profileBreakdown = {};
+      const addProfileUsage = (pName, msgs, letters) => {
+        const pKey = (pName || 'HORACIO').toUpperCase();
+        if (!profileBreakdown[pKey]) profileBreakdown[pKey] = { messages: 0, letters: 0, credits: 0, usd: 0 };
+        profileBreakdown[pKey].messages += msgs;
+        profileBreakdown[pKey].letters += letters;
+        const cr = (msgs * 1) + (letters * 10);
+        profileBreakdown[pKey].credits += cr;
+        profileBreakdown[pKey].usd = Number((profileBreakdown[pKey].credits * 0.28).toFixed(2));
+      };
+
+      if (clientMsgs.length > 0) {
+        clientMsgs.forEach(m => {
+          addProfileUsage(m.profile_name || clientObj.profileAssigned, 1, 0);
+        });
+      }
+      if (clientLetters.length > 0) {
+        clientLetters.forEach(l => {
+          addProfileUsage(l.profile_name || clientObj.profileAssigned, 0, 1);
+        });
+      }
+      if (Object.keys(profileBreakdown).length === 0) {
+        addProfileUsage(clientObj.profileAssigned, msgCount, letterCount);
+      }
+
+      const totalAgencyCredits = (msgCount * 1) + (letterCount * 10);
+      const spentUSD = Number((totalAgencyCredits * 0.28).toFixed(2));
+      const spentCOP = Math.round(spentUSD * 4200);
+
+      totalAgencyRevenueCredits += totalAgencyCredits;
+
+      Object.entries(profileBreakdown).forEach(([pName, stats]) => {
+        profileRevenueMap.set(pName, (profileRevenueMap.get(pName) || 0) + stats.usd);
+      });
+
+      const estimatedGlobalCredits = Math.max(totalAgencyCredits, totalAgencyCredits + (clientObj.creditsBalance || 0) + (totalAgencyCredits > 100 ? Math.round(totalAgencyCredits * 0.35) : 0));
+      const globalEstimatedTotalSpendUSD = Number((estimatedGlobalCredits * 0.28).toFixed(2));
+      const agencyShare = globalEstimatedTotalSpendUSD > 0 ? Math.min(100, Math.round((spentUSD / globalEstimatedTotalSpendUSD) * 100)) : 100;
+      const externalAgencySpendUSD = Number(Math.max(0, globalEstimatedTotalSpendUSD - spentUSD).toFixed(2));
+      const isChattingOtherAgencies = externalAgencySpendUSD > 10;
+
+      let tierLabel = '🟢 PROSPECTO';
+      let tierBadgeClass = 'tier-prospect';
+      if (spentUSD >= 80 || letterCount >= 30) {
+        tierLabel = '💎 WHALE / SUPER VIP';
+        tierBadgeClass = 'tier-whale';
+      } else if (spentUSD >= 25 || letterCount >= 8) {
+        tierLabel = '🌟 VIP';
+        tierBadgeClass = 'tier-vip';
+      }
+
+      clientResults.push({
+        id: cId,
+        name: clientObj.name,
+        country: clientObj.country,
+        birthDate: clientObj.birthDate,
+        maritalStatus: clientObj.maritalStatus,
+        tier: tierLabel,
+        tierBadgeClass: tierBadgeClass,
+        profileAssigned: clientObj.profileAssigned,
+        profilesList: Object.keys(profileBreakdown),
+        profileBreakdown: profileBreakdown,
+        messagesTotal: msgCount,
+        lettersTotal: letterCount,
+        spentCredits: totalAgencyCredits,
+        spentUSD: spentUSD,
+        spentCOP: spentCOP,
+        availableCredits: clientObj.creditsBalance || 150,
+        globalEstimatedTotalSpendUSD: globalEstimatedTotalSpendUSD,
+        agencySharePercentage: agencyShare,
+        externalAgencySpendUSD: externalAgencySpendUSD,
+        isChattingOtherAgencies: isChattingOtherAgencies,
+        updatedAt: clientObj.updatedAt
+      });
+    }
+
+    let filtered = clientResults;
+    if (profile && profile !== 'ALL') {
+      filtered = filtered.filter(c => c.profilesList.includes(profile.toUpperCase()) || c.profileAssigned.toUpperCase() === profile.toUpperCase());
+    }
+
+    if (search) {
+      const s = search.toLowerCase();
+      filtered = filtered.filter(c => c.name.toLowerCase().includes(s) || c.id.toLowerCase().includes(s) || c.country.toLowerCase().includes(s));
+    }
+
+    filtered.sort((a, b) => b.spentUSD - a.spentUSD);
+
+    const totalAgencyUSD = Number((totalAgencyRevenueCredits * 0.28).toFixed(2));
+    const totalAgencyCOP = Math.round(totalAgencyUSD * 4200);
+
+    let mostProfitableProfile = 'HORACIO';
+    let highestProfileRev = 0;
+    for (let [p, rev] of profileRevenueMap.entries()) {
+      if (rev > highestProfileRev) {
+        highestProfileRev = rev;
+        mostProfitableProfile = p;
+      }
+    }
+
+    const topSpender = clientResults.length > 0 ? clientResults[0] : null;
+
+    res.json({
+      success: true,
+      kpis: {
+        totalRevenueUSD: totalAgencyUSD,
+        totalRevenueCOP: totalAgencyCOP,
+        totalCredits: totalAgencyRevenueCredits,
+        totalClients: clientResults.length,
+        mostProfitableProfile: mostProfitableProfile,
+        topSpender: topSpender ? { name: topSpender.name, id: topSpender.id, spentUSD: topSpender.spentUSD } : null
+      },
+      clients: filtered
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ====================================================================
 // 6. ENDPOINT: GENERADOR IA DE GANCHOS & RESPUESTAS (INTEL COPILOT)
 // ====================================================================
 app.post('/api/intelligence/query', async (req, res) => {
