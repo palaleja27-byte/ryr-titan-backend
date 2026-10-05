@@ -35,6 +35,7 @@ const liveOperatorTelemetry = new Map();
 const massExtractionOrders = new Set();
 const memoryConversationsMap = new Map();
 const memoryLettersMap = new Map();
+const liveProfileInfractions = new Map(); // profileName -> Array of infractions
 
 // BUFFER DE LOGS DE SINCRONIZACIÓN Y SUBIDA EN TIEMPO REAL (ÚLTIMOS 150 EVENTOS)
 const liveSyncLogsBuffer = [];
@@ -92,6 +93,21 @@ app.post('/api/telemetry', async (req, res) => {
     // Guardar en Memoria RAM ultrarrápida (CERO consumo de Disk IOPS / Storage en Supabase)
     liveOperatorTelemetry.set(key, telemetryObj);
 
+    // Guardar registro de infracciones detalladas si vienen en el payload
+    if (payload.infractionsList && Array.isArray(payload.infractionsList)) {
+      const profKey = (payload.profile || 'HORACIO').toUpperCase().trim();
+      const existing = liveProfileInfractions.get(profKey) || [];
+      const seenIds = new Set(existing.map(i => String(i.id)));
+      payload.infractionsList.forEach(inf => {
+        if (!seenIds.has(String(inf.id))) {
+          existing.unshift(inf);
+          seenIds.add(String(inf.id));
+        }
+      });
+      if (existing.length > 50) existing.length = 50;
+      liveProfileInfractions.set(profKey, existing);
+    }
+
     // Responder si hay órdenes de extracción masiva pendientes para este turno
     const shouldExtractShift = massExtractionOrders.has(payload.shift || 'Mañana');
 
@@ -99,6 +115,13 @@ app.post('/api/telemetry', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Endpoint para consultar todas las infracciones detalladas de un perfil
+app.get('/api/fines/infractions/:profile', (req, res) => {
+  const profKey = (req.params.profile || 'HORACIO').toUpperCase().trim();
+  const infractions = liveProfileInfractions.get(profKey) || [];
+  res.json({ success: true, infractions });
 });
 
 // ====================================================================
