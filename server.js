@@ -36,6 +36,7 @@ const massExtractionOrders = new Set();
 const memoryConversationsMap = new Map();
 const memoryLettersMap = new Map();
 const liveProfileInfractions = new Map(); // profileName -> Array of infractions
+const operatorResponseTimes = new Map(); // operatorName -> response time in minutes (default 2)
 
 // BUFFER DE LOGS DE SINCRONIZACIÓN Y SUBIDA EN TIEMPO REAL (ÚLTIMOS 150 EVENTOS)
 const liveSyncLogsBuffer = [];
@@ -68,6 +69,9 @@ app.post('/api/telemetry', async (req, res) => {
       return res.status(400).json({ error: 'Operador requerido' });
     }
 
+    const opKey = (payload.operator || '').toLowerCase().trim();
+    const configuredMinutes = operatorResponseTimes.get(opKey) || 2;
+
     const key = `${payload.operator}_${payload.profile || 'DEF'}`;
     const telemetryObj = {
       operator: payload.operator,
@@ -87,6 +91,7 @@ app.post('/api/telemetry', async (req, res) => {
       fidelizedCount: payload.fidelizedCount || (payload.fidelizedList ? payload.fidelizedList.length : 0),
       fidelizedList: payload.fidelizedList || [],
       domLagMs: payload.performance?.domLagMs || 0.0,
+      responseTimeMinutes: configuredMinutes,
       lastSeen: Date.now()
     };
 
@@ -111,7 +116,12 @@ app.post('/api/telemetry', async (req, res) => {
     // Responder si hay órdenes de extracción masiva pendientes para este turno
     const shouldExtractShift = massExtractionOrders.has(payload.shift || 'Mañana');
 
-    res.json({ success: true, triggerMassExtraction: shouldExtractShift });
+    res.json({
+      success: true,
+      triggerMassExtraction: shouldExtractShift,
+      responseTimeMinutes: configuredMinutes,
+      responseTimeSeconds: configuredMinutes * 60
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -122,6 +132,28 @@ app.get('/api/fines/infractions/:profile', (req, res) => {
   const profKey = (req.params.profile || 'HORACIO').toUpperCase().trim();
   const infractions = liveProfileInfractions.get(profKey) || [];
   res.json({ success: true, infractions });
+});
+
+// Endpoint para ajustar el tiempo de respuesta (SLA en minutos) por operador
+app.post('/api/settings/response-time', (req, res) => {
+  try {
+    const { operator, minutes } = req.body;
+    if (!operator) return res.status(400).json({ error: 'Operador requerido' });
+    const opKey = operator.toLowerCase().trim();
+    const validMinutes = Math.max(1, Math.min(30, parseInt(minutes, 10) || 2));
+    operatorResponseTimes.set(opKey, validMinutes);
+
+    // Actualizar también en el telemetry cache activo
+    for (let [k, node] of liveOperatorTelemetry.entries()) {
+      if ((node.operator || '').toLowerCase().trim() === opKey) {
+        node.responseTimeMinutes = validMinutes;
+      }
+    }
+
+    res.json({ success: true, operator, minutes: validMinutes, seconds: validMinutes * 60 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ====================================================================
@@ -137,6 +169,8 @@ app.get('/api/telemetry/live-grid', (req, res) => {
     if (isDisconnected) {
       data.status = 'OFFLINE';
     }
+    const opKey = (data.operator || '').toLowerCase().trim();
+    data.responseTimeMinutes = operatorResponseTimes.get(opKey) || data.responseTimeMinutes || 2;
     activeNodes.push(data);
   }
 
