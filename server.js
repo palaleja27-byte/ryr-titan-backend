@@ -140,7 +140,7 @@ app.post('/api/settings/response-time', (req, res) => {
     const { operator, minutes } = req.body;
     if (!operator) return res.status(400).json({ error: 'Operador requerido' });
     const opKey = operator.toLowerCase().trim();
-    const validMinutes = Math.max(1, Math.min(30, parseInt(minutes, 10) || 2));
+    const validMinutes = Math.max(1, Math.min(60, parseInt(minutes, 10) || 2));
     operatorResponseTimes.set(opKey, validMinutes);
 
     // Actualizar también en el telemetry cache activo
