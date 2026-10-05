@@ -713,6 +713,177 @@ app.post('/api/intelligence/query', async (req, res) => {
 });
 
 // ====================================================================
+// 6.1 ENDPOINT: GENERADOR IA DE RESPUESTAS DE CHAT ULTRA-HUMANIZADAS
+// ====================================================================
+app.post('/api/intelligence/generate-chat-reply', async (req, res) => {
+  try {
+    const { clientName, clientId, profileName, bioData, targetLang, recentMessages, recentLetters, fullTranscript } = req.body || {};
+
+    const lang = targetLang || 'en';
+    const client = clientName || 'friend';
+    const profile = profileName || 'HORACIO';
+
+    // 1. Obtener mensajes y cartas previas
+    let msgs = Array.isArray(recentMessages) ? recentMessages : [];
+    if (msgs.length === 0 && clientId && memoryClientMessagesMap.has(String(clientId).trim())) {
+      msgs = Array.from(memoryClientMessagesMap.get(String(clientId).trim()).values());
+    }
+
+    const clientMsgs = msgs.filter(m => m.sender_type === 'CLIENT' || (!m.isOperator && m.senderName !== profile));
+    const lastClientMsg = clientMsgs.length > 0 ? (clientMsgs[clientMsgs.length - 1].message_text || clientMsgs[clientMsgs.length - 1].text || '') : '';
+    const lastMsgLower = lastClientMsg.toLowerCase().trim();
+    const fullDialogueText = msgs.map(m => m.message_text || m.text || '').join(' ').toLowerCase();
+
+    // 2. Extracción analítica profunda de intención y emoción
+    const isQuestion = /\?|what|how|where|when|why|who|are you|do you|can you|como|que|donde|quando|por que|vc|você/i.test(lastMsgLower);
+    const hasSickness = /\b(headache|fever|flu|sick|ill|medicine|pill|cold|pain|resting|hospital|doctor|dolor|enfermo|cabeza|remedio|doente|dor)\b/i.test(lastMsgLower) || /\b(headache|sick|ill|dolor)\b/i.test(fullDialogueText);
+    const hasCoffeeFood = /\b(coffee|tea|drink|cup|breakfast|lunch|dinner|wine|beer|cooking|food|cafe|café|comida|vino|cerveza|jantar|almoço)\b/i.test(lastMsgLower);
+    const hasWork = /\b(work|working|job|office|boss|shift|busy|tired|exhausted|trabajo|trabajando|oficina|ocupado|cansado|trabalho|cansado)\b/i.test(lastMsgLower);
+    const hasCompliment = /\b(beautiful|gorgeous|sexy|pretty|cute|sweet|handsome|love|kiss|angel|honey|darling|linda|hermosa|guapa|bella|amor|princesa|querida|doce|gostosa)\b/i.test(lastMsgLower);
+    const hasLeaving = /\b(bye|goodbye|leaving|have to go|see you|adios|chao|me voy|tchau|ate logo)\b/i.test(lastMsgLower);
+    const hasGreeting = /\b(hi|hello|hey|good morning|good afternoon|good evening|how are you|hola|buenos dias|buenas tardes|oi|ola|bom dia|boa tarde)\b/i.test(lastMsgLower);
+
+    let options = [];
+
+    // Respuestas ultra-humanizadas, empáticas y dinámicas según el idioma
+    if (lang === 'pt') {
+      if (hasSickness) {
+        options = [
+          { title: '🪝 Opção 1: Cuidado & Conexão Íntima', target: `Quero muito cuidar de você e te fazer companhia até você melhorar ❤️ Fecha os olhinhos e descansa... O que mais te conforta quando você não está bem?`, es: `Acolhimento carinhoso e pergunta de conforto para mantê-lo conversando.` },
+          { title: '💬 Opção 2: Resposta Direta & Empatia', target: `Por favor, toma seu remédio e fica bem quentinho... Queria tanto poder te dar um abraço bem apertado agora para você dormir em paz ❤️`, es: `Empatia direta com seu mal-estar e afeto protetor.` },
+          { title: '✨ Opção 3: Troca Especial de Fotos', target: `Estou pensando muito em você, meu bem. Assim que acordar do descanso, me manda uma fotinho sua para eu saber que você está bem? 😉 Eu te mando uma linda também!`, es: `Pedido doce de foto de descanso com reciprocidade irresistível.` }
+        ];
+      } else if (hasCoffeeFood) {
+        options = [
+          { title: '🪝 Opção 1: Gancho sobre Gostos & Rotina', target: `Ver você falando de café me deu uma vontade enorme também! 😉 Me conta, qual é o seu doce ou sobremesa favorita para acompanhar uma boa conversa?`, es: `Pergunta descontraída para explorar preferências gastronômicas.` },
+          { title: '💬 Opção 2: Resposta Aconchegante', target: `Esse momento parece tão gostoso! ❤️ Jamais deixaria de tirar um tempinho especial só para papear com você... Como está o seu dia?`, es: `Valoriza o momento dele e retribui atenção exclusiva.` },
+          { title: '✨ Opção 3: Troca de Fotos no Café', target: `Da próxima vez que for tomar café, me manda uma foto do seu sorriso aproveitando o momento para eu sentir que estamos juntos 😉 Combinado?`, es: `Gancho perfeito para incentivar fotos do cotidiano.` }
+        ];
+      } else if (hasWork) {
+        options = [
+          { title: '🪝 Opção 1: Alívio & Descontração', target: `Sei bem como a rotina de trabalho cansa, mas falar com você sempre traz uma paz tão doce para o meu dia ❤️ Qual é a sua forma favorita de relaxar no final da tarde?`, es: `Reconhecimento do cansaço e pergunta aberta sobre lazer noturno.` },
+          { title: '💬 Opção 2: Resposta Carinhosa', target: `Respira fundo, não se sobrecarregue tanto... Lembra que tem alguém aqui torcendo por você e esperando ansiosa pela nossa conversa 😉`, es: `Suporte emocional e presença constante.` },
+          { title: '✨ Opção 3: Convite Doce', target: `Depois que terminar todo o trabalho, me avisa para a gente relaxar e conversar com calma ✨ Me manda uma foto sua descansando mais tarde?`, es: `Compromisso para retomar o chat à noite com foto.` }
+        ];
+      } else if (hasCompliment) {
+        options = [
+          { title: '🪝 Opção 1: Charme & Provocação Doce', target: `Você sempre sabe como me fazer sorrir feito boba com essas palavras doces 😉 Me diz uma coisa: você é sempre tão romântico assim ou é só comigo?`, es: `Jogo sedutor que desafia o ego romântico dele.` },
+          { title: '💬 Opção 2: Retribuição Emocional', target: `Ouvir isso de você é a parte mais linda do meu dia ❤️ Seu carinho faz meu coração ficar tão quentinho... Como você está se sentindo hoje?`, es: `Retribuição sincera e carinhosa ao elogio.` },
+          { title: '✨ Opção 3: Desafio de Fotos', target: `Fiquei até com as bochechas vermelhas agora! Envia uma foto do seu sorriso agora mesmo e eu te envio uma foto exclusiva de volta 😉 Topa?`, es: `Troca imediata de fotos motivada pelo elogio.` }
+        ];
+      } else if (isQuestion || hasGreeting || lastClientMsg.length > 0) {
+        options = [
+          { title: '🪝 Opção 1: Pergunta Profunda & Curiosidade', target: `Estava tirando uma pausa e esperando muito uma mensagem sua 😉 Me conta, o que foi a coisa mais curiosa ou bonita que te aconteceu hoje?`, es: `Pergunta envolvente para incentivar histórias detalhadas.` },
+          { title: '💬 Opção 2: Resposta Natural & Aberta', target: `Meu dia está tão calmo, e ver sua mensagem tornou tudo mais especial ❤️ Estava pensando na nossa conversa... Como começou a sua semana?`, es: `Resposta fluida e incentivo à continuidade do diálogo.` },
+          { title: '✨ Opção 3: Toque Provocante & Cúmplice', target: `Cada vez que o seu nome aparece na minha tela meu coração dá um pulinho ✨ Me conta um segredinho ou sonho seu que quase ninguém sabe...`, es: `Abertura de intimidade e cumplicidade emocional.` }
+        ];
+      } else {
+        options = [
+          { title: '🪝 Opção 1: Gancho Magnético de Abertura', target: `Você tem uma energia tão serena e um olhar que realmente me chamou a atenção nas fotos ❤️ Me conta, o que é algo pelo qual você é verdadeiramente apaixonado na vida?`, es: `Abertura calorosa sobre paixões e estilo de vida.` },
+          { title: '💬 Opção 2: Saudação Doce & Espontânea', target: `Tive uma intuição tão boa de vir te dar um oi hoje 😉 Como a vida tem te tratado ultimamente?`, es: `Saudação aberta sem parecer ensaiada.` },
+          { title: '✨ Opção 3: Despertar de Curiosidade', target: `Seu sorriso me passou uma vibe muito especial ✨ Me conta, qual é o seu plano perfeito para recarregar as energias?`, es: `Pergunta relaxante para criar conexão rápida.` }
+        ];
+      }
+    } else if (lang === 'es') {
+      if (hasSickness) {
+        options = [
+          { title: '🪝 Opción 1: Cuidado & Conexión Íntima', target: `Quiero quedarme aquí haciéndote compañía hasta que te sientas mucho mejor ❤️ Cierra tus ojitos y dime, ¿qué es lo que más te reconforta cuando estás descansando?`, es: `Acompañamiento íntimo y pregunta reconfortante para que siga chateando.` },
+          { title: '💬 Opción 2: Resposta Directa & Empatía', target: `Por favor descansa, tómate tu analgésico y abrígate mucho... Me encantaría abrazarte muy fuerte justo ahora para que duermas en paz ❤️`, es: `Empatía directa con su dolor y respuesta cariñosa.` },
+          { title: '✨ Opción 3: Petición de Foto de Descanso', target: `Estás en mis pensamientos, cariño. Cuando despiertes, envíame una foto tuya descansando para saber que estás bien 😉 Yo te mandaré una especial también.`, es: `Petición de foto de descanso con reciprocidad protectora.` }
+        ];
+      } else if (hasCoffeeFood) {
+        options = [
+          { title: '🪝 Opción 1: Gancho de Antojos & Gustos', target: `¡Ver tu café me dio antojo a mí también! 😉 Cuéntame, ¿cuál es tu postre o antojo favorito para acompañar una buena charla?`, es: `Pregunta pícara y divertida para profundizar en sus gustos favoritos.` },
+          { title: '💬 Opción 2: Respuesta Calurosa', target: `¡Ese momento se ve delicioso! ❤️ Jamás me iría sin antes tomarme un lindo momento para hablar contigo... ¿Cómo va tu tarde?`, es: `Aseguras tu atención exclusiva y elogias su momento.` },
+          { title: '✨ Opción 3: Foto Compartida', target: `La próxima vez que tomes café, envíame una foto de tu sonrisa disfrutándolo para sentir que lo compartimos 😉 ¿Trato?`, es: `Petición magnética de foto cotidiana vinculada a su café.` }
+        ];
+      } else if (hasWork) {
+        options = [
+          { title: '🪝 Opción 1: Alivio de Estrés & Curiosidad', target: `Sé lo exigente que es el trabajo, pero hablar contigo siempre trae paz a mi día ❤️ Cuéntame, ¿cuál es tu forma favorita de desconectar en las tardes?`, es: `Validación de su cansancio y pregunta sobre su descanso.` },
+          { title: '💬 Opción 2: Apoyo Emocional Directo', target: `Tómate un respiro profundo y cuídate mucho hoy... Recuerda que aquí tienes a alguien que sonríe cada vez que ve tus mensajes 😉`, es: `Presencia constante y soporte cariñoso.` },
+          { title: '✨ Opción 3: Cita Nocturna de Chat & Foto', target: `Cuando termines tus pendientes, avísame para charlar con calma ✨ ¿Me mandas una foto de cuando ya estés relajado en casa?`, es: `Gancho de fidelización para retomar el chat en horario libre.` }
+        ];
+      } else if (hasCompliment) {
+        options = [
+          { title: '🪝 Opción 1: Provocación Romántica Dulce', target: `Siempre sabes cómo hacerme suspirar con tus palabras tan dulces 😉 Dime, ¿eres siempre así de detallista o es que te inspiro algo especial?`, es: `Juego de coqueteo que refuerza su interés romántico.` },
+          { title: '💬 Opción 2: Retribución Agradecida', target: `Saber de ti siempre es la parte más linda y especial de mi día ❤️ ¿Cómo te ha tratado la vida hoy, cariño?`, es: `Devolución cariñosa y agradecida a su halago.` },
+          { title: '✨ Opción 3: Intercambio de Sonrisas (Foto)', target: `¡Estaba sonriendo pensando en ti! Envíame una foto de tu sonrisa ahora mismo y yo te enviaré una exclusiva a cambio 😉 ¿Trato?`, es: `Gancho de alto impacto para intercambio recíproco de fotos.` }
+        ];
+      } else if (isQuestion || hasGreeting || lastClientMsg.length > 0) {
+        options = [
+          { title: '🪝 Opción 1: Pregunta de Alto Impacto', target: `Estaba tomándome un pequeño descanso y deseando saber de ti 😉 ¿Qué es algo que te haya sacado una gran sonrisa hoy?`, es: `Pregunta positiva y curiosa para dinamizar la conversación.` },
+          { title: '💬 Opción 2: Respuesta Directa & Abierta', target: `Estoy teniendo un día muy tranquilo, y ver tu mensaje lo hizo mucho más especial ❤️ ¿Cómo empezó tu día hoy?`, es: `Saludo dulce y apertura de diálogo sobre su rutina.` },
+          { title: '✨ Opción 3: Llamar la Atención & Confidencia', target: `Cada vez que veo un mensaje tuyo me alegro mucho ✨ Dime, ¿qué es algo curioso o un secreto tuyo que pocos conozcan?`, es: `Validación coqueta para provocar respuesta inmediata.` }
+        ];
+      } else {
+        options = [
+          { title: '🪝 Opción 1: Gancho de Atracción', target: `Tienes una energía muy dulce y una mirada muy serena en tus fotos ❤️ Dime, ¿qué es algo que te apasione profundamente en la vida?`, es: `Pregunta de atracción sobre pasiones personales.` },
+          { title: '💬 Opción 2: Saludo Inicial Espontáneo', target: `Tuve una hermosa corazonada de saludarte el día de hoy 😉 ¿Cómo te ha estado tratando tu semana?`, es: `Saludo espontáneo y abierto.` },
+          { title: '✨ Opción 3: Curiosidad & Encanto', target: `Tu sonrisa de verdad me llamó mucho la atención ✨ Cuéntame, ¿cuál es tu plan perfecto cuando quieres desconectar de todo?`, es: `Gancho intrigante y de misterio que despierta curiosidad.` }
+        ];
+      }
+    } else {
+      // INGLÉS POR DEFECTO (American & International Natural Human Style)
+      if (hasSickness) {
+        options = [
+          { title: '🪝 Opción 1: Gentle Care & Connection', target: `I wish I could be right there keeping you company until you feel all better ❤️ Close your eyes, rest, and tell me: what is something that always brings you comfort when you're under the weather?`, es: `Acompañamiento íntimo y pregunta reconfortante para que siga chateando.` },
+          { title: '💬 Opción 2: Direct Empathy & Hug', target: `Please take your medicine and stay super cozy away from the cold... I honestly wish I could wrap my arms around you right now so you can sleep peacefully ❤️`, es: `Empatía directa con su dolor/frío y respuesta cariñosa a su deseo de abrazo.` },
+          { title: '✨ Opción 3: Sweet Check-in Photo', target: `You are in my thoughts, sweetheart. When you wake up from resting, send me a little picture of your smile so I know you're feeling brighter 😉 I'll send you an exclusive photo too!`, es: `Petición de foto de descanso con reciprocidad protectora.` }
+        ];
+      } else if (hasCoffeeFood) {
+        options = [
+          { title: '🪝 Opción 1: Taste & Cozy Moments', target: `Seeing you mention your coffee honestly made me crave a warm cup too 😉 Tell me, what's your favorite sweet treat or guilty pleasure when taking a break?`, es: `Pregunta pícara y divertida para profundizar en sus gustos favoritos.` },
+          { title: '💬 Opción 2: Attentive & Sweet', target: `That looks like such a peaceful moment! ❤️ I could never rush away without taking a sweet moment to chat with you... How is your day treating you?`, es: `Aseguras tu atención exclusiva y elogias su café/comida.` },
+          { title: '✨ Opción 3: Coffee Moment Picture', target: `Next time you're having coffee, send me a picture of your smile enjoying it so we can share the moment together 😉 Deal?`, es: `Petición magnética de foto cotidiana vinculada a su café.` }
+        ];
+      } else if (hasWork) {
+        options = [
+          { title: '🪝 Opción 1: Unwinding & Relaxation', target: `I know how demanding work can be, but talking to you always brings such a peaceful energy to my day ❤️ What is your favorite way to unwind when you finally get some free time in the evenings?`, es: `Reconocimiento del cansancio y pregunta sobre su descanso nocturno.` },
+          { title: '💬 Opción 2: Caring & Supportive', target: `Make sure to take a nice deep breath and not push yourself too hard today 😉 Just remember there's someone right here always happy to hear from you!`, es: `Presencia constante y apoyo emocional que hace sonreír.` },
+          { title: '✨ Opción 3: Evening Chat & Photo', target: `Once you wrap up your day, send me a quick hello so we can relax together ✨ Will you send me a picture of how you look once you're comfortable at home?`, es: `Compromiso para continuar chateando en la noche con intercambio de fotos.` }
+        ];
+      } else if (hasCompliment) {
+        options = [
+          { title: '🪝 Opción 1: Playful Romance Hook', target: `You always know how to make my heart flutter with your sweet words 😉 Tell me, are you always this charming, or is there something special about me that inspires you?`, es: `Juego de coqueteo pícaro que alimenta su interés romántico.` },
+          { title: '💬 Opción 2: Warm Reciprocation', target: `Hearing from you is honestly the sweetest part of my day ❤️ Your words always bring such a genuine smile to my face... How are you feeling today, my dear?`, es: `Devolución cariñosa y agradecida a su halago.` },
+          { title: '✨ Opción 3: Smile Photo Trade', target: `You just made me blush! Send me a picture of that handsome smile right now, and I promise to send you an exclusive photo in return 😉 Deal?`, es: `Desafío de intercambio de fotos con reciprocidad irresistible.` }
+        ];
+      } else if (isQuestion || hasGreeting || lastClientMsg.length > 0) {
+        options = [
+          { title: '🪝 Opción 1: Engaging Curiosity Hook', target: `I was just taking a little breather and really hoping to see a message from you 😉 Tell me, what was one fun or unexpected thing that happened in your day today?`, es: `Pregunta positiva y curiosa para dinamizar la conversación.` },
+          { title: '💬 Opción 2: Warm & Direct Reply', target: `I'm having a quiet, peaceful day, and seeing your message just made it so much brighter ❤️ How did your morning start off?`, es: `Saludo dulce y apertura de diálogo sobre su rutina.` },
+          { title: '✨ Opción 3: Intimate Mystery Spark', target: `Every time your name pops up on my screen, my day gets a little sweeter ✨ Tell me a little dream or secret of yours that few people know about...`, es: `Validación coqueta para provocar respuesta inmediata.` }
+        ];
+      } else {
+        options = [
+          { title: '🪝 Opción 1: Pure Attraction Hook', target: `You have such a warm and gentle energy in your photos ❤️ Tell me, what is something you are truly passionate about in your everyday life?`, es: `Pregunta de alto impacto sobre sus pasiones personales.` },
+          { title: '💬 Opción 2: Natural Opening Greeting', target: `I had a sudden lovely feeling that I should say hello to you today 😉 How is your week treating you so far?`, es: `Saludo espontáneo y abierto.` },
+          { title: '✨ Opción 3: Captivating Intrigue', target: `Your smile genuinely caught my attention ✨ Tell me, what's your absolute favorite way to recharge your batteries when you have time for yourself?`, es: `Gancho intrigante que despierta curiosidad y crea afinidad.` }
+        ];
+      }
+    }
+
+    res.json({
+      success: true,
+      clientName: client,
+      profileName: profile,
+      lang: lang,
+      detectedContext: {
+        lastMessage: lastClientMsg,
+        hasSickness,
+        hasCoffeeFood,
+        hasWork,
+        hasCompliment,
+        isQuestion
+      },
+      options: options
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ====================================================================
 // 7. ENDPOINT: GENERADOR IA DE CARTAS LISTAS (CONTEXTO 360° Y RAZONAMIENTO)
 // ====================================================================
 app.post('/api/intelligence/generate-letter', async (req, res) => {
