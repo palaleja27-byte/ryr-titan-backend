@@ -562,17 +562,29 @@ app.get('/api/clients/spending-intel', async (req, res) => {
     const { profile, search } = req.query;
 
     let dbClients = [];
+    let dbConversations = [];
+    let dbMails = [];
+
     try {
-      const { data } = await supabase.from('clients').select('*').limit(200);
-      if (data) dbClients = data;
+      const [resC, resConv, resM] = await Promise.all([
+        supabase.from('clients').select('*').limit(300),
+        supabase.from('conversations').select('*').limit(300),
+        supabase.from('mails_history').select('client_id, profile_name').limit(500)
+      ]);
+      if (resC && resC.data) dbClients = resC.data;
+      if (resConv && resConv.data) dbConversations = resConv.data;
+      if (resM && resM.data) dbMails = resM.data;
     } catch (e) {}
 
     const clientsMap = new Map();
 
+    // 1. Cargar desde Supabase clients
     dbClients.forEach(c => {
       const cId = String(c.talkytimes_id || c.id).trim();
+      if (!cId) return;
       clientsMap.set(cId, {
         id: cId,
+        talkytimesId: cId,
         name: c.name || 'Cliente',
         country: c.country || 'United States',
         birthDate: c.birth_date || 'En perfil',
@@ -585,9 +597,35 @@ app.get('/api/clients/spending-intel', async (req, res) => {
       });
     });
 
-    for (let [cId, conv] of memoryConversationsMap.entries()) {
+    // 2. Cargar desde Supabase conversations
+    dbConversations.forEach(conv => {
+      const cId = String(conv.client_id || '').trim();
+      if (!cId) return;
       const existing = clientsMap.get(cId) || {
         id: cId,
+        talkytimesId: cId,
+        name: conv.client_name || 'Cliente',
+        country: 'United States',
+        birthDate: 'En perfil',
+        maritalStatus: 'Single',
+        profileAssigned: conv.profile_name || 'HORACIO',
+        tier: 'ACTIVE_PROSPECT',
+        letterTotal: Number(conv.total_letters) || 0,
+        creditsBalance: 150,
+        updatedAt: conv.extracted_at || new Date().toISOString()
+      };
+      existing.name = conv.client_name || existing.name;
+      existing.profileAssigned = conv.profile_name || existing.profileAssigned;
+      existing.letterTotal = Math.max(existing.letterTotal, Number(conv.total_letters) || 0);
+      clientsMap.set(cId, existing);
+    });
+
+    // 3. Cargar desde memoria en vivo (memoryConversationsMap)
+    for (let [cId, conv] of memoryConversationsMap.entries()) {
+      const cleanId = String(cId).trim();
+      const existing = clientsMap.get(cleanId) || {
+        id: cleanId,
+        talkytimesId: cleanId,
         name: conv.client_name || 'Cliente',
         country: 'United States',
         birthDate: 'En perfil',
@@ -601,7 +639,36 @@ app.get('/api/clients/spending-intel', async (req, res) => {
       existing.name = conv.client_name || existing.name;
       existing.profileAssigned = conv.profile_name || existing.profileAssigned;
       existing.letterTotal = Math.max(existing.letterTotal, conv.total_letters || 0);
-      clientsMap.set(cId, existing);
+      clientsMap.set(cleanId, existing);
+    }
+
+    // 4. Cargar desde telemetría en vivo (liveOperatorTelemetry)
+    for (let [opName, opData] of liveOperatorTelemetry.entries()) {
+      const pName = (opData.profile || 'HORACIO').toUpperCase();
+      const opClients = opData.activeClients || opData.clients || [];
+      if (Array.isArray(opClients)) {
+        opClients.forEach(c => {
+          const cleanId = String(c.id || c.clientId || c.talkytimesId || '').trim();
+          if (!cleanId) return;
+          const existing = clientsMap.get(cleanId) || {
+            id: cleanId,
+            talkytimesId: cleanId,
+            name: c.name || c.clientName || 'Cliente Activo',
+            country: c.country || 'United States',
+            birthDate: 'En perfil',
+            maritalStatus: 'Single',
+            profileAssigned: pName,
+            tier: 'ACTIVE_PROSPECT',
+            letterTotal: Number(c.letters || c.mailCount) || 0,
+            creditsBalance: 150,
+            updatedAt: new Date().toISOString()
+          };
+          existing.name = c.name || c.clientName || existing.name;
+          existing.profileAssigned = pName || existing.profileAssigned;
+          existing.letterTotal = Math.max(existing.letterTotal, Number(c.letters || c.mailCount) || 0);
+          clientsMap.set(cleanId, existing);
+        });
+      }
     }
 
     const clientResults = [];
@@ -612,8 +679,13 @@ app.get('/api/clients/spending-intel', async (req, res) => {
       const clientMsgs = memoryClientMessagesMap.has(cId) ? Array.from(memoryClientMessagesMap.get(cId).values()) : [];
       const clientLetters = memoryClientLettersMap.has(cId) ? Array.from(memoryClientLettersMap.get(cId).values()) : [];
 
-      const msgCount = clientMsgs.length;
-      const letterCount = Math.max(clientObj.letterTotal, clientLetters.length);
+      // Buscar si este cliente tiene registro en dbConversations
+      const matchedConv = dbConversations.find(cv => String(cv.client_id).trim() === cId);
+      const convMsgs = matchedConv ? (Number(matchedConv.total_messages) || 0) : 0;
+      const convLetters = matchedConv ? (Number(matchedConv.total_letters) || 0) : 0;
+
+      const msgCount = Math.max(clientMsgs.length, convMsgs, 1);
+      const letterCount = Math.max(clientObj.letterTotal, clientLetters.length, convLetters);
 
       const profileBreakdown = {};
       const addProfileUsage = (pName, msgs, letters) => {
@@ -650,7 +722,7 @@ app.get('/api/clients/spending-intel', async (req, res) => {
         profileRevenueMap.set(pName, (profileRevenueMap.get(pName) || 0) + stats.usd);
       });
 
-      const estimatedGlobalCredits = Math.max(totalAgencyCredits, totalAgencyCredits + (clientObj.creditsBalance || 0) + (totalAgencyCredits > 100 ? Math.round(totalAgencyCredits * 0.35) : 0));
+      const estimatedGlobalCredits = Math.max(totalAgencyCredits, totalAgencyCredits + (clientObj.creditsBalance || 0) + (totalAgencyCredits > 100 ? Math.round(totalAgencyCredits * 0.35) : (spentUSD > 20 ? 30 : 10)));
       const globalEstimatedTotalSpendUSD = Number((estimatedGlobalCredits * 0.28).toFixed(2));
       const agencyShare = globalEstimatedTotalSpendUSD > 0 ? Math.min(100, Math.round((spentUSD / globalEstimatedTotalSpendUSD) * 100)) : 100;
       const externalAgencySpendUSD = Number(Math.max(0, globalEstimatedTotalSpendUSD - spentUSD).toFixed(2));
@@ -658,30 +730,40 @@ app.get('/api/clients/spending-intel', async (req, res) => {
 
       let tierLabel = '🟢 PROSPECTO';
       let tierBadgeClass = 'tier-prospect';
+      let spendingTier = 'REGULAR';
       if (spentUSD >= 80 || letterCount >= 30) {
         tierLabel = '💎 WHALE / SUPER VIP';
         tierBadgeClass = 'tier-whale';
+        spendingTier = 'WHALE';
       } else if (spentUSD >= 25 || letterCount >= 8) {
         tierLabel = '🌟 VIP';
         tierBadgeClass = 'tier-vip';
+        spendingTier = 'VIP';
       }
 
       clientResults.push({
         id: cId,
+        talkytimesId: cId,
         name: clientObj.name,
         country: clientObj.country,
         birthDate: clientObj.birthDate,
         maritalStatus: clientObj.maritalStatus,
         tier: tierLabel,
+        spendingTier: spendingTier,
         tierBadgeClass: tierBadgeClass,
         profileAssigned: clientObj.profileAssigned,
         profilesList: Object.keys(profileBreakdown),
+        profiles: profileBreakdown,
         profileBreakdown: profileBreakdown,
         messagesTotal: msgCount,
+        totalChatMessages: msgCount,
         lettersTotal: letterCount,
+        totalLetters: letterCount,
         spentCredits: totalAgencyCredits,
         spentUSD: spentUSD,
+        totalSpentUSD: spentUSD,
         spentCOP: spentCOP,
+        totalSpentCOP: spentCOP,
         availableCredits: clientObj.creditsBalance || 150,
         globalEstimatedTotalSpendUSD: globalEstimatedTotalSpendUSD,
         agencySharePercentage: agencyShare,
@@ -716,9 +798,28 @@ app.get('/api/clients/spending-intel', async (req, res) => {
     }
 
     const topSpender = clientResults.length > 0 ? clientResults[0] : null;
+    const leakingCount = clientResults.filter(c => c.isChattingOtherAgencies).length;
+    const estimatedExternalTotalUSD = Number(clientResults.reduce((acc, c) => acc + (c.externalAgencySpendUSD || 0), 0).toFixed(2));
+
+    const profilesBreakdown = Array.from(profileRevenueMap.entries()).map(([p, rev]) => ({
+      profile: p,
+      totalSpentUSD: Number(rev.toFixed(2)),
+      clientsCount: clientResults.filter(c => c.profilesList?.includes(p) || c.profileAssigned === p).length
+    }));
 
     res.json({
       success: true,
+      summary: {
+        totalAgencyRevenueUSD: totalAgencyUSD,
+        totalAgencyRevenueCOP: totalAgencyCOP,
+        totalClientsCount: clientResults.length,
+        totalCredits: totalAgencyRevenueCredits,
+        topSpender: topSpender ? { name: topSpender.name, id: topSpender.id, totalSpentUSD: topSpender.spentUSD, totalSpentCOP: topSpender.spentCOP } : null,
+        mostProfitableProfile: { profile: mostProfitableProfile, totalSpentUSD: highestProfileRev },
+        externalChattingClientsCount: leakingCount,
+        estimatedExternalSpendingUSD: estimatedExternalTotalUSD,
+        profilesBreakdown: profilesBreakdown
+      },
       kpis: {
         totalRevenueUSD: totalAgencyUSD,
         totalRevenueCOP: totalAgencyCOP,

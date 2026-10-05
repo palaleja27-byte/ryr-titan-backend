@@ -61,6 +61,7 @@
   let lastUserInteraction = Date.now();
   const AFK_THRESHOLD_SECONDS = 300;
 
+  let configuredSlaDurationSeconds = 120; // Tiempo de respuesta por defecto (2 minutos)
   let activeSlaTimers = {};
   let finedTimerKeys = new Set();
   let syncedChatsMemory = new Set();
@@ -69,8 +70,9 @@
   let isSupervisorChatOpen = false;
   let zeroCreditsClientsSet = new Set();
 
-  // CONTADOR DE REINCIDENCIAS DEL FIREWALL
+  // REGISTRO DE ALERTAS E INFRACCIONES DETALLADAS DEL FIREWALL
   let firewallInfractionsCount = 0;
+  let liveInfractionsLog = [];
 
   const PROSPECTING_MIN_QUOTA = 10;
   const PROSPECTING_CYCLE_DURATION = 1800; // 30 min
@@ -85,7 +87,9 @@
     'instagram', 'telegram', 'diner', 'transferenc', 'pay', 'cash', 'paypal',
     'when we meet', 'when i visit you', 'book a flight', 'hotel', 'meet up',
     'airport', 'tickets', 'my flight', 'in person', 'flight to', 'flying to',
-    'visit you', 'come see you', 'ticket to'
+    'visit you', 'come see you', 'ticket to', 'where are you from', 'where do you live',
+    'where r u from', 'where you from', 'de donde eres', 'donde vives', 'what city',
+    'which city', 'what country', 'marry me', 'casarnos', 'matrimonio'
   ];
 
   // 2. REGISTRO DE ACTIVIDAD HUMANA
@@ -182,6 +186,10 @@
       chrome.storage.local.get(null, (data) => {
         if (!isContextValid() || !data) return;
         
+        if (data.configuredSlaDurationSeconds) {
+          configuredSlaDurationSeconds = Number(data.configuredSlaDurationSeconds) || 120;
+        }
+
         if (data.activeSlaTimers && typeof data.activeSlaTimers === 'object') {
           activeSlaTimers = { ...data.activeSlaTimers };
         }
@@ -205,6 +213,9 @@
         }
 
         if (data.firewallInfractionsCount) firewallInfractionsCount = data.firewallInfractionsCount;
+        if (Array.isArray(data.liveInfractionsLog)) {
+          liveInfractionsLog = [...data.liveInfractionsLog];
+        }
 
         sessionData = {
           operator: data.operator || 'walther',
@@ -260,7 +271,10 @@
   function persistFirewallInfractions() {
     if (!isContextValid()) return;
     try {
-      chrome.storage.local.set({ firewallInfractionsCount });
+      chrome.storage.local.set({
+        firewallInfractionsCount,
+        liveInfractionsLog: liveInfractionsLog.slice(0, 50)
+      });
     } catch (e) {}
   }
 
@@ -300,9 +314,9 @@
         const serverMessages = [...data.messages];
         const seenIds = new Set(serverMessages.map(m => String(m.id)));
         
-        // Mantener mensajes locales optimistas no confirmados
+        // Mantener mensajes locales optimistas temporales que aún no están en el servidor
         supervisorMessagesHistory.forEach(localM => {
-          if (!seenIds.has(String(localM.id))) {
+          if (String(localM.id).startsWith('op_tmp_') && !seenIds.has(String(localM.id))) {
             serverMessages.push(localM);
             seenIds.add(String(localM.id));
           }
@@ -317,10 +331,16 @@
         if (supChatBtn) {
           if (unreadSupMessages.length > 0 && !isSupervisorChatOpen) {
             supChatBtn.classList.add('unread');
-            supChatBtn.innerText = `💬 Chat Supervisor (${unreadSupMessages.length})`;
+            supChatBtn.style.setProperty('background', 'linear-gradient(135deg, #dc2626, #b91c1c)', 'important');
+            supChatBtn.style.setProperty('border-color', '#f87171', 'important');
+            supChatBtn.style.setProperty('box-shadow', '0 0 10px rgba(239,68,68,0.7)', 'important');
+            supChatBtn.innerText = `💬 Chat Sup (${unreadSupMessages.length} NUEVO${unreadSupMessages.length > 1 ? 'S' : ''})`;
           } else {
             supChatBtn.classList.remove('unread');
-            supChatBtn.innerText = `💬 Chat Supervisor`;
+            supChatBtn.style.removeProperty('background');
+            supChatBtn.style.removeProperty('border-color');
+            supChatBtn.style.removeProperty('box-shadow');
+            supChatBtn.innerText = `💬 Chat Sup`;
           }
         }
 
@@ -347,34 +367,35 @@
       top: 45px;
       left: 50%;
       transform: translateX(-50%);
-      background: rgba(15, 23, 42, 0.95);
+      background: rgba(15, 23, 42, 0.98);
       backdrop-filter: blur(16px);
-      border: 2px solid #6366f1;
+      border: 2px solid #818cf8;
       color: #ffffff;
       padding: 12px 16px;
       border-radius: 10px;
       font-family: system-ui, sans-serif;
       font-size: 12px;
       z-index: 2147483647;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8), 0 0 15px rgba(99, 102, 241, 0.5);
       display: flex;
       flex-direction: column;
       gap: 8px;
-      width: 400px;
+      width: 420px;
       max-width: 92%;
+      animation: ryrToastSlide 0.25s ease-out;
     `;
 
     banner.innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:center;">
-        <span style="font-weight:900; color:#a5b4fc; letter-spacing:0.5px;">📢 MENSAJE DEL SUPERVISOR:</span>
+        <span style="font-weight:900; color:#c7d2fe; letter-spacing:0.5px;">📢 MENSAJE DIRECTO DEL SUPERVISOR:</span>
         <span id="btn-close-sup-banner" style="cursor:pointer; font-size:16px; color:#94a3b8; line-height:1;">✕</span>
       </div>
-      <div style="font-size:12px; line-height:1.4; color:#fde68a; font-weight:500;">
+      <div style="font-size:12px; line-height:1.4; color:#fde68a; font-weight:500; background:rgba(30,27,75,0.6); padding:8px 10px; border-radius:6px; border-left:3px solid #818cf8;">
         ${text}
       </div>
       <div style="display:flex; gap:6px;">
-        <input type="text" id="input-reply-sup" placeholder="Responder al supervisor..." style="flex:1; padding:6px 10px; background:rgba(6,9,19,0.8); border:1px solid #3730a3; color:#fff; border-radius:5px; font-size:11px; outline:none;">
-        <button id="btn-reply-sup" style="background:#6366f1; color:#fff; border:none; padding:6px 12px; border-radius:5px; font-weight:bold; cursor:pointer; font-size:11px;">Enviar</button>
+        <input type="text" id="input-reply-sup" placeholder="Responder al supervisor..." style="flex:1; padding:7px 10px; background:rgba(6,9,19,0.9); border:1px solid #4f46e5; color:#fff; border-radius:5px; font-size:11px; outline:none;">
+        <button id="btn-reply-sup" style="background:#6366f1; color:#fff; border:none; padding:7px 14px; border-radius:5px; font-weight:bold; cursor:pointer; font-size:11px;">Enviar</button>
       </div>
     `;
 
@@ -411,7 +432,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            operatorName: sessionData.operator,
+            operatorName: sessionData.operator || 'walther',
             text: replyText
           })
         });
@@ -497,6 +518,7 @@
           const item = supervisorMessagesHistory.find(m => m.id === tempId);
           if (item) item.id = resData.id;
         }
+        checkSupervisorDirectMessages();
       } catch (e) {}
     };
 
@@ -521,7 +543,7 @@
 
     checkSupervisorDirectMessages();
 
-    // Iniciar sondeo en vivo cada 2s mientras esté abierto el modal
+    // Iniciar sondeo en vivo cada 1.5s mientras esté abierto el modal
     if (supervisorChatPollTimer) clearInterval(supervisorChatPollTimer);
     supervisorChatPollTimer = setInterval(() => {
       if (isSupervisorChatOpen) {
@@ -530,7 +552,7 @@
         clearInterval(supervisorChatPollTimer);
         supervisorChatPollTimer = null;
       }
-    }, 2000);
+    }, 1500);
   }
 
   window.editSupervisorMsgFromHud = async (msgId, currentText) => {
@@ -662,46 +684,228 @@
   syncBannedWords();
   setInterval(syncBannedWords, 15000);
 
-  // 9. FIREWALL DE 3 CAPAS & PREVENCIÓN DE TRAVEL MISLEADING (TM)
+  // 9. FIREWALL MULTILINGÜE DE 3 CAPAS & PREVENCIÓN DE TRAVEL MISLEADING (TM)
   function checkViolationInText(text) {
-    if (!text || text.length < 2) return false;
-    const lower = text.toLowerCase();
-    return bannedRoots.some(root => lower.includes(root.toLowerCase()));
+    if (!text || text.length < 2) return null;
+    
+    // Normalización universal (remueve tildes, acentos y diacríticos para compatibilidad total con PT, ES, EN, FR, IT, DE, RU)
+    const rawLower = text.toLowerCase().trim();
+    const normalized = text
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "") // remove accents (você -> voce, dónde -> donde, etc.)
+      .replace(/[\r\n\t]+/g, " ")
+      .trim();
+
+    // 1. TRAVEL MISLEADING MULTILINGÜE (PT, ES, EN, FR, IT, DE, RU)
+    const tmNormalizedPatterns = [
+      // PORTUGUÊS 🇧🇷 🇵🇹
+      /\b(de\s+onde|d\s*onde)\s+(voce|voces|vc|vcs|tu|o\s+senhor|a\s+senhora)\s+(e|eh|mora|vive|vem|esta|ta)\b/i,
+      /\b(onde|aonde)\s+(voce|vc|tu)\s+(mora|vive|esta|ta|fica|reside)\b/i,
+      /\b(qual|de\s+qual|em\s+qual)\s+(cidade|pais|estado|lugar|regiao)\b/i,
+      /\b(qual\s+e\s+a\s+sua\s+cidade|qual\s+o\s+seu\s+pais)\b/i,
+      /\b(quando|qdo)\s+(a\s+gente|nos|vc|voce)\s+(vai|vamos|pode|podemos)?\s*(se\s+ver|se\s+encontra|se\s+conhecer|viajar)\b/i,
+      /\b(quando\s+voce\s+vem|quando\s+vc\s+vem|vem\s+me\s+ver|vem\s+me\s+visitar)\b/i,
+      /\b(me\s+visita|te\s+visitar|visitar\s+voce|ir\s+te\s+ver|ir\s+na\s+sua\s+casa|ir\s+ao\s+seu\s+encontro)\b/i,
+      /\b(conhecer\s+pessoalmente|nos\s+vermos\s+pessoalmente|encontro\s+em\s+pessoa)\b/i,
+      /\b(comprar|compro|compro\s+uma)\s+(passagem|passagens|voo|passagem\s+aerea|bilhete)\b/i,
+      /\b(passagem\s+aerea|passagens\s+aereas|meu\s+voo|seu\s+voo|comprar\s+o\s+voo)\b/i,
+      /\b(aeroporto|pousada|resort|hotel)\b/i,
+      /\b(viajar\s+juntos|viajar\s+juntas|nossa\s+viagem|viajar\s+para)\b/i,
+
+      // ESPAÑOL 🇪🇸 🇨🇴 🇲🇽 🇦🇷
+      /\bde\s+donde\s+(eres|vienes|sos|estas)\b/i,
+      /\bdonde\s+(vives|estas|te\s+encuentras|viviendo|paras|resides)\b/i,
+      /\b(de|en)\s+que\s+(ciudad|pais|estado|lugar)\b/i,
+      /\b(cual\s+es\s+tu\s+ciudad|cual\s+es\s+tu\s+pais)\b/i,
+      /\bcuando\s+(nos\s+vemos|vamos\s+a\s+vernos|te\s+veo|vienes|viajas|viajamos|puedes\s+venir)\b/i,
+      /\b(vernos\s+en\s+persona|conocernos\s+en\s+persona|estar\s+en\s+persona)\b/i,
+      /\b(ir\s+a\s+verte|venir\s+a\s+verme|visitarte|visitarme)\b/i,
+      /\b(comprar\s+(el\s+)?vuelo|comprar\s+boletos?|comprar\s+pasajes?)\b/i,
+      /\b(boletos?\s+(de\s+)?avion|pasajes?\s+aereos?|mi\s+vuelo|tu\s+vuelo)\b/i,
+      /\b(aeropuerto|hotel|airbnb|viajar\s+juntos|viaje\s+juntos)\b/i,
+
+      // ENGLISH 🇺🇸 🇬🇧
+      /\bwhere\s+(are|r|is)\s*(you|u|ya)\s*(from|living|staying|located)\b/i,
+      /\bwhere\s+(do|d)\s*(you|u|ya)\s*live\b/i,
+      /\bwhere\s*(you|u|ya)\s*from\b/i,
+      /\bwhat\s+(city|country|state|place)\s*(are|do|r|d)\s*(you|u)\b/i,
+      /\bwhich\s+(city|country|state)\b/i,
+      /\bwhen\s*(are\s*we|can\s*we|will\s*we|do\s*we)\s*(meet|see\s*each\s*other|catch\s*up|hang\s*out)\b/i,
+      /\bwhen\s*(will\s*you|can\s*you|do\s*you|are\s*you\s*gonna)\s*(visit|come\s*over|come\s*see|fly)\b/i,
+      /\b(meet\s*up|in\s*person|come\s*see\s*(me|you)|come\s*visit\s*(me|you)|visit\s*(me|you))\b/i,
+      /\b(book|buy)\s*(a\s*)?(flight|plane\s*ticket|hotel|room|airbnb)\b/i,
+      /\b(flight\s*to|flying\s*to|plane\s*ticket|my\s*flight|your\s*flight)\b/i,
+      /\b(vacation\s*together|trip\s*together|travel\s*together|travel\s*to)\b/i,
+      /\b(hotel|airport|airbnb|motel|resort)\b/i,
+
+      // FRANÇAIS 🇫🇷
+      /\b(d\s*ou\s*tu\s*es|d\s*ou\s*viens\s*tu|d\s*ou\s*venez\s*vous|tu\s+es\s+d\s*ou|tu\s+viens\s+d\s*ou)\b/i,
+      /\b(ou\s+tu\s+habites|tu\s+habites\s+ou|ou\s+vous\s+habitez|ou\s+vis\s+tu|tu\s+vis\s+ou)\b/i,
+      /\b(quelle\s+ville|quel\s+pays)\b/i,
+      /\b(quand\s+on\s+se\s+voit|quand\s+tu\s+viens|se\s+voir\s+en\s+vrai|rencontrer\s+en\s+personne)\b/i,
+      /\b(billet\s+d\s*avion|vol\s+pour|aeroport|hotel)\b/i,
+
+      // ITALIANO 🇮🇹
+      /\b(di\s+dove\s+sei|dove\s+vivi|dove\s+abiti|di\s+che\s+citta|di\s+quale\s+paese)\b/i,
+      /\b(quando\s+ci\s+vediamo|quando\s+vieni|incontrarci\s+di\s+persona|vederci\s+di\s+persona)\b/i,
+      /\b(biglietto\s+aereo|volo\s+per|aeroporto|hotel)\b/i,
+
+      // DEUTSCH 🇩🇪
+      /\b(woher\s+kommst\s+du|woher\s+kommen\s+sie|wo\s+wohnst\s+du|wo\s+lebst\s+du|welche\s+stadt|welches\s+land)\b/i,
+      /\b(wann\s+treffen\s+wir\s+uns|wann\s+kommst\s+du|personlich\s+treffen|in\s+person\s+treffen)\b/i,
+      /\b(flugticket|flug\s+nach|flughafen|hotel)\b/i
+    ];
+
+    for (const pat of tmNormalizedPatterns) {
+      if (pat.test(normalized) || pat.test(rawLower)) {
+        return {
+          type: 'TRAVEL_MISLEADING',
+          title: '✈️ Travel Misleading (Ubicación / Encuentro / Vuelos)',
+          sample: normalized.match(pat)?.[0] || 'Ubicación/Viaje'
+        };
+      }
+    }
+
+    // RUSSIAN / CIRÍLICO 🇷🇺
+    const tmCyrillicPatterns = [
+      /\b(откуда\s+ты|где\s+ты\s+живешь|где\s+живешь|в\s+каком\s+городе|в\s+какой\s+стране|какой\s+город|какая\s+страна)\b/i,
+      /\b(когда\s+увидимся|когда\s+встретимся|приедешь\s+ко\s+мне|прилетишь\s+ко\s+мне|встретиться\s+вживую|увидеться\s+вживую)\b/i,
+      /\b(билет\s+на\s+самолет|купить\s+билет|самолет|аэропорт|отель|гостиница)\b/i
+    ];
+    for (const pat of tmCyrillicPatterns) {
+      if (pat.test(rawLower)) {
+        return {
+          type: 'TRAVEL_MISLEADING',
+          title: '✈️ Travel Misleading (Ubicación / Encuentro / Vuelos - RU)',
+          sample: rawLower.match(pat)?.[0] || 'Ubicación/Viaje'
+        };
+      }
+    }
+
+    // 2. FUGA DE CONTACTO / DATOS PRIVADOS MULTILINGÜE
+    const contactPatterns = [
+      /\bwhatsapp\b/i, /\btelegram\b/i, /\binstagram\b/i, /\bskype\b/i, /\bfacebook\b/i, /\btiktok\b/i,
+      /\bemail\b/i, /\bcorreo\b/i, /\bgmail\b/i, /\bhotmail\b/i, /\byahoo\b/i, /\boutlook\b/i,
+      /\b(phone\s*number|numero\s*de\s*telefono|numero\s*de\s*celular|meu\s*numero|mi\s*numero|my\s*number|mon\s*numero|meu\s*zap|meu\s*whats)\b/i,
+      /\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/,
+      /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/
+    ];
+
+    for (const pat of contactPatterns) {
+      if (pat.test(normalized) || pat.test(rawLower)) {
+        return {
+          type: 'CONTACT_LEAK',
+          title: '📱 Fuga de Contacto / Datos Externos',
+          sample: normalized.match(pat)?.[0] || 'Contacto externo'
+        };
+      }
+    }
+
+    // 3. MANIPULACIÓN DE REGALOS / TOKENS / DINERO MULTILINGÜE
+    const giftPatterns = [
+      /\b(send|buy)\s*me\s*(a\s*)?(gift|present|token|money|credit)\b/i,
+      /\bgift\s*me\b/i,
+      /\b(regalame|comprame|mandame)\s*(un\s*)?(regalo|detalle|token|moneda|dinero)\b/i,
+      /\b(me\s+da\s+um\s+presente|me\s+manda\s+um\s+presente|compra\s+um\s+presente|me\s+manda\s+dinheiro|me\s+manda\s+tokens)\b/i,
+      /\bpaypal\b/i, /\bcash\s*app\b/i, /\bwestern\s*union\b/i, /\btransferenc\b/i, /\bcrypto\b/i, /\bpix\b/i
+    ];
+
+    for (const pat of giftPatterns) {
+      if (pat.test(normalized) || pat.test(rawLower)) {
+        return {
+          type: 'GIFT_MANIPULATION',
+          title: '🎁 Manipulación de Regalos / Dinero Prohibida',
+          sample: normalized.match(pat)?.[0] || 'Solicitud de regalo'
+        };
+      }
+    }
+
+    // 4. PROMESAS DE MATRIMONIO MULTILINGÜE
+    const marriagePatterns = [
+      /\bmarry\s*me\b/i, /\bwhen\s*we\s*marry\b/i, /\bget\s*married\b/i,
+      /\bcasarnos\b/i, /\bmatrimonio\b/i, /\bboda\b/i, /\bmi\s*espos[oa]\b/i, /\bmy\s*(husband|wife)\b/i,
+      /\bcasar\s+comigo\b/i, /\bquando\s+a\s+gente\s+casar\b/i, /\bmeu\s+marido\b/i, /\bmi\s+esposa\b/i, /\bminha\s+esposa\b/i
+    ];
+
+    for (const pat of marriagePatterns) {
+      if (pat.test(normalized) || pat.test(rawLower)) {
+        return {
+          type: 'MARRIAGE_PROMISE',
+          title: '💍 Promesa de Matrimonio / Compromiso',
+          sample: normalized.match(pat)?.[0] || 'Matrimonio'
+        };
+      }
+    }
+
+    // 5. Raíces dinámicas adicionales desde backend
+    for (const root of bannedRoots) {
+      if (root && root.length > 2 && (normalized.includes(root.toLowerCase()) || rawLower.includes(root.toLowerCase()))) {
+        return {
+          type: 'CUSTOM_BANNED_ROOT',
+          title: `🛡️ Término Restringido ("${root}")`,
+          sample: root
+        };
+      }
+    }
+
+    return null;
   }
 
   function enforceFirewall(e) {
     const inputs = document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"]');
     let anyViolation = false;
+    let currentViolationInfo = null;
 
     inputs.forEach(input => {
       if (input.id?.includes('intel') || input.id?.includes('search') || input.id?.includes('reply') || input.id?.includes('sup')) return;
       
       const text = (input.value || input.innerText || '').trim();
-      const hasViolation = checkViolationInText(text);
+      const violation = checkViolationInText(text);
 
-      if (hasViolation) {
+      if (violation) {
         anyViolation = true;
+        currentViolationInfo = violation;
         input.style.setProperty('border', '2px solid #ef4444', 'important');
+        input.style.setProperty('box-shadow', '0 0 10px rgba(239, 68, 68, 0.5)', 'important');
 
         if (e && e.type === 'keydown' && e.key === 'Enter' && e.target === input) {
           e.preventDefault();
           e.stopPropagation();
-          showFirewallToast('🚨 Infracción de Protocolo: Prohibido Travel Misleading o fuga de datos.');
+          showFirewallToast(`🚨 Infracción Bloqueada: ${violation.title}.`);
+
+          const { clientName } = getExactClientProfileData();
+          const infractionRecord = {
+            id: `inf_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            timestamp: Date.now(),
+            timeFormatted: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            rule: violation.type,
+            ruleTitle: violation.title,
+            snippet: text.length > 140 ? text.substring(0, 140) + '...' : text,
+            clientName: clientName || 'Chat en Vivo',
+            operator: sessionData.operator || 'walther',
+            profile: sessionData.profileName || 'HORACIO'
+          };
+          liveInfractionsLog.unshift(infractionRecord);
+          if (liveInfractionsLog.length > 50) liveInfractionsLog.pop();
+
           firewallInfractionsCount++;
           persistFirewallInfractions();
           sendTelemetry(true);
         }
       } else {
-        if (input.style.borderColor === 'rgb(239, 68, 68)') {
+        if (input.style.borderColor === 'rgb(239, 68, 68)' || input.style.border.includes('239, 68, 68')) {
           input.style.removeProperty('border');
+          input.style.removeProperty('box-shadow');
         }
       }
     });
 
-    const sendButtons = document.querySelectorAll('button, [role="button"], div[class*="send"]');
+    // Localizar y bloquear TODOS los botones de envío en el chat y cartas
+    const sendButtons = document.querySelectorAll('button, [role="button"], div[class*="send" i], a[class*="send" i]');
     sendButtons.forEach(btn => {
-      const btnText = btn.innerText.toLowerCase();
-      const isSendBtn = (btnText.includes('send') || btnText.includes('enviar') || btn.querySelector('svg') || (btn.className && btn.className.toLowerCase().includes('send'))) &&
+      const btnText = (btn.innerText || btn.textContent || '').toLowerCase().trim();
+      const isSendBtn = (btnText === 'send' || btnText.startsWith('send') || btnText === 'enviar' || btn.querySelector('svg') || (btn.className && btn.className.toLowerCase().includes('send'))) &&
                         !btn.classList.contains('ryr-row-extract-btn') && 
                         !btn.classList.contains('ryr-btn-logout') &&
                         !btn.classList.contains('ryr-btn-intel') &&
@@ -715,9 +919,11 @@
           btn.classList.add('ryr-btn-blocked-force');
           btn.disabled = true;
           btn.style.setProperty('pointer-events', 'none', 'important');
-          btn.style.setProperty('filter', 'grayscale(100%)', 'important');
-          btn.style.setProperty('opacity', '0.45', 'important');
-          btn.style.setProperty('background', '#9ca3af', 'important');
+          btn.style.setProperty('filter', 'grayscale(90%)', 'important');
+          btn.style.setProperty('opacity', '0.35', 'important');
+          btn.style.setProperty('background', '#ef4444', 'important');
+          btn.style.setProperty('cursor', 'not-allowed', 'important');
+          btn.setAttribute('title', `🚨 ENVÍO BLOQUEADO: ${currentViolationInfo?.title || 'Travel Misleading detectado'}`);
         } else {
           btn.classList.remove('ryr-btn-blocked-force');
           btn.disabled = false;
@@ -725,6 +931,8 @@
           btn.style.removeProperty('filter');
           btn.style.removeProperty('opacity');
           btn.style.removeProperty('background');
+          btn.style.removeProperty('cursor');
+          btn.removeAttribute('title');
         }
       }
     });
@@ -806,12 +1014,20 @@
   // 10. EXTRACTOR QUIRÚRGICO DE DATOS DE CLIENTE & INYECCIÓN DE AGENCIA
   function sanitizeClientName(raw) {
     if (!raw) return 'Cliente';
-    const clean = raw
-      .split('\n')[0]
+    const firstLine = raw.split('\n')[0].trim();
+    let clean = firstLine
       .replace(/(\d+\s*(minute|hour|day|week|month)s?\s*ago|\ban hour ago\b|\d+\s*[✉💬]|\bonline\b|\btyping\b|\bSearch\b|\bMessages\b)/gi, '')
       .replace(/\s+/g, ' ')
       .replace(/^,\s*/, '')
       .trim();
+
+    // Descartar si es timestamp, fecha o etiqueta de previsualización
+    if (/^\d{1,2}:\d{2}\s*(?:am|pm|a\.?\s*m\.?|p\.?\s*m\.?)?$/i.test(clean) ||
+        /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s*\d{0,2}$/i.test(clean) ||
+        /^(?:today|yesterday|hoy|ayer)$/i.test(clean) ||
+        /^(?:you:|tú:|tu:|você:|photo|sticker|audio|video|gift|seen|media|unread|sent)$/i.test(clean)) {
+      return 'Cliente';
+    }
 
     const noisyWords = ['yes', 'no', 'open', 'search', 'messages', 'mail', 'gifts', 'account', 'titan apex', 'mute', 'listened', 'public photos', 'my content'];
     if (noisyWords.includes(clean.toLowerCase()) || clean.length < 2) {
@@ -1340,7 +1556,7 @@
       }
     };
 
-    // Acción de Responder Chat (Modo Contextual con 3 Opciones Compactas en Tiempo Real)
+    // Acción de Responder Chat (Modo Contextual Ultra-Humanizado con Razonamiento IA en Tiempo Real)
     hookBtn.onclick = async (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -1364,8 +1580,6 @@
         liveDetectedLang = { code: 'en', name: 'English 🇺🇸', flag: '🇺🇸' };
       }
 
-      const liveHasHistory = liveClientMessages.length > 0;
-      const liveLastClientMsg = liveClientMessages.length > 0 ? liveClientMessages[liveClientMessages.length - 1].text : '';
       const isSyncedInDb = syncedChatsMemory.has(String(liveClientId).toLowerCase()) || (liveClientName && syncedChatsMemory.has(liveClientName.toLowerCase()));
       const showMissingHistoryWarning = !isSyncedInDb && liveClientMessages.length <= 2 && (!liveLetters || liveLetters.length === 0);
 
@@ -1373,364 +1587,62 @@
       dropdown.className = 'ryr-chat-hooks-dropdown';
       toolsWrapper.appendChild(dropdown);
 
-      const generateSmartContextualHooks = () => {
-        const fullChatString = liveClientMessages.map(m => m.text).join(' ').toLowerCase();
-        const lastMsgLower = (liveLastClientMsg || '').toLowerCase();
+      const headerTitleText = `🔄 RESPONDER CHAT A ${liveClientName.toUpperCase()} (${liveDetectedLang.name}):`;
 
-        // 1. Detectar si habla de dolor de cabeza, enfermedad, lluvia, frío, autobús, analgésico o reposo
-        const hasSicknessOrHeadache = liveHasHistory && (
-          /\b(headache|analgesic|fever|flu)\b|head is aching|\b(sick|ill|medicine|pill|cold rain|resting)\b|\b(dolor de cabeza|analg[eé]sico|fiebre|enferm[oa]|medicamento|pastilla)\b/i.test(fullChatString) ||
-          /\b(headache|analgesic|fever|flu|sick|ill|medicine|pill|resting|dolor|cabeza|fiebre)\b|head is aching/i.test(lastMsgLower)
-        );
-
-        // 2. Detectar si habla de café, comida, bebida o foto de café
-        const hasCoffeeOrFood = liveHasHistory && (
-          /\b(coffee|caf[eé]|tea|drink|drinking|cup|breakfast|dinner|lunch|taza)\b/i.test(fullChatString) ||
-          /\b(coffee|caf[eé]|tea|cup|drink)\b/i.test(lastMsgLower)
-        );
-
-        // 3. Detectar si pregunta si nos vamos o si estamos ocupados
-        const hasLeavingOrBusy = liveHasHistory && (
-          /\b(leaving|leaving already|have something to do|going away|say goodbye|busy|ocupad[oa]|te vas|te tienes que ir)\b/i.test(lastMsgLower) ||
-          /\b(leaving|have something to do)\b/i.test(fullChatString)
-        );
-
-        // 4. Detectar si hubo reacción a Newsfeed / Post
-        const hasNewsfeedLiked = liveHasHistory && (
-          lastMsgLower.includes('newsfeed') || lastMsgLower.includes('post') || lastMsgLower.includes('liked your')
-        );
-
-        // 5. Detectar piropos, elogios o nombres cariñosos
-        const isCompliment = liveHasHistory && (
-          /\b(love|blonde|beautiful|gorgeous|sexy|angel|queen|honey|darling|sweetheart|mahal|linda|hermosa|rubia|amor|cielo|coraz[oó]n|princesa|preciosa)\b/i.test(lastMsgLower)
-        );
-
-        // 6. Detectar saludo o pregunta de cómo está
-        const isGreeting = liveHasHistory && (
-          /(how are you|how is your day|how are things|what are you up to|hello|hi\b|hey\b|good morning|good afternoon|good evening|c[oó]mo est[aá]s|qu[eé] tal|hola)/i.test(lastMsgLower)
-        );
-
-        let options = [];
-
-        if (hasSicknessOrHeadache) {
-          if (liveDetectedLang.code === 'es') {
-            options = [
-              {
-                title: '🪝 Opción 1: Gancho para Avivarlo',
-                target: `Quiero quedarme aquí haciéndote compañía hasta que te sientas mucho mejor ❤️ Cierra tus ojitos y dime, ¿qué es lo que más te reconforta cuando estás descansando?`,
-                es: `Acompañamiento íntimo y pregunta reconfortante para que siga chateando.`
-              },
-              {
-                title: '💬 Opción 2: Contestar Conversación',
-                target: `Por favor descansa, tómate tu analgésico y abrígate mucho del frío y la lluvia... Me encantaría abrazarte muy fuerte justo ahora para que duermas en paz ❤️`,
-                es: `Empatía directa con su dolor de cabeza, el frío/lluvia y respuesta cariñosa a su deseo de abrazo.`
-              },
-              {
-                title: '✨ Opción 3: Llamar la Atención (Foto)',
-                target: `Estás en mis pensamientos, cariño. Cuando despiertes, envíame una foto tuya descansando para saber que estás bien 😉 Yo te mandaré una especial también.`,
-                es: `Petición de foto de descanso con reciprocidad protectora.`
-              }
-            ];
-          } else {
-            options = [
-              {
-                title: '🪝 Opción 1: Gancho para Avivarlo',
-                target: `I want to stay right here keeping you company until you feel all better ❤️ Close your eyes and tell me, what makes you feel the most comforted when you're resting?`,
-                es: `Acompañamiento íntimo y pregunta reconfortante para que siga chateando sin esfuerzo.`
-              },
-              {
-                title: '💬 Opción 2: Contestar Conversación',
-                target: `Please rest, take your medicine, and stay warm away from that rain... I wish I could wrap my arms around you and hold you tight right now so you can sleep peacefully ❤️`,
-                es: `Empatía directa con su dolor de cabeza, el frío/lluvia y respuesta cariñosa a su deseo de abrazarte.`
-              },
-              {
-                title: '✨ Opción 3: Llamar la Atención (Foto)',
-                target: `You are in my thoughts, sweetheart. When you wake up, send me a little picture of you resting so I know you're feeling better 😉 I'll send you an exclusive photo too!`,
-                es: `Petición de foto de descanso con reciprocidad protectora.`
-              }
-            ];
-          }
-        } else if (hasCoffeeOrFood || (hasLeavingOrBusy && hasCoffeeOrFood)) {
-          if (liveDetectedLang.code === 'es') {
-            options = [
-              {
-                title: '🪝 Opción 1: Gancho para Avivarlo',
-                target: `¡Ver tu café me dio antojo a mí también! 😉 Cuéntame, ¿cuál es tu postre o antojo favorito para acompañar una buena charla?`,
-                es: `Pregunta pícara y divertida para profundizar en sus gustos favoritos.`
-              },
-              {
-                title: '💬 Opción 2: Contestar Conversación',
-                target: `¡Ese café se ve delicioso! ❤️ Jamás me iría sin antes tomarme un lindo momento para hablar contigo... ¿Cómo va tu tarde?`,
-                es: `Aseguras tu atención exclusiva y elogias su café/comida.`
-              },
-              {
-                title: '✨ Opción 3: Llamar la Atención (Foto)',
-                target: `La próxima vez que tomes café, envíame una foto de tu sonrisa disfrutándolo para sentir que lo compartimos 😉 ¿Trato?`,
-                es: `Petición magnética de foto cotidiana vinculada a su café.`
-              }
-            ];
-          } else {
-            options = [
-              {
-                title: '🪝 Opción 1: Gancho para Avivarlo',
-                target: `Seeing your coffee actually made me crave one too 😉 Tell me, what's your favorite sweet treat or guilty pleasure when taking a break?`,
-                es: `Pregunta pícara y divertida para profundizar en sus gustos favoritos.`
-              },
-              {
-                title: '💬 Opción 2: Contestar Conversación',
-                target: `That coffee looks so delicious! ❤️ I could never just leave without taking a sweet moment to chat with you... How is your day going?`,
-                es: `Respuesta directa sobre su café/comida asegurando tu tiempo exclusivo.`
-              },
-              {
-                title: '✨ Opción 3: Llamar la Atención (Foto)',
-                target: `Next time you have coffee, send me a picture of your smile enjoying it so we can share the moment together 😉 Deal?`,
-                es: `Petición magnética de foto cotidiana vinculada a su café.`
-              }
-            ];
-          }
-        } else if (hasLeavingOrBusy) {
-          if (liveDetectedLang.code === 'es') {
-            options = [
-              {
-                title: '🪝 Opción 1: Gancho para Avivarlo',
-                target: `Siempre tengo un momento especial reservado solo para ti ❤️ Dime, ¿qué es algo curioso o divertido que te haya pasado hoy?`,
-                es: `Despierta curiosidad y anima el diálogo.`
-              },
-              {
-                title: '💬 Opción 2: Contestar Conversación',
-                target: `¡Para nada! Nunca estoy demasiado ocupada para alguien que me hace sonreír tanto 😉 ¿Cómo te estás sintiendo hoy?`,
-                es: `Respuesta directa desmintiendo que te vas y reafirmando tu afecto.`
-              },
-              {
-                title: '✨ Opción 3: Llamar la Atención',
-                target: `Estaba sonriendo pensando en nuestras charlas ✨ Dime, ¿qué es algo que siempre te alegra el día sin falta?`,
-                es: `Validación emocional y anclaje a sensaciones positivas.`
-              }
-            ];
-          } else {
-            options = [
-              {
-                title: '🪝 Opción 1: Gancho para Avivarlo',
-                target: `I always have a special moment reserved just for you ❤️ Tell me, what's one secret dream or fun thought you've had today?`,
-                es: `Despierta misterio y curiosidad para mantener el chat activo.`
-              },
-              {
-                title: '💬 Opción 2: Contestar Conversación',
-                target: `Not at all, sweetie! I'm never too busy for someone who brings such a genuine smile to my face 😉 How are you feeling today?`,
-                es: `Respuesta directa desmintiendo que te vas y reafirmando tu afecto.`
-              },
-              {
-                title: '✨ Opción 3: Llamar la Atención',
-                target: `I was just smiling looking at our messages ✨ Tell me, what is something that always brightens up your mood without fail?`,
-                es: `Validación emocional y anclaje a sensaciones positivas.`
-              }
-            ];
-          }
-        } else if (hasNewsfeedLiked) {
-          if (liveDetectedLang.code === 'es') {
-            options = [
-              {
-                title: '🪝 Opción 1: Gancho para Avivarlo',
-                target: `Me encanta saber que estás tan atento a mis publicaciones 😉 ¿Qué fue lo primero que sentiste o pensaste al verla?`,
-                es: `Pregunta intrigante sobre su reacción inmediata al post.`
-              },
-              {
-                title: '💬 Opción 2: Contestar Conversación',
-                target: `Vi que te gustó mi publicación... Me alegra muchísimo que hayas conectado con ese pensamiento ❤️ ¿Qué momentos te dan más paz?`,
-                es: `Agradecimiento por su reacción y conexión íntima de tranquilidad.`
-              },
-              {
-                title: '✨ Opción 3: Llamar la Atención (Foto)',
-                target: `Esa foto guarda un recuerdo muy lindo para mí ✨ Envíame una foto de lo que estás haciendo hoy para conocer más tu mundo 😉`,
-                es: `Petición de foto de su entorno con reciprocidad.`
-              }
-            ];
-          } else {
-            options = [
-              {
-                title: '🪝 Opción 1: Gancho para Avivarlo',
-                target: `I love knowing you are paying close attention to my world and my thoughts 😉 What was the first thing that crossed your mind when you saw it?`,
-                es: `Pregunta intrigante sobre su reacción inmediata al post.`
-              },
-              {
-                title: '💬 Opción 2: Contestar Conversación',
-                target: `I saw you liked my post... It truly warms my heart that you connected with that thought ❤️ What kind of quiet moments bring you the most peace?`,
-                es: `Agradecimiento por su like en el post y conexión íntima de tranquilidad.`
-              },
-              {
-                title: '✨ Opción 3: Llamar la Atención (Foto)',
-                target: `That picture holds a very special memory for me ✨ Send me a picture of what you're doing right now so I can see your world too 😉`,
-                es: `Petición de foto de su entorno a cambio de la foto del post.`
-              }
-            ];
-          }
-        } else if (isCompliment) {
-          if (liveDetectedLang.code === 'es') {
-            options = [
-              {
-                title: '🪝 Opción 1: Gancho para Avivarlo',
-                target: `Siempre sabes cómo hacerme suspirar con tus palabras tan dulces 😉 Dime, ¿cuál ha sido el detalle más romántico de tu vida?`,
-                es: `Indagación romántica profunda para mantenerlo emocionado.`
-              },
-              {
-                title: '💬 Opción 2: Contestar Conversación',
-                target: `Saber de ti siempre es la parte más linda y especial de mi día ❤️ ¿Cómo te ha tratado la vida hoy, cariño?`,
-                es: `Devolución cariñosa y agradecida a su halago.`
-              },
-              {
-                title: '✨ Opción 3: Llamar la Atención (Foto)',
-                target: `¡Estaba sonriendo pensando en ti! Envíame una foto de tu sonrisa ahora mismo y yo te enviaré una exclusiva a cambio 😉 ¿Trato?`,
-                es: `Gancho de alto impacto para intercambio recíproco de fotos.`
-              }
-            ];
-          } else {
-            options = [
-              {
-                title: '🪝 Opción 1: Gancho para Avivarlo',
-                target: `You always know how to make my heart flutter with your sweet words 😉 Tell me, what is the most romantic thing someone has ever done for you?`,
-                es: `Indagación romántica profunda para mantenerlo soñando despierto.`
-              },
-              {
-                title: '💬 Opción 2: Contestar Conversación',
-                target: `Hearing from you is honestly the sweetest part of my day ❤️ How has your day been treating you so far, my dear?`,
-                es: `Devolución cariñosa y agradecida a su halago.`
-              },
-              {
-                title: '✨ Opción 3: Llamar la Atención (Foto)',
-                target: `I was just blushing thinking about you! Send me a picture of your smile right now, and I'll send you an exclusive photo in return 😉 Deal?`,
-                es: `Desafío de intercambio de fotos con reciprocidad irresistible.`
-              }
-            ];
-          }
-        } else if (isGreeting || liveHasHistory) {
-          if (liveDetectedLang.code === 'es') {
-            options = [
-              {
-                title: '🪝 Opción 1: Gancho para Avivarlo',
-                target: `Estaba tomándome un pequeño descanso y deseando saber de ti 😉 ¿Qué es algo que te haya sacado una gran sonrisa hoy?`,
-                es: `Pregunta positiva y curiosa para dinamizar la conversación.`
-              },
-              {
-                title: '💬 Opción 2: Contestar Conversación',
-                target: `Estoy teniendo un día muy tranquilo, y ver tu mensaje lo hizo mucho más especial ❤️ ¿Cómo empezó tu día hoy?`,
-                es: `Saludo dulce y apertura de diálogo sobre su rutina.`
-              },
-              {
-                title: '✨ Opción 3: Llamar la Atención',
-                target: `Cada vez que veo un mensaje tuyo me alegro mucho ✨ Dime, ¿qué estás haciendo justo en este momento?`,
-                es: `Validación coqueta para provocar respuesta inmediata.`
-              }
-            ];
-          } else {
-            options = [
-              {
-                title: '🪝 Opción 1: Gancho para Avivarlo',
-                target: `I was just taking a little break and hoping to hear from you 😉 What is one thing that has been keeping you smiling lately?`,
-                es: `Pregunta positiva y curiosa para dinamizar la conversación.`
-              },
-              {
-                title: '💬 Opción 2: Contestar Conversación',
-                target: `I'm having a calm day, and seeing your message just made it so much brighter ❤️ How did your morning start off?`,
-                es: `Saludo dulce y apertura de diálogo sobre su rutina.`
-              },
-              {
-                title: '✨ Opción 3: Llamar la Atención',
-                target: `Every time your name pops up on my screen, my day gets a little sweeter ✨ What are you up to right at this moment?`,
-                es: `Validación coqueta para provocar respuesta inmediata.`
-              }
-            ];
-          }
-        } else {
-          // Apertura para usuario nuevo (Atracción pura - Cero ubicaciones / Cero TM)
-          if (liveDetectedLang.code === 'es') {
-            options = [
-              {
-                title: '🪝 Opción 1: Gancho de Atracción',
-                target: `Tienes una energía muy dulce y una mirada muy serena en tus fotos ❤️ Dime, ¿qué es algo que te apasione profundamente en la vida?`,
-                es: `Pregunta de atracción sobre pasiones personales.`
-              },
-              {
-                title: '💬 Opción 2: Contestar / Saludo Inicial',
-                target: `Tuve una hermosa corazonada de saludarte el día de hoy 😉 ¿Cómo te ha estado tratando tu semana?`,
-                es: `Saludo espontáneo y abierto.`
-              },
-              {
-                title: '✨ Opción 3: Llamar la Atención',
-                target: `Tu sonrisa de verdad me llamó mucho la atención ✨ Cuéntame un pequeño sueño o secreto tuyo que pocos conozcan...`,
-                es: `Gancho intrigante y de misterio que despierta curiosidad.`
-              }
-            ];
-          } else {
-            options = [
-              {
-                title: '🪝 Opción 1: Gancho de Atracción',
-                target: `You have such a warm and gentle energy in your photos ❤️ Tell me, what is something you are truly passionate about in your everyday life?`,
-                es: `Pregunta de alto impacto sobre sus pasiones personales.`
-              },
-              {
-                title: '💬 Opción 2: Contestar / Saludo Inicial',
-                target: `I had a sudden lovely feeling that I should say hello to you today 😉 How is your day treating you so far?`,
-                es: `Saludo espontáneo y abierto.`
-              },
-              {
-                title: '✨ Opción 3: Llamar la Atención',
-                target: `Your smile genuinely caught my attention ✨ Tell me a small dream or secret of yours that few people know about...`,
-                es: `Gancho intrigante y de misterio que despierta curiosidad.`
-              }
-            ];
-          }
-        }
-
-        return options;
-      };
-
-      const renderHooks = (hooksList) => {
-        const headerTitleText = `🔄 RESPONDER CHAT A ${liveClientName.toUpperCase()} (${liveDetectedLang.name}):`;
-
-        let warningHtml = '';
-        if (showMissingHistoryWarning) {
-          warningHtml = `
-            <div class="ryr-no-info-warning">
-              <span style="font-size:10px; line-height:1.2;">⚠️ <b>Sin historial previo en BD:</b> Sube las conversaciones para contexto 360°.</span>
-              <button class="ryr-no-info-btn" id="ryr-quick-sync-btn">⚡ Subir Ahora</button>
-            </div>
-          `;
-        }
-
-        dropdown.innerHTML = `
-          <div style="font-weight:bold; color:#a5b4fc; font-size:11px; margin-bottom:4px; display:flex; justify-content:space-between; align-items:center;">
-            <span>${headerTitleText}</span>
-            <span style="cursor:pointer; color:#94a3b8; font-size:13px;" id="ryr-close-hooks-dropdown">✕</span>
+      let warningHtml = '';
+      if (showMissingHistoryWarning) {
+        warningHtml = `
+          <div class="ryr-no-info-warning">
+            <span style="font-size:10px; line-height:1.2;">⚠️ <b>Sin historial previo en BD:</b> Sube las conversaciones para contexto 360°.</span>
+            <button class="ryr-no-info-btn" id="ryr-quick-sync-btn">⚡ Subir Ahora</button>
           </div>
-          ${warningHtml}
-          <div id="ryr-hooks-options-container" style="display:flex; flex-direction:column; gap:5px;"></div>
         `;
+      }
 
-        const closeBtn = dropdown.querySelector('#ryr-close-hooks-dropdown');
-        if (closeBtn) closeBtn.onclick = () => dropdown.remove();
+      dropdown.innerHTML = `
+        <div style="font-weight:bold; color:#a5b4fc; font-size:11px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+          <span>${headerTitleText}</span>
+          <span style="cursor:pointer; color:#94a3b8; font-size:14px;" id="ryr-close-hooks-dropdown">✕</span>
+        </div>
+        ${warningHtml}
+        <div id="ryr-hooks-loading" style="text-align:center; padding:18px 10px; color:#38bdf8; font-size:11px; font-weight:bold;">
+          🧠 Razonando contexto y analizando conversación con IA...
+        </div>
+        <div id="ryr-hooks-options-container" style="display:none; flex-direction:column; gap:6px;"></div>
+      `;
 
-        const syncNowBtn = dropdown.querySelector('#ryr-quick-sync-btn');
-        if (syncNowBtn) {
-          syncNowBtn.onclick = async (ev) => {
-            ev.stopPropagation();
-            syncNowBtn.innerText = '⏳ Subiendo...';
-            syncNowBtn.disabled = true;
-            await syncCurrentChatToDatabase();
-            syncNowBtn.innerText = '✅ Subido';
-          };
-        }
+      const closeBtn = dropdown.querySelector('#ryr-close-hooks-dropdown');
+      if (closeBtn) closeBtn.onclick = () => dropdown.remove();
 
-        const container = dropdown.querySelector('#ryr-hooks-options-container');
+      const syncNowBtn = dropdown.querySelector('#ryr-quick-sync-btn');
+      if (syncNowBtn) {
+        syncNowBtn.onclick = async (ev) => {
+          ev.stopPropagation();
+          syncNowBtn.innerText = '⏳ Subiendo...';
+          syncNowBtn.disabled = true;
+          await syncCurrentChatToDatabase();
+          syncNowBtn.innerText = '✅ Subido';
+        };
+      }
+
+      const container = dropdown.querySelector('#ryr-hooks-options-container');
+      const loadingEl = dropdown.querySelector('#ryr-hooks-loading');
+
+      const renderOptionsList = (hooksList) => {
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (!container) return;
+        container.style.display = 'flex';
+        container.innerHTML = '';
 
         hooksList.forEach((item, idx) => {
           const targetText = typeof item === 'object' ? item.target : item;
-          const esText = typeof item === 'object' ? item.es : 'Respuesta contextual generada.';
+          const esText = typeof item === 'object' ? item.es : 'Respuesta contextual razonada.';
           const optTitle = typeof item === 'object' && item.title ? item.title : `Opción ${idx + 1}`;
 
           const option = document.createElement('div');
           option.className = 'ryr-hook-option';
           option.innerHTML = `
-            <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
               <span style="font-weight:bold; color:#a5b4fc; font-size:10px;">${optTitle.toUpperCase()}</span>
               <span style="font-size:9.5px; color:#38bdf8; font-weight:bold;">⚡ Clic para Enviar</span>
             </div>
@@ -1753,101 +1665,166 @@
         });
       };
 
-      // Generación instantánea en 0ms con razonamiento contextual de 3 opciones compactas
-      renderHooks(generateSmartContextualHooks());
+      // 2. Consultar el endpoint de razonamiento IA en el backend con contexto completo
+      try {
+        const res = await fetch(`${API_URL}/api/intelligence/generate-chat-reply`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientName: liveClientName,
+            clientId: liveClientId,
+            profileName: sessionData.profileName,
+            targetLang: liveDetectedLang.code,
+            bioData: liveBioData,
+            recentMessages: liveMessages,
+            recentLetters: liveLetters
+          })
+        });
+        const data = await res.json();
+        if (data && data.success && Array.isArray(data.options) && data.options.length > 0) {
+          renderOptionsList(data.options);
+          return;
+        }
+      } catch (err) {
+        console.warn('[AgenteRYR] Fallback local a razonamiento heurístico de chat:', err);
+      }
+
+      // 3. Fallback Heurístico Local Dinámico si el servidor no responde
+      const lastMsg = liveClientMessages.length > 0 ? liveClientMessages[liveClientMessages.length - 1].text : '';
+      const fallbackOptions = [
+        {
+          title: '🪝 Opción 1: Gancho de Curiosidad & Continuidad',
+          target: liveDetectedLang.code === 'pt'
+            ? `Estava tirando uma pausa e esperando muito uma mensagem sua 😉 Me conta, o que foi a coisa mais curiosa ou bonita que te aconteceu hoje?`
+            : (liveDetectedLang.code === 'es'
+                ? `Estaba tomándome un pequeño descanso y deseando saber de ti 😉 ¿Qué es algo que te haya sacado una gran sonrisa hoy?`
+                : `I was just taking a little breather and really hoping to see a message from you 😉 Tell me, what was one fun or unexpected thing that happened in your day today?`),
+          es: `Pregunta abierta para incentivar que el cliente hable de su vida y continúe el chat.`
+        },
+        {
+          title: '💬 Opción 2: Respuesta Cálida & Empatía Directa',
+          target: liveDetectedLang.code === 'pt'
+            ? `Meu dia está tão calmo, e ver sua mensagem tornou tudo mais especial ❤️ Estava pensando na nossa conversa... Como você está se sentindo?`
+            : (liveDetectedLang.code === 'es'
+                ? `Estoy teniendo un día muy tranquilo, y ver tu mensaje lo hizo mucho más especial ❤️ ¿Cómo te estás sintiendo hoy?`
+                : `I'm having a quiet, peaceful day, and seeing your message just made it so much brighter ❤️ How are you feeling today, my dear?`),
+          es: `Apertura afectuosa respondiendo directamente a su presencia.`
+        },
+        {
+          title: '✨ Opción 3: Chispa Coqueta & Intercambio de Fotos',
+          target: liveDetectedLang.code === 'pt'
+            ? `Cada vez que o seu nome aparece na minha tela meu coração dá um pulinho ✨ Me manda uma foto do seu sorriso agora para alegrar o meu dia? 😉`
+            : (liveDetectedLang.code === 'es'
+                ? `Cada vez que veo tu nombre en pantalla sonrío de inmediato ✨ ¿Me mandas una foto de tu sonrisa ahora mismo para alegrarme el día? 😉`
+                : `Every time your name pops up on my screen, my day gets a little sweeter ✨ Send me a picture of that smile of yours right now to brighten up my day 😉`),
+          es: `Petición juguetona de foto para acelerar la complicidad y el consumo.`
+        }
+      ];
+      renderOptionsList(fallbackOptions);
     };
   }
 
-  // 12. RECOLECTOR 360° BIDIRECCIONAL (CHAT + CARTAS)
-  function parseCurrentChatMessagesBidirectional(realClientName) {
-    const messages = [];
-    const seenSignatures = new Set();
+  // 12. RECOLECTOR 360° BIDIRECCIONAL & ACUMULATIVO (CHAT + CARTAS)
+  const persistentClientChatHistoryMap = new Map(); // clientId -> Map(msgHash -> msgObj)
+  const persistentClientLettersMap = new Map(); // clientId -> Map(letterHash -> letterObj)
 
-    // Buscar exclusivamente el contenedor de mensajes del chat ACTIVO
+  function parseCurrentChatMessagesBidirectional(realClientName) {
+    const cleanClientId = getExactNumericClientId() || 'user';
+    if (!persistentClientChatHistoryMap.has(cleanClientId)) {
+      persistentClientChatHistoryMap.set(cleanClientId, new Map());
+    }
+    const clientHistory = persistentClientChatHistoryMap.get(cleanClientId);
+
+    // Buscar el contenedor de mensajes del chat ACTIVO
     const chatView = document.querySelector(
       'div[data-test-id*="dialog-content"], div[data-test-id*="chat-messages"], div[class*="dialog-content"], div[class*="chat-scroll"], div[class*="chat-body"], div[class*="main-chat"]'
     );
 
-    if (!chatView) return messages;
-
-    const allLeafElements = chatView.querySelectorAll('div, p');
-
-    allLeafElements.forEach(node => {
-      // Ignorar si el nodo está dentro de la barra lateral, lista de chats, herramientas o HUD
-      if (
-        node.closest('div[data-test-id*="dialog-item"]') ||
-        node.closest('div[class*="dialog-item"]') ||
-        node.closest('div[class*="item-wrap"]') ||
-        node.closest('div[class*="dialogs"]') ||
-        node.closest('div[class*="sidebar"]') ||
-        node.closest('#ryr-titan-bar') ||
-        node.closest('#ryr-intel-panel') ||
-        node.closest('.ryr-chat-tools-wrapper') ||
-        node.closest('.ryr-chat-hooks-dropdown')
-      ) {
-        return;
+    if (chatView) {
+      // Intentar disparar carga de mensajes anteriores si estamos scrolleando
+      const scrollEl = chatView.closest('[class*="scroll"], [class*="dialog-content"], [class*="messages"]') || chatView;
+      if (scrollEl && scrollEl.scrollTop > 100) {
+        // Puede haber más mensajes arriba
       }
 
-      if (node.querySelectorAll('div, p').length > 2) return;
+      const allLeafElements = chatView.querySelectorAll('div, p');
+      allLeafElements.forEach(node => {
+        // Ignorar si el nodo está dentro de la barra lateral, lista de chats, herramientas o HUD
+        if (
+          node.closest('div[data-test-id*="dialog-item"]') ||
+          node.closest('div[class*="dialog-item"]') ||
+          node.closest('div[class*="item-wrap"]') ||
+          node.closest('div[class*="dialogs"]') ||
+          node.closest('div[class*="sidebar"]') ||
+          node.closest('#ryr-titan-bar') ||
+          node.closest('#ryr-intel-panel') ||
+          node.closest('.ryr-chat-tools-wrapper') ||
+          node.closest('.ryr-chat-hooks-dropdown')
+        ) {
+          return;
+        }
 
-      const raw = node.innerText || '';
-      if (raw.includes('TITAN APEX') || raw.includes('Search') || (raw.includes('seen') && raw.length < 10) || raw.includes('View post') || raw.includes('CONTINUAR CHAT') || raw.includes('GANCHOS DE')) return;
+        if (node.querySelectorAll('div, p').length > 2) return;
 
-      if (/^(today|yesterday|january|february|march|april|may|june|july|august|september|october|november|december)\s*\d{0,2}$/i.test(raw.trim())) {
-        return;
-      }
+        const raw = node.innerText || '';
+        if (raw.includes('TITAN APEX') || raw.includes('Search') || (raw.includes('seen') && raw.length < 10) || raw.includes('View post') || raw.includes('CONTINUAR CHAT') || raw.includes('GANCHOS DE')) return;
 
-      const timeMatch = raw.match(/\b\d{1,2}:\d{2}\s*(?:am|pm|a\.?\s*m\.?|p\.?\s*m\.?)\b/i);
-      const timeText = timeMatch ? timeMatch[0] : '';
+        if (/^(today|yesterday|january|february|march|april|may|june|july|august|september|october|november|december)\s*\d{0,2}$/i.test(raw.trim())) {
+          return;
+        }
 
-      let cleanText = raw
-        .replace(/(?:You:|Tú:|Tu:|Você:)/gi, '')
-        .replace(/\b\d{1,2}:\d{2}\s*(?:am|pm|a\.?\s*m\.?|p\.?\s*m\.?)\b/gi, '')
-        .replace(/\bseen\b/gi, '')
-        .replace(/\bView post\b/gi, '')
-        .replace(/\bShow original\b/gi, '')
-        .trim();
+        const timeMatch = raw.match(/\b\d{1,2}:\d{2}\s*(?:am|pm|a\.?\s*m\.?|p\.?\s*m\.?)\b/i);
+        const timeText = timeMatch ? timeMatch[0] : '';
 
-      if (!cleanText || cleanText.length < 1) return;
+        let cleanText = raw
+          .replace(/(?:You:|Tú:|Tu:|Você:)/gi, '')
+          .replace(/\b\d{1,2}:\d{2}\s*(?:am|pm|a\.?\s*m\.?|p\.?\s*m\.?)\b/gi, '')
+          .replace(/\bseen\b/gi, '')
+          .replace(/\bView post\b/gi, '')
+          .replace(/\bShow original\b/gi, '')
+          .trim();
 
-      const hasCheck = node.querySelector('svg[class*="check"], [class*="status-sent"]') !== null || 
-                       node.innerHTML.includes('polyline') || 
-                       node.innerHTML.includes('check') || 
-                       raw.includes('✔');
+        if (!cleanText || cleanText.length < 1) return;
 
-      const hasOperatorPrefix = /(?:you:|tú:|tu:|você:)/i.test(raw);
-      
-      const bgColor = window.getComputedStyle(node).backgroundColor;
-      const isCreamBubble = bgColor.includes('254, 249') || bgColor.includes('254, 240') || bgColor.includes('255, 251') || bgColor.includes('224, 231');
-      const isRight = window.getComputedStyle(node).justifyContent === 'flex-end' || 
-                      window.getComputedStyle(node.parentElement || node).justifyContent === 'flex-end' ||
-                      node.className.includes('right') || 
-                      node.className.includes('out');
+        const hasCheck = node.querySelector('svg[class*="check"], [class*="status-sent"]') !== null || 
+                         node.innerHTML.includes('polyline') || 
+                         node.innerHTML.includes('check') || 
+                         raw.includes('✔');
 
-      const isOperator = hasCheck || hasOperatorPrefix || isCreamBubble || isRight;
-      const cleanClientId = getExactNumericClientId() || 'user';
-      const msgHash = `msg_${cleanClientId}_${isOperator ? 'OP' : 'RU'}_${cleanText.substring(0, 30).replace(/[^a-z0-9]/gi, '_')}_${(timeText || 'now').replace(/[^a-z0-9]/gi, '')}`;
+        const hasOperatorPrefix = /(?:you:|tú:|tu:|você:)/i.test(raw);
+        
+        const bgColor = window.getComputedStyle(node).backgroundColor;
+        const isCreamBubble = bgColor.includes('254, 249') || bgColor.includes('254, 240') || bgColor.includes('255, 251') || bgColor.includes('224, 231');
+        const isRight = window.getComputedStyle(node).justifyContent === 'flex-end' || 
+                        window.getComputedStyle(node.parentElement || node).justifyContent === 'flex-end' ||
+                        node.className.includes('right') || 
+                        node.className.includes('out');
 
-      if (!seenSignatures.has(msgHash)) {
-        seenSignatures.add(msgHash);
-        messages.push({
-          id: msgHash,
-          isOperator: Boolean(isOperator),
-          senderName: isOperator ? (sessionData.profileName || 'HORACIO') : realClientName,
-          time: timeText || 'Reciente',
-          date: new Date().toLocaleDateString(),
-          text: cleanText
-        });
-      }
-    });
+        const isOperator = hasCheck || hasOperatorPrefix || isCreamBubble || isRight;
+        const msgHash = `msg_${cleanClientId}_${isOperator ? 'OP' : 'RU'}_${cleanText.substring(0, 30).replace(/[^a-z0-9]/gi, '_')}_${(timeText || 'now').replace(/[^a-z0-9]/gi, '')}`;
 
-    return messages;
+        if (!clientHistory.has(msgHash)) {
+          clientHistory.set(msgHash, {
+            id: msgHash,
+            isOperator: Boolean(isOperator),
+            senderName: isOperator ? (sessionData.profileName || 'HORACIO') : realClientName,
+            time: timeText || 'Reciente',
+            date: new Date().toLocaleDateString(),
+            text: cleanText
+          });
+        }
+      });
+    }
+
+    return Array.from(clientHistory.values());
   }
 
   function extractMailThreadContext() {
-    const letters = [];
     const currentClientId = getExactNumericClientId() || 'user';
-    const seenLetterSignatures = new Set();
+    if (!persistentClientLettersMap.has(currentClientId)) {
+      persistentClientLettersMap.set(currentClientId, new Map());
+    }
+    const clientLettersHistory = persistentClientLettersMap.get(currentClientId);
 
     // 1. Buscar tarjetas y elementos de carta en Talkytimes
     const mailCards = document.querySelectorAll(
@@ -1885,9 +1862,8 @@
 
       const letterHash = `mail_${cleanBody.substring(0, 40).replace(/[^a-z0-9]/gi, '_')}`;
 
-      if (!seenLetterSignatures.has(letterHash)) {
-        seenLetterSignatures.add(letterHash);
-        letters.push({
+      if (!clientLettersHistory.has(letterHash)) {
+        clientLettersHistory.set(letterHash, {
           id: letterHash,
           clientId: currentClientId,
           isOutgoing: Boolean(isMe),
@@ -1899,7 +1875,7 @@
     });
 
     // 2. Fallback: Capturar cualquier párrafo de carta visible en la página de hilos
-    if (letters.length === 0 && window.location.href.includes('/mails/')) {
+    if (clientLettersHistory.size === 0 && window.location.href.includes('/mails/')) {
       const allParagraphs = document.querySelectorAll('p, div');
       allParagraphs.forEach(p => {
         if (p.children.length > 1) return;
@@ -1907,9 +1883,8 @@
         const txt = (p.innerText || '').trim();
         if (txt.length >= 35 && !txt.includes('Send your letter') && !txt.includes('File size limit') && !txt.includes('Up to 10 photos')) {
           const letterHash = `mail_p_${txt.substring(0, 40).replace(/[^a-z0-9]/gi, '_')}`;
-          if (!seenLetterSignatures.has(letterHash)) {
-            seenLetterSignatures.add(letterHash);
-            letters.push({
+          if (!clientLettersHistory.has(letterHash)) {
+            clientLettersHistory.set(letterHash, {
               id: letterHash,
               clientId: currentClientId,
               isOutgoing: false,
@@ -1922,7 +1897,7 @@
       });
     }
 
-    return letters;
+    return Array.from(clientLettersHistory.values());
   }
 
   function buildCurrentMarkdownTranscript(clientName, clientId, bioData, letters = []) {
@@ -2499,16 +2474,23 @@
         return;
       }
 
-      let existingTimestamp = activeSlaTimers[nameKey] || (idKey ? activeSlaTimers[idKey] : null);
-      if (!existingTimestamp) {
-        existingTimestamp = Date.now();
-        activeSlaTimers[nameKey] = existingTimestamp;
-        if (idKey) activeSlaTimers[idKey] = existingTimestamp;
+      let existingTimerData = activeSlaTimers[nameKey] || (idKey ? activeSlaTimers[idKey] : null);
+      if (!existingTimerData) {
+        existingTimerData = {
+          startedAt: Date.now(),
+          duration: configuredSlaDurationSeconds,
+          contact: contactName,
+          numericId: rowNumericId
+        };
+        activeSlaTimers[nameKey] = existingTimerData;
+        if (idKey) activeSlaTimers[idKey] = existingTimerData;
         persistTimersToStorage();
       }
 
-      const elapsedSeconds = Math.floor((Date.now() - existingTimestamp) / 1000);
-      const remainingSeconds = Math.max(0, 120 - elapsedSeconds);
+      const startedAt = (typeof existingTimerData === 'object' && existingTimerData?.startedAt) ? existingTimerData.startedAt : (typeof existingTimerData === 'number' ? existingTimerData : Date.now());
+      const totalDuration = (typeof existingTimerData === 'object' && existingTimerData?.duration) ? existingTimerData.duration : configuredSlaDurationSeconds;
+      const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+      const remainingSeconds = Math.max(0, totalDuration - elapsedSeconds);
 
       const min = Math.floor(remainingSeconds / 60);
       const sec = remainingSeconds % 60;
@@ -2538,50 +2520,57 @@
       }
     });
 
-    // RECONCILIACIÓN ESTRICTA ANTI-FANTASMAS: Si hay timers guardados que ya no corresponden a ningún chat pendiente visible, eliminarlos de inmediato
-    const activeRowKeys = new Set();
-    rootRows.forEach(row => {
-      const fullText = row.innerText || '';
-      if (fullText.length < 3) return;
-      const lines = fullText.split('\n').map(l => l.trim()).filter(Boolean);
-      const contactName = sanitizeClientName(lines[0]);
-      const cleanSimpleName = contactName.split(',')[0].trim().toLowerCase();
-      const nameKey = `name_${cleanSimpleName.replace(/[^a-z0-9]/g, '')}`;
-      let rowNumericId = 'N/A';
-      const userLink = row.querySelector('a[href*="/chat/"], a[href*="/user/"], a[href*="/mails/"]');
-      if (userLink) {
-        rowNumericId = getExactNumericClientId(userLink.getAttribute('href'));
-      }
-      const idKey = (rowNumericId && rowNumericId !== 'N/A') ? `id_${rowNumericId}` : null;
+    // RECONCILIACIÓN ESTRICTA ANTI-FANTASMAS PROTEGIDA (INMUNE A RECARGAS F5)
+    if (rootRows.length >= 3) {
+      const activeRowKeys = new Set();
+      rootRows.forEach(row => {
+        const fullText = row.innerText || '';
+        if (fullText.length < 3) return;
+        const lines = fullText.split('\n').map(l => l.trim()).filter(Boolean);
+        const contactName = sanitizeClientName(lines[0]);
+        const cleanSimpleName = contactName.split(',')[0].trim().toLowerCase();
+        const nameKey = `name_${cleanSimpleName.replace(/[^a-z0-9]/g, '')}`;
+        let rowNumericId = 'N/A';
+        const userLink = row.querySelector('a[href*="/chat/"], a[href*="/user/"], a[href*="/mails/"]');
+        if (userLink) {
+          rowNumericId = getExactNumericClientId(userLink.getAttribute('href'));
+        }
+        const idKey = (rowNumericId && rowNumericId !== 'N/A') ? `id_${rowNumericId}` : null;
 
-      const hasOperatorSent = /(?:you|tú|tu|você)\s*:/i.test(fullText) || 
-                              row.querySelector('svg[class*="check"]') !== null ||
-                              fullText.includes('✔');
-      const isTyping = fullText.toLowerCase().includes('typing') || row.querySelector('[class*="typing"]');
-      const isLiked = fullText.toLowerCase().includes('liked');
-      const isKnownZeroCredits = zeroCreditsClientsSet.has(cleanSimpleName) || 
-                                 (rowNumericId !== 'N/A' && zeroCreditsClientsSet.has(rowNumericId.toLowerCase())) ||
-                                 (openChatHasZeroCredits && (rowNumericId === openChatNumericId || cleanSimpleName === openChatCleanName)) ||
-                                 /\b0\s+0\b/.test(fullText) || 
-                                 /[💬✉]\s*0\b/i.test(fullText);
+        const hasOperatorSent = /(?:you|tú|tu|você)\s*:/i.test(fullText) || 
+                                row.querySelector('svg[class*="check"]') !== null ||
+                                fullText.includes('✔');
+        const isTyping = fullText.toLowerCase().includes('typing') || row.querySelector('[class*="typing"]');
+        const isLiked = fullText.toLowerCase().includes('liked');
+        const isKnownZeroCredits = zeroCreditsClientsSet.has(cleanSimpleName) || 
+                                   (rowNumericId !== 'N/A' && zeroCreditsClientsSet.has(rowNumericId.toLowerCase())) ||
+                                   (openChatHasZeroCredits && (rowNumericId === openChatNumericId || cleanSimpleName === openChatCleanName)) ||
+                                   /\b0\s+0\b/.test(fullText) || 
+                                   /[💬✉]\s*0\b/i.test(fullText);
 
-      const isPending = !isKnownZeroCredits && (!hasOperatorSent || isTyping || isLiked);
-      if (isPending) {
-        activeRowKeys.add(nameKey);
-        if (idKey) activeRowKeys.add(idKey);
-      }
-    });
+        const isPending = !isKnownZeroCredits && (!hasOperatorSent || isTyping || isLiked);
+        if (isPending) {
+          activeRowKeys.add(nameKey);
+          if (idKey) activeRowKeys.add(idKey);
+        }
+      });
 
-    let cleanedAny = false;
-    for (const key of Object.keys(activeSlaTimers)) {
-      if (!activeRowKeys.has(key)) {
-        delete activeSlaTimers[key];
-        cleanedAny = true;
+      let cleanedAny = false;
+      const now = Date.now();
+      for (const [key, timerVal] of Object.entries(activeSlaTimers)) {
+        if (!activeRowKeys.has(key)) {
+          const startTime = (typeof timerVal === 'object' && timerVal?.startedAt) ? timerVal.startedAt : (typeof timerVal === 'number' ? timerVal : now);
+          const elapsed = Math.floor((now - startTime) / 1000);
+          if (elapsed > 7200 || /deleted|search/i.test(key)) {
+            delete activeSlaTimers[key];
+            cleanedAny = true;
+          }
+        }
       }
-    }
-    if (cleanedAny) {
-      persistTimersToStorage();
-      sendTelemetry(true);
+      if (cleanedAny) {
+        persistTimersToStorage();
+        sendTelemetry(true);
+      }
     }
   }
 
@@ -3401,7 +3390,6 @@
           <span id="ryr-badge-profile" class="ryr-badge ryr-badge-profile ryr-hide-on-mobile">🎯 ${sessionData.profileName || 'HORACIO'}</span>
           <span id="ryr-badge-afk" class="ryr-badge ${afkClass} ryr-badge-afk ryr-hide-on-mobile">${afkText}</span>
           <span id="ryr-badge-traffic" class="ryr-badge ${prospectClass}">🎯 Tráfico: ${prospectTimeText} [${prospect.count}/${prospect.quota}]</span>
-          <span id="ryr-badge-lag" class="ryr-badge ryr-badge-speed ryr-hide-on-mobile" title="Latencia de procesamiento DOM">${PerformanceSentinel.lastLoopDurationMs}ms Lag</span>
         </div>
         <div class="ryr-section ryr-section-actions">
           <button id="ryr-btn-open-sup-chat" class="ryr-btn-sup-chat">💬 Chat Sup</button>
@@ -3477,9 +3465,6 @@
         bTraf.innerText = `🎯 Tráfico: ${prospectTimeText} [${prospect.count}/${prospect.quota}]`;
       }
 
-      const bLag = document.getElementById('ryr-badge-lag');
-      if (bLag) bLag.innerText = `${PerformanceSentinel.lastLoopDurationMs}ms Lag`;
-
       const bRead = document.getElementById('ryr-badge-read');
       if (bRead) bRead.innerText = `✉️ Read: ${totalGlobalReadLetters}`;
     }
@@ -3502,7 +3487,7 @@
     const activeTimersList = [];
     const processedKeys = new Set();
 
-    for (let [key, startTime] of Object.entries(activeSlaTimers)) {
+    for (let [key, timerVal] of Object.entries(activeSlaTimers)) {
       const cleanName = key.replace(/^id_/, '').replace(/^name_/, '');
       if (/deleted|eliminado|search|messages|cliente/i.test(cleanName)) {
         delete activeSlaTimers[key];
@@ -3510,8 +3495,10 @@
         continue;
       }
 
+      const startTime = (typeof timerVal === 'object' && timerVal?.startedAt) ? timerVal.startedAt : (typeof timerVal === 'number' ? timerVal : now);
+      const totalDuration = (typeof timerVal === 'object' && timerVal?.duration) ? timerVal.duration : configuredSlaDurationSeconds;
       const elapsed = Math.floor((now - startTime) / 1000);
-      if (elapsed > 300) {
+      if (elapsed > 7200) {
         delete activeSlaTimers[key];
         persistTimersToStorage();
         continue;
@@ -3520,12 +3507,13 @@
       if (processedKeys.has(cleanName)) continue;
       processedKeys.add(cleanName);
 
-      const remaining = Math.max(0, 120 - elapsed);
+      const remaining = Math.max(0, totalDuration - elapsed);
       activeTimersList.push({
         contact: cleanName,
         elapsed: elapsed,
         remaining: remaining,
-        isExpired: elapsed >= 120
+        duration: totalDuration,
+        isExpired: elapsed >= totalDuration
       });
     }
 
@@ -3537,15 +3525,20 @@
     const pendingClientsList = [];
     const syncedClientsList = [];
 
-    const sidebarRows = document.querySelectorAll('div[data-test-id*="dialog-item"], div[class*="dialog-item"], div[class*="item-wrap"]');
+    const sidebarRows = document.querySelectorAll('div[data-test-id="dialog-item"], div[class*="dialog-item"]:not([class*="wrap"]), a[href*="/chat/"], a[href*="/user/"]');
+    const seenContactKeys = new Set();
     sidebarRows.forEach(row => {
-      const text = (row.innerText || '').trim();
-      const firstLine = text.split('\n')[0].trim();
-      const name = sanitizeClientName(firstLine);
-      if (!name || name === 'Cliente') return;
+      const nameEl = row.querySelector('b, strong, [class*="name"], [class*="title"]') || row;
+      const rawText = nameEl.innerText || '';
+      const name = sanitizeClientName(rawText);
+      if (!name || name === 'Cliente' || name.length < 2) return;
+
+      const contactKey = name.toLowerCase();
+      if (seenContactKeys.has(contactKey)) return;
+      seenContactKeys.add(contactKey);
 
       let rowNumericId = 'N/A';
-      const userLink = row.querySelector('a[href*="/chat/"], a[href*="/user/"], a[href*="/mails/"]');
+      const userLink = row.matches('a[href*="/chat/"], a[href*="/user/"], a[href*="/mails/"]') ? row : row.querySelector('a[href*="/chat/"], a[href*="/user/"], a[href*="/mails/"]');
       if (userLink) {
         rowNumericId = getExactNumericClientId(userLink.getAttribute('href'));
       }
@@ -3589,6 +3582,7 @@
           isCompleted: prospect.isCompleted
         },
         firewallInfractionsCount: firewallInfractionsCount,
+        infractionsList: liveInfractionsLog.slice(0, 30),
         syncAudit: syncAudit,
         fidelizedCount: fidelizedClientsMap.size,
         fidelizedList: Array.from(fidelizedClientsMap.values()),
@@ -3603,6 +3597,14 @@
     })
     .then(r => r.json())
     .then(data => {
+      if (data && data.responseTimeSeconds) {
+        if (configuredSlaDurationSeconds !== data.responseTimeSeconds) {
+          configuredSlaDurationSeconds = data.responseTimeSeconds;
+          if (isContextValid()) {
+            chrome.storage.local.set({ configuredSlaDurationSeconds });
+          }
+        }
+      }
       if (data && data.triggerMassExtraction) {
         triggerLocalBatchHarvest();
       }
