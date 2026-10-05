@@ -33,8 +33,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 // MEMORIA EN VIVO EN TIEMPO REAL (CACHE RÁPIDO PARA REDUCIR IOPS)
 const liveOperatorTelemetry = new Map();
 const massExtractionOrders = new Set();
-const memoryConversationsMap = new Map();
-const memoryLettersMap = new Map();
+const memoryConversationsMap = new Map(); // clientId -> conversationSummaryObj
+const memoryClientMessagesMap = new Map(); // clientId -> Map(msgId -> messageObj)
+const memoryClientLettersMap = new Map(); // clientId -> Map(letterId -> letterObj)
 const liveProfileInfractions = new Map(); // profileName -> Array of infractions
 const operatorResponseTimes = new Map(); // operatorName -> response time in minutes (default 2)
 
@@ -184,38 +185,129 @@ app.get('/api/telemetry/live-grid', (req, res) => {
 });
 
 // ====================================================================
-// 3. ENDPOINT: INGESTA DE AUDITORÍA 360° (DEDUPLICACIÓN INMUTABLE & LOGS)
+// 3. ENDPOINT: INGESTA DE AUDITORÍA 360° (HISTORIAL COMPLETO Y ACUMULATIVO)
 // ====================================================================
 app.post('/api/chats/audit-deep', async (req, res) => {
   const startTime = Date.now();
   const { operator, shift, profile, profileId, clientName, clientId, bioData, markdown, messages, letters } = req.body || {};
-  const msgCount = Array.isArray(messages) ? messages.length : 0;
-  const letterCount = Array.isArray(letters) ? letters.length : 0;
 
   if (!clientName || !clientId) {
     return res.status(400).json({ error: 'Datos de cliente incompletos' });
   }
 
-  // Guardar en memoria de alta disponibilidad primero (Garantiza visualización inmediata)
+  const cId = String(clientId).trim();
+
+  // 1. Obtener o inicializar los almacenes acumulativos del cliente
+  if (!memoryClientMessagesMap.has(cId)) {
+    memoryClientMessagesMap.set(cId, new Map());
+  }
+  if (!memoryClientLettersMap.has(cId)) {
+    memoryClientLettersMap.set(cId, new Map());
+  }
+
+  const clientMsgsMap = memoryClientMessagesMap.get(cId);
+  const clientLettersMap = memoryClientLettersMap.get(cId);
+
+  // 2. Acumular todos los mensajes recibidos desde el primero hasta el más reciente
+  if (Array.isArray(messages) && messages.length > 0) {
+    messages.forEach(m => {
+      if (!m || !m.text) return;
+      const cleanText = (m.text || '').trim();
+      if (!cleanText) return;
+      const msgKey = m.id || `msg_${cId}_${m.isOperator ? 'OP' : 'RU'}_${cleanText.substring(0, 35).replace(/[^a-z0-9]/gi, '_')}_${(m.time || '').replace(/[^a-z0-9]/gi, '')}`;
+      clientMsgsMap.set(msgKey, {
+        id: msgKey,
+        client_id: cId,
+        profile_name: profile || 'HORACIO',
+        operator_name: operator || 'Operador',
+        sender_type: m.isOperator ? 'OPERATOR' : 'CLIENT',
+        sender_name: m.senderName || (m.isOperator ? (profile || 'HORACIO') : clientName),
+        message_text: cleanText,
+        message_time: m.time || 'Reciente',
+        message_date: m.date || new Date().toLocaleDateString()
+      });
+    });
+  }
+
+  // 3. Acumular todas las cartas recibidas desde la primera hasta la más reciente
+  if (Array.isArray(letters) && letters.length > 0) {
+    letters.forEach(l => {
+      if (!l || (!l.preview && !l.fullText)) return;
+      const cleanPreview = (l.preview || l.fullText || '').trim();
+      if (!cleanPreview) return;
+      const letterKey = l.id || `mail_${cId}_${l.isOutgoing ? 'OUT' : 'IN'}_${cleanPreview.substring(0, 40).replace(/[^a-z0-9]/gi, '_')}_${(l.date || '').replace(/[^a-z0-9]/gi, '')}`;
+      clientLettersMap.set(letterKey, {
+        id: letterKey,
+        client_id: cId,
+        profile_name: profile || 'HORACIO',
+        direction: l.isOutgoing ? 'OUTGOING' : 'INCOMING',
+        letter_date: l.date || 'Fecha Reciente',
+        letter_preview: cleanPreview,
+        status: 'read'
+      });
+    });
+  }
+
+  const allMergedMessages = Array.from(clientMsgsMap.values());
+  const allMergedLetters = Array.from(clientLettersMap.values());
+
+  // 4. Reconstruir transcripción Markdown completa y cronológica 360°
+  let mdLines = [
+    `# HISTORIAL 360° | CONVERSACIONES Y CARTAS | RYR TITAN AUDIT`,
+    `- **Operador:** ${operator || 'Operador'} [${shift || 'Mañana'}]`,
+    `- **Perfil Asignado:** ${profile || 'HORACIO'} (ID: ${profileId || '118179794'})`,
+    `- **Cliente:** ${clientName}`,
+    `- **ID del Usuario:** ${cId}`,
+    `- **Ubicación:** ${bioData?.country || 'United States'} | **Nacimiento:** ${bioData?.birthDate || 'En perfil'}`,
+    `- **Total Mensajes Acumulados:** ${allMergedMessages.length}`,
+    `- **Total Cartas Acumuladas:** ${allMergedLetters.length}`,
+    `- **Fecha de Extracción:** ${new Date().toLocaleString('es-CO')}`,
+    `---`
+  ];
+
+  if (allMergedLetters.length > 0) {
+    mdLines.push(`### ✉️ Registro de Cartas / Mails Históricos (Desde la 1ª Carta - ${allMergedLetters.length} Cartas):`);
+    allMergedLetters.forEach((l, idx) => {
+      mdLines.push(`- ${l.direction === 'OUTGOING' ? '📤 **Enviada por Perfil**' : '📥 **Recibida de Cliente**'} [${l.letter_date}]: ${l.letter_preview}`);
+    });
+    mdLines.push(`---`);
+  }
+
+  if (allMergedMessages.length > 0) {
+    mdLines.push(`### 💬 Diálogo Transcrito Completo (Desde el 1er Mensaje - ${allMergedMessages.length} Mensajes):`);
+    allMergedMessages.forEach(m => {
+      if (m.sender_type === 'OPERATOR') {
+        mdLines.push(`- 💼 **${profile || 'HORACIO'} [Op: ${operator || 'Operador'}]** [${m.message_time}]: ${m.message_text}`);
+      } else {
+        mdLines.push(`- 👤 **${clientName} [Cliente]** [${m.message_time}]: ${m.message_text}`);
+      }
+    });
+  } else if (markdown) {
+    mdLines.push(markdown);
+  }
+
+  const finalMarkdown = mdLines.join('\n');
+
+  // 5. Guardar en memoria de alta disponibilidad
   const convMemoryObj = {
-    id: `conv_${String(clientId).trim()}_${Date.now()}`,
-    client_id: String(clientId).trim(),
+    id: `conv_${cId}`,
+    client_id: cId,
     client_name: clientName,
     operator_name: operator || 'Operador',
     profile_name: profile || 'HORACIO',
     shift: shift || 'Mañana',
-    markdown_transcript: markdown || '',
-    total_messages: msgCount,
-    total_letters: letterCount,
+    markdown_transcript: finalMarkdown,
+    total_messages: allMergedMessages.length,
+    total_letters: allMergedLetters.length,
     extracted_at: new Date().toISOString()
   };
-  memoryConversationsMap.set(String(clientId).trim(), convMemoryObj);
+  memoryConversationsMap.set(cId, convMemoryObj);
 
-  // A. Upsert de Cliente en Supabase
+  // 6. Guardar en Supabase de forma segura
   try {
-    const tier = letterCount > 500 ? 'LOYAL_VIP' : 'NEW_PROSPECT';
+    const tier = allMergedLetters.length > 500 ? 'LOYAL_VIP' : 'NEW_PROSPECT';
     await supabase.from('clients').upsert({
-      talkytimes_id: String(clientId).trim(),
+      talkytimes_id: cId,
       name: clientName,
       country: bioData?.country || 'United States',
       birth_date: bioData?.birthDate || '',
@@ -223,56 +315,34 @@ app.post('/api/chats/audit-deep', async (req, res) => {
       profile_assigned: profile || 'HORACIO',
       profile_id: profileId || '',
       tier: tier,
-      letter_total: letterCount,
+      letter_total: allMergedLetters.length,
       updated_at: new Date().toISOString()
     }, { onConflict: 'talkytimes_id' });
   } catch (e) {}
 
-  // B. Inserción de Conversación en Supabase
   try {
-    await supabase.from('conversations').insert({
-      client_id: String(clientId).trim(),
+    await supabase.from('conversations').upsert({
+      id: `conv_${cId}`,
+      client_id: cId,
       client_name: clientName,
       operator_name: operator || 'Operador',
       profile_name: profile || 'HORACIO',
       shift: shift || 'Mañana',
-      markdown_transcript: markdown || '',
-      total_messages: msgCount,
+      markdown_transcript: finalMarkdown,
+      total_messages: allMergedMessages.length,
       extracted_at: new Date().toISOString()
-    });
+    }, { onConflict: 'client_id' });
   } catch (e) {}
 
-  // C. Inserción Deduplicada de Mensajes
-  if (msgCount > 0) {
+  if (allMergedMessages.length > 0) {
     try {
-      const messagesToInsert = messages.map(m => ({
-        id: m.id || `msg_${String(clientId).trim()}_${m.isOperator ? 'OP' : 'RU'}_${(m.text || '').substring(0, 30).replace(/[^a-z0-9]/gi, '_')}_${(m.time || 'rec').replace(/[^a-z0-9]/gi, '')}`,
-        client_id: String(clientId).trim(),
-        profile_name: profile || 'HORACIO',
-        operator_name: operator || 'Operador',
-        sender_type: m.isOperator ? 'OPERATOR' : 'CLIENT',
-        sender_name: m.senderName || (m.isOperator ? profile : clientName),
-        message_text: m.text,
-        message_time: m.time || 'Reciente',
-        message_date: m.date || new Date().toLocaleDateString()
-      }));
-      await supabase.from('messages').upsert(messagesToInsert, { onConflict: 'id', ignoreDuplicates: true });
+      await supabase.from('messages').upsert(allMergedMessages, { onConflict: 'id', ignoreDuplicates: true });
     } catch (e) {}
   }
 
-  // D. Inserción Deduplicada de Cartas
-  if (letterCount > 0) {
+  if (allMergedLetters.length > 0) {
     try {
-      const mailsToInsert = letters.map(l => ({
-        id: l.id || `mail_${String(clientId).trim()}_${l.isOutgoing ? 'OUT' : 'IN'}_${(l.preview || l.fullText || '').substring(0, 35).replace(/[^a-z0-9]/gi, '_')}_${(l.date || 'rec').replace(/[^a-z0-9]/gi, '')}`,
-        client_id: String(clientId).trim(),
-        profile_name: profile || 'HORACIO',
-        direction: l.isOutgoing ? 'OUTGOING' : 'INCOMING',
-        letter_date: l.date || 'Fecha Reciente',
-        letter_preview: l.preview || l.fullText || '',
-        status: 'read'
-      }));
-      await supabase.from('mails_history').upsert(mailsToInsert, { onConflict: 'id', ignoreDuplicates: true });
+      await supabase.from('mails_history').upsert(allMergedLetters, { onConflict: 'id', ignoreDuplicates: true });
     } catch (e) {}
   }
 
@@ -282,13 +352,19 @@ app.post('/api/chats/audit-deep', async (req, res) => {
     operator: operator || 'Operador',
     profile: profile || 'HORACIO',
     clientName: clientName,
-    count: msgCount,
+    count: allMergedMessages.length,
     durationMs: durationMs,
     status: 'SUCCESS',
-    detail: `Conversación con '${clientName}' sincronizada (${msgCount} msgs, ${letterCount} cartas).`
+    detail: `Historial de '${clientName}' guardado (${allMergedMessages.length} msgs, ${allMergedLetters.length} cartas).`
   });
 
-  res.json({ success: true, message: 'Auditoría 360° guardada con éxito', durationMs });
+  res.json({
+    success: true,
+    message: 'Auditoría 360° acumulada y guardada con éxito',
+    total_messages: allMergedMessages.length,
+    total_letters: allMergedLetters.length,
+    durationMs
+  });
 });
 
 // ====================================================================
