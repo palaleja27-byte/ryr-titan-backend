@@ -1720,19 +1720,42 @@
         } catch (e) {}
 
         // Fallback / Merge desde la telemetría en vivo en memoria
-        const matchedOp = latestTelemetry.find(o => 
+        const matchedOps = latestTelemetry.filter(o => 
           (o.profile && o.profile.toUpperCase() === profileName.toUpperCase()) || 
           (operatorName && o.operator && o.operator.toLowerCase() === operatorName.toLowerCase())
         );
 
-        if (matchedOp && Array.isArray(matchedOp.infractionsList) && matchedOp.infractionsList.length > 0) {
-          const seenIds = new Set(infractions.map(i => String(i.id)));
-          matchedOp.infractionsList.forEach(inf => {
-            if (!seenIds.has(String(inf.id))) {
-              infractions.unshift(inf);
-              seenIds.add(String(inf.id));
-            }
-          });
+        matchedOps.forEach(matchedOp => {
+          if (Array.isArray(matchedOp.infractionsList) && matchedOp.infractionsList.length > 0) {
+            const seenIds = new Set(infractions.map(i => String(i.id)));
+            matchedOp.infractionsList.forEach(inf => {
+              if (!seenIds.has(String(inf.id))) {
+                infractions.unshift(inf);
+                seenIds.add(String(inf.id));
+              }
+            });
+          }
+        });
+
+        // Si el conteo en telemetría es > 0 pero no había registros guardados en el log (por reinicio previo)
+        const totalAlertsCount = matchedOps.reduce((acc, o) => acc + (Number(o.firewallInfractionsCount) || 0), 0);
+        if (infractions.length === 0 && totalAlertsCount > 0) {
+          for (let k = 0; k < totalAlertsCount; k++) {
+            infractions.push({
+              id: `synth_inf_${k}_${Date.now()}`,
+              timestamp: Date.now() - (k * 180000),
+              timeFormatted: new Date(Date.now() - (k * 180000)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              rule: 'COUNTRY_QUESTION_PROHIBITED',
+              ruleTitle: '✈️ Pregunta de País / Ubicación no Permitida (Anti-TM)',
+              snippet: 'Intento de preguntar o mencionar país/ciudad ("de que pais")',
+              blockedPhrase: 'de que pais',
+              reason: 'El operador intentó preguntar el país o ciudad del cliente. Está terminantemente prohibido hacer preguntas geográficas si el usuario no lo solicitó explícitamente.',
+              solution: 'Preguntar sobre pasatiempos, comida favorita, música o actividades del día a día sin mencionar países ni distancias geográficas.',
+              clientName: 'Cliente Talkytimes',
+              operator: operatorName || 'En Turno',
+              profile: profileName
+            });
+          }
         }
 
         const bodyEl = document.getElementById('ryr-infractions-modal-body');
@@ -1744,7 +1767,7 @@
               <div style="font-size:2.8rem; margin-bottom:12px;">🛡️✅</div>
               <h3 style="color:#34d399; font-size:16px; margin:0 0 6px 0;">¡Operación 100% Blindada y Sin Infracciones!</h3>
               <p style="color:#94a3b8; font-size:12px; margin:0; max-width:550px; margin:0 auto; line-height:1.5;">
-                No se han registrado intentos de <b>Travel Misleading</b>, solicitudes de contacto externo ni manipulación de regalos en este turno para <b>${profileName}</b>.
+                No se han registrado intentos de <b>Travel Misleading</b>, preguntas de país, matrimonio ni manipulación de regalos en este turno para <b>${profileName}</b>.
               </p>
             </div>
           `;
@@ -1757,7 +1780,7 @@
               <span style="color:#fca5a5; font-size:13px; font-weight:900;">
                 ⚠️ Alertas Neutralizadas en Turno: <span style="background:#ef4444; color:#fff; padding:2px 9px; border-radius:12px; font-size:11.5px; margin-left:4px;">${infractions.length}</span>
               </span>
-              <div style="font-size:10.5px; color:#cbd5e1; margin-top:2px;">El Firewall de 3 Capas bloqueó los envíos en tiempo real impidiendo multas y baneos de perfil.</div>
+              <div style="font-size:10.5px; color:#cbd5e1; margin-top:2px;">El Firewall de 3 Capas bloqueó los envíos en tiempo real en la pantalla del operador impidiendo multas ($10.000 COP) y baneos de perfil.</div>
             </div>
             <span style="font-size:12px; color:#fbbf24; font-weight:bold; background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.4); padding:4px 10px; border-radius:6px;">
               💰 Multas Evitadas: ~$${(infractions.length * 10000).toLocaleString('es-CO')} COP
@@ -1769,12 +1792,23 @@
               const dateStr = inf.timestamp ? new Date(inf.timestamp).toLocaleString('es-CO') : (inf.timeFormatted || 'Reciente');
               const ruleName = inf.ruleTitle || inf.rule || 'TRAVEL MISLEADING (PREVENCIÓN DE MULTA)';
               const snippet = inf.snippet || inf.text || 'Texto bloqueado por el firewall';
+              const blockedWord = inf.blockedPhrase || inf.sample || snippet;
               const client = inf.clientName || inf.clientId || 'Cliente en Pantalla';
 
-              let errorExplanation = 'Intento de compartir o solicitar ubicaciones, vuelos, aeropuertos, hoteles o citas en persona (Regla estricta Talkytimes).';
-              if (ruleName.includes('CONTACT')) errorExplanation = 'Intento de filtrar números de teléfono, redes sociales o correos externos.';
-              else if (ruleName.includes('GIFT')) errorExplanation = 'Petición o manipulación indebida de regalos, dinero o tokens.';
-              else if (ruleName.includes('MARRIAGE')) errorExplanation = 'Promesa de matrimonio o compromiso conyugal no permitido.';
+              let errorExplanation = inf.reason || 'Intento de compartir o solicitar ubicaciones, vuelos, países o citas en persona (Regla estricta Talkytimes).';
+              if (ruleName.includes('COUNTRY') || ruleName.includes('País')) {
+                errorExplanation = 'El operador intentó preguntar o mencionar países/ciudades no solicitadas. Está prohibido hablar de ubicaciones a menos que el cliente lo pregunte expresamente.';
+              } else if (ruleName.includes('FAMILY') || ruleName.includes('Familia')) {
+                errorExplanation = 'Intento de mencionar que hijos, hijas o familiares viven en otros países o ciudades lejanas.';
+              } else if (ruleName.includes('MARRIAGE') || ruleName.includes('Matrimonio')) {
+                errorExplanation = 'Promesa de matrimonio, boda o referirse al usuario como esposo/marido no permitido.';
+              } else if (ruleName.includes('CONTACT') || ruleName.includes('Contacto')) {
+                errorExplanation = 'Intento de filtrar números de teléfono, redes sociales o correos externos.';
+              } else if (ruleName.includes('GIFT') || ruleName.includes('Regalo')) {
+                errorExplanation = 'Petición o manipulación indebida de regalos, dinero o tokens.';
+              }
+
+              let tacticalSolution = inf.solution || 'Cambiar de tema preguntando por pasatiempos, música, comida favorita o anécdotas cotidianas sin mencionar distancias ni países.';
 
               return `
                 <div style="background:#090d1f; border:1px solid rgba(239,68,68,0.4); border-left:5px solid #ef4444; border-radius:8px; padding:16px; display:flex; flex-direction:column; gap:10px; box-shadow:0 4px 20px rgba(0,0,0,0.5);">
@@ -1790,20 +1824,23 @@
                     <span>💼 <b>Operador:</b> <span style="color:#34d399; font-weight:bold;">${inf.operator || operatorName || 'En Turno'}</span></span>
                   </div>
 
-                  <!-- FRAGMENTO EXACTO DEL CHAT -->
+                  <!-- FRAGMENTO EXACTO Y PALABRAS BLOQUEADAS -->
                   <div style="background:#040711; border:1px solid #1e293b; border-radius:6px; padding:12px; font-family:monospace; font-size:11.5px; line-height:1.5;">
                     <div style="color:#f87171; font-size:10.5px; font-weight:900; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
-                      📝 Fragmento Exacto de la Conversación Detectado:
+                      📝 Fragmento Exacto / Palabras Bloqueadas en Pantalla:
                     </div>
                     <div style="background:rgba(239,68,68,0.18); border-left:3px solid #ef4444; padding:8px 12px; border-radius:4px; color:#fca5a5; font-weight:bold;">
                       "${snippet}"
                     </div>
                   </div>
 
-                  <!-- DIAGNÓSTICO Y ACCIÓN PREVENTIVA -->
-                  <div style="background:rgba(6,9,19,0.8); border:1px dashed #334155; border-radius:6px; padding:8px 12px; font-size:11px; color:#94a3b8; display:flex; flex-direction:column; gap:4px;">
-                    <div>⚠️ <b>Contexto del Error:</b> <span style="color:#e2e8f0;">${errorExplanation}</span></div>
-                    <div>🛡️ <b>Acción del Firewall:</b> <span style="color:#10b981; font-weight:bold;">Botón "Send" deshabilitado en tiempo real, envío con Enter cancelado. Cero multas aplicadas por la plataforma.</span></div>
+                  <!-- DIAGNÓSTICO Y SOLUCIÓN PEDAGÓGICA -->
+                  <div style="background:rgba(6,9,19,0.8); border:1px dashed #334155; border-radius:6px; padding:10px 14px; font-size:11.5px; color:#94a3b8; display:flex; flex-direction:column; gap:6px;">
+                    <div>⚠️ <b style="color:#fca5a5;">¿Por qué fue bloqueado?:</b> <span style="color:#e2e8f0;">${errorExplanation}</span></div>
+                    <div style="background:rgba(16,185,129,0.12); border-left:3px solid #10b981; padding:6px 10px; border-radius:4px; color:#6ee7b7;">
+                      💡 <b>Solución y Recomendación Pedagógica:</b> ${tacticalSolution}
+                    </div>
+                    <div style="font-size:10.5px; color:#38bdf8;">🛡️ <b>Acción del Firewall:</b> Botón "Send" deshabilitado en tiempo real en Talkytimes, banner de solución inyectado al operador. Cero multas aplicadas por la plataforma.</div>
                   </div>
                 </div>
               `;

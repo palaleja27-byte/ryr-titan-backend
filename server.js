@@ -134,11 +134,50 @@ app.post('/api/telemetry', async (req, res) => {
   }
 });
 
+// Endpoint dedicado para reportar infracciones en tiempo real desde el HUD
+app.post('/api/fines/report-infraction', (req, res) => {
+  try {
+    const { infraction, profile, operator } = req.body || {};
+    if (!infraction) return res.status(400).json({ error: 'Infracción requerida' });
+    const profKey = (profile || infraction.profile || 'HORACIO').toUpperCase().trim();
+    const existing = liveProfileInfractions.get(profKey) || [];
+    const seenIds = new Set(existing.map(i => String(i.id)));
+    if (!seenIds.has(String(infraction.id))) {
+      existing.unshift(infraction);
+      if (existing.length > 50) existing.length = 50;
+      liveProfileInfractions.set(profKey, existing);
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Endpoint para consultar todas las infracciones detalladas de un perfil
 app.get('/api/fines/infractions/:profile', (req, res) => {
   const profKey = (req.params.profile || 'HORACIO').toUpperCase().trim();
-  const infractions = liveProfileInfractions.get(profKey) || [];
-  res.json({ success: true, infractions });
+  const baseInfractions = liveProfileInfractions.get(profKey) || [];
+  const merged = [...baseInfractions];
+  const seenIds = new Set(merged.map(i => String(i.id)));
+
+  // Combinar con telemetría en vivo de operadores que tengan este perfil
+  for (let [opKey, opData] of liveOperatorTelemetry.entries()) {
+    const pUpper = (opData.profile || '').toUpperCase().trim();
+    const oUpper = (opData.operator || '').toUpperCase().trim();
+    if (pUpper === profKey || oUpper === profKey || profKey === 'ALL') {
+      if (Array.isArray(opData.infractionsList)) {
+        opData.infractionsList.forEach(inf => {
+          if (!seenIds.has(String(inf.id))) {
+            merged.push(inf);
+            seenIds.add(String(inf.id));
+          }
+        });
+      }
+    }
+  }
+
+  merged.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  res.json({ success: true, infractions: merged });
 });
 
 // Endpoint para ajustar el tiempo de respuesta (SLA en minutos) por operador

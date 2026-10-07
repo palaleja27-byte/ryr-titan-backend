@@ -685,105 +685,198 @@
   setInterval(syncBannedWords, 15000);
 
   // 9. FIREWALL MULTILINGÜE DE 3 CAPAS & PREVENCIÓN DE TRAVEL MISLEADING (TM)
+  
+  // Detección de si el cliente preguntó de dónde es la modelo
+  function didClientExplicitlyAskOrigin() {
+    const cleanClientId = getExactNumericClientId() || 'user';
+    const history = persistentClientChatHistoryMap.get(cleanClientId);
+    if (history && history.size > 0) {
+      const list = Array.from(history.values()).slice(-8);
+      for (let i = list.length - 1; i >= 0; i--) {
+        const msg = list[i];
+        if (!msg.isOperator) {
+          const txt = (msg.text || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+          if (
+            /\b(where\s+(are|r)\s+(you|u)\s+from|where\s+do\s+(you|u)\s+live|where\s+are\s+you\s+located|what\s+country\s+are\s+you\s+from)\b/i.test(txt) ||
+            /\b(de\s+donde\s+eres|de\s+donde\s+vienes|donde\s+vives|de\s+que\s+pais\s+eres|de\s+que\s+ciudad\s+eres|en\s+que\s+pais\s+estas)\b/i.test(txt) ||
+            /\b(de\s+onde\s+(voce|vc)\s+(e|mora|vive)|qual\s+o\s+seu\s+pais|qual\s+a\s+sua\s+cidade|de\s+qual\s+cidade)\b/i.test(txt) ||
+            /\b(d\s*ou\s*tu\s*es|d\s*ou\s*viens\s*tu|ou\s+tu\s+habites|di\s+dove\s+sei|dove\s+vivi|woher\s+kommst\s+du|wo\s+wohnst\s+du)\b/i.test(txt) ||
+            /\b(откуда\s+ты|где\s+ты\s+живешь)\b/i.test(txt)
+          ) {
+            return true;
+          }
+        }
+      }
+    }
+
+    // Búsqueda de respaldo en el DOM de la conversación
+    const bubbles = document.querySelectorAll('div[class*="dialog-content"] div, div[class*="chat-scroll"] div, div[class*="message"]');
+    for (let el of bubbles) {
+      if (el.innerText && el.innerText.length < 120) {
+        const txt = el.innerText.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        if (/\b(where\s+(are|r)\s+(you|u)\s+from|where\s+do\s+(you|u)\s+live|de\s+donde\s+eres|de\s+que\s+pais|de\s+onde\s+voce\s+e)\b/i.test(txt)) {
+          const isOp = el.querySelector('svg[class*="check"]') || el.innerText.includes('You:') || el.className.includes('right');
+          if (!isOp) return true;
+        }
+      }
+    }
+    return false;
+  }
+
   function checkViolationInText(text) {
     if (!text || text.length < 2) return null;
     
-    // Normalización universal (remueve tildes, acentos y diacríticos para compatibilidad total con PT, ES, EN, FR, IT, DE, RU)
+    // Normalización universal (remueve tildes, acentos y diacríticos)
     const rawLower = text.toLowerCase().trim();
     const normalized = text
       .toLowerCase()
       .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "") // remove accents (você -> voce, dónde -> donde, etc.)
+      .replace(/[\u0300-\u036f]/g, "")
       .replace(/[\r\n\t]+/g, " ")
       .trim();
 
-    // 1. TRAVEL MISLEADING MULTILINGÜE (PT, ES, EN, FR, IT, DE, RU)
-    const tmNormalizedPatterns = [
-      // PORTUGUÊS 🇧🇷 🇵🇹
-      /\b(de\s+onde|d\s*onde)\s+(voce|voces|vc|vcs|tu|o\s+senhor|a\s+senhora)\s+(e|eh|mora|vive|vem|esta|ta)\b/i,
-      /\b(onde|aonde)\s+(voce|vc|tu)\s+(mora|vive|esta|ta|fica|reside)\b/i,
-      /\b(qual|de\s+qual|em\s+qual)\s+(cidade|pais|estado|lugar|regiao)\b/i,
-      /\b(qual\s+e\s+a\s+sua\s+cidade|qual\s+o\s+seu\s+pais)\b/i,
-      /\b(quando|qdo)\s+(a\s+gente|nos|vc|voce)\s+(vai|vamos|pode|podemos)?\s*(se\s+ver|se\s+encontra|se\s+conhecer|viajar)\b/i,
-      /\b(quando\s+voce\s+vem|quando\s+vc\s+vem|vem\s+me\s+ver|vem\s+me\s+visitar)\b/i,
-      /\b(me\s+visita|te\s+visitar|visitar\s+voce|ir\s+te\s+ver|ir\s+na\s+sua\s+casa|ir\s+ao\s+seu\s+encontro)\b/i,
-      /\b(conhecer\s+pessoalmente|nos\s+vermos\s+pessoalmente|encontro\s+em\s+pessoa)\b/i,
-      /\b(comprar|compro|compro\s+uma)\s+(passagem|passagens|voo|passagem\s+aerea|bilhete)\b/i,
-      /\b(passagem\s+aerea|passagens\s+aereas|meu\s+voo|seu\s+voo|comprar\s+o\s+voo)\b/i,
-      /\b(aeroporto|pousada|resort|hotel)\b/i,
-      /\b(viajar\s+juntos|viajar\s+juntas|nossa\s+viagem|viajar\s+para)\b/i,
-
-      // ESPAÑOL 🇪🇸 🇨🇴 🇲🇽 🇦🇷
-      /\bde\s+donde\s+(eres|vienes|sos|estas)\b/i,
-      /\bdonde\s+(vives|estas|te\s+encuentras|viviendo|paras|resides)\b/i,
-      /\b(de|en)\s+que\s+(ciudad|pais|estado|lugar)\b/i,
-      /\b(cual\s+es\s+tu\s+ciudad|cual\s+es\s+tu\s+pais)\b/i,
-      /\bcuando\s+(nos\s+vemos|vamos\s+a\s+vernos|te\s+veo|vienes|viajas|viajamos|puedes\s+venir)\b/i,
-      /\b(vernos\s+en\s+persona|conocernos\s+en\s+persona|estar\s+en\s+persona)\b/i,
-      /\b(ir\s+a\s+verte|venir\s+a\s+verme|visitarte|visitarme)\b/i,
-      /\b(comprar\s+(el\s+)?vuelo|comprar\s+boletos?|comprar\s+pasajes?)\b/i,
-      /\b(boletos?\s+(de\s+)?avion|pasajes?\s+aereos?|mi\s+vuelo|tu\s+vuelo)\b/i,
-      /\b(aeropuerto|hotel|airbnb|viajar\s+juntos|viaje\s+juntos)\b/i,
-
-      // ENGLISH 🇺🇸 🇬🇧
-      /\bwhere\s+(are|r|is)\s*(you|u|ya)\s*(from|living|staying|located)\b/i,
-      /\bwhere\s+(do|d)\s*(you|u|ya)\s*live\b/i,
-      /\bwhere\s*(you|u|ya)\s*from\b/i,
-      /\bwhat\s+(city|country|state|place)\s*(are|do|r|d)\s*(you|u)\b/i,
-      /\bwhich\s+(city|country|state)\b/i,
-      /\bwhen\s*(are\s*we|can\s*we|will\s*we|do\s*we)\s*(meet|see\s*each\s*other|catch\s*up|hang\s*out)\b/i,
-      /\bwhen\s*(will\s*you|can\s*you|do\s*you|are\s*you\s*gonna)\s*(visit|come\s*over|come\s*see|fly)\b/i,
-      /\b(meet\s*up|in\s*person|come\s*see\s*(me|you)|come\s*visit\s*(me|you)|visit\s*(me|you))\b/i,
-      /\b(book|buy)\s*(a\s*)?(flight|plane\s*ticket|hotel|room|airbnb)\b/i,
-      /\b(flight\s*to|flying\s*to|plane\s*ticket|my\s*flight|your\s*flight)\b/i,
-      /\b(vacation\s*together|trip\s*together|travel\s*together|travel\s*to)\b/i,
-      /\b(hotel|airport|airbnb|motel|resort)\b/i,
-
-      // FRANÇAIS 🇫🇷
-      /\b(d\s*ou\s*tu\s*es|d\s*ou\s*viens\s*tu|d\s*ou\s*venez\s*vous|tu\s+es\s+d\s*ou|tu\s+viens\s+d\s*ou)\b/i,
-      /\b(ou\s+tu\s+habites|tu\s+habites\s+ou|ou\s+vous\s+habitez|ou\s+vis\s+tu|tu\s+vis\s+ou)\b/i,
-      /\b(quelle\s+ville|quel\s+pays)\b/i,
-      /\b(quand\s+on\s+se\s+voit|quand\s+tu\s+viens|se\s+voir\s+en\s+vrai|rencontrer\s+en\s+personne)\b/i,
-      /\b(billet\s+d\s*avion|vol\s+pour|aeroport|hotel)\b/i,
-
-      // ITALIANO 🇮🇹
-      /\b(di\s+dove\s+sei|dove\s+vivi|dove\s+abiti|di\s+che\s+citta|di\s+quale\s+paese)\b/i,
-      /\b(quando\s+ci\s+vediamo|quando\s+vieni|incontrarci\s+di\s+persona|vederci\s+di\s+persona)\b/i,
-      /\b(biglietto\s+aereo|volo\s+per|aeroporto|hotel)\b/i,
-
-      // DEUTSCH 🇩🇪
-      /\b(woher\s+kommst\s+du|woher\s+kommen\s+sie|wo\s+wohnst\s+du|wo\s+lebst\s+du|welche\s+stadt|welches\s+land)\b/i,
-      /\b(wann\s+treffen\s+wir\s+uns|wann\s+kommst\s+du|personlich\s+treffen|in\s+person\s+treffen)\b/i,
-      /\b(flugticket|flug\s+nach|flughafen|hotel)\b/i
+    // 1. PROHIBICIÓN ESTRICTA: PREGUNTAR AL USUARIO SOBRE PAÍS, CIUDAD O UBICACIÓN (SIEMPRE BLOQUEADO)
+    const countryQuestionPatterns = [
+      /\b(de\s+que\s+pais|de\s+que\s+ciudad|de\s+que\s+estado|de\s+que\s+lugar|de\s+donde\s+eres|de\s+donde\s+vienes|donde\s+vives|en\s+que\s+pais|en\s+que\s+ciudad|en\s+que\s+lugar\s+vives|cual\s+es\s+tu\s+pais|cual\s+es\s+tu\s+ciudad|en\s+que\s+parte\s+vives)\b/i,
+      /\b(what\s+country|what\s+city|which\s+country|which\s+city|where\s+are\s+you\s+from|where\s+do\s+you\s+live|where\s+r\s+u\s+from|what\s+state\s+are\s+you\s+in|what\s+place\s+are\s+you\s+from)\b/i,
+      /\b(de\s+qual\s+pais|de\s+qual\s+cidade|de\s+onde\s+voce\s+e|onde\s+voce\s+mora|onde\s+voce\s+vive|qual\s+o\s+seu\s+pais|qual\s+a\s+sua\s+cidade|qual\s+o\s+seu\s+estado)\b/i,
+      /\b(de\s+quel\s+pays|de\s+quelle\s+ville|d\s*ou\s*tu\s*viens|tu\s+es\s+de\s+quel\s+pays|tu\s+habites\s+dans\s+quel\s+pays)\b/i,
+      /\b(di\s+che\s+paese|di\s+quale\s+citta|di\s+dove\s+sei|dove\s+vivi|in\s+quale\s+paese\s+vivi)\b/i,
+      /\b(aus\s+welchem\s+land|aus\s+welcher\s+stadt|woher\s+kommst\s+du|wo\s+wohnst\s+du)\b/i,
+      /\b(из\s+какой\s+ты\s+страны|в\s+какой\s+стране|откуда\s+ты|где\s+ты\s+живешь)\b/i
     ];
 
-    for (const pat of tmNormalizedPatterns) {
+    for (const pat of countryQuestionPatterns) {
       if (pat.test(normalized) || pat.test(rawLower)) {
+        const matchStr = normalized.match(pat)?.[0] || rawLower.match(pat)?.[0] || 'Pregunta de País';
         return {
-          type: 'TRAVEL_MISLEADING',
-          title: '✈️ Travel Misleading (Ubicación / Encuentro / Vuelos)',
-          sample: normalized.match(pat)?.[0] || 'Ubicación/Viaje'
+          type: 'COUNTRY_QUESTION_PROHIBITED',
+          title: '✈️ Pregunta de País / Ubicación Prohibida (Anti-TM)',
+          sample: matchStr,
+          reason: 'Está prohibido preguntar al usuario de qué país o ciudad es. Las preguntas sobre ubicación son consideradas inducción a Travel Misleading por la plataforma.',
+          solution: 'Pregúntale sobre sus gustos, sus pasatiempos, su trabajo, su comida favorita o qué cosas interesantes hizo hoy, sin mencionar países ni ubicaciones geográficas.',
+          safeHooks: [
+            'Cuéntame, ¿qué es lo que más te apasiona hacer en tus tiempos libres?',
+            '¿Cómo ha estado tu día hoy? ¿Hiciste algo divertido o relajante?',
+            'Tengo curiosidad por saber, ¿cuál es tu comida favorita de todos los tiempos?'
+          ]
         };
       }
     }
 
-    // RUSSIAN / CIRÍLICO 🇷🇺
-    const tmCyrillicPatterns = [
-      /\b(откуда\s+ты|где\s+ты\s+живешь|где\s+живешь|в\s+каком\s+городе|в\s+какой\s+стране|какой\s+город|какая\s+страна)\b/i,
-      /\b(когда\s+увидимся|когда\s+встретимся|приедешь\s+ко\s+мне|прилетишь\s+ко\s+мне|встретиться\s+вживую|увидеться\s+вживую)\b/i,
-      /\b(билет\s+на\s+самолет|купить\s+билет|самолет|аэропорт|отель|гостиница)\b/i
+    // 2. PROHIBICIÓN ESTRICTA: DECIR QUE HIJOS O FAMILIARES VIVEN EN OTROS PAÍSES O CIUDADES
+    const familyAbroadPatterns = [
+      /\b(mis\s+hijos?\s+(viven|estan|residen|se\s+fueron)|mi\s+hijo\s+(vive|esta|reside)|mi\s+hija\s+(vive|esta|reside)|mis\s+padres\s+(viven|estan)|mi\s+familia\s+(vive|esta)|tengo\s+familia\s+en|tengo\s+hijos\s+en|mis\s+hijos\s+en\s+otro\s+pais)\b/i,
+      /\b(my\s+kids?\s+(live|are|stay)|my\s+children\s+(live|are)|my\s+son\s+(lives|is)|my\s+daughter\s+(lives|is)|my\s+parents\s+live|my\s+family\s+lives|kids\s+in\s+another\s+country)\b/i,
+      /\b(meus\s+filhos?\s+(moram|vivem|estao)|minha\s+filha\s+(mora|vive|esta)|meu\s+filho\s+(mora|vive|esta)|minha\s+familia\s+mora)\b/i,
+      /\b(mes\s+enfants\s+(vivent|habitent)|mon\s+fils\s+vit|ma\s+fille\s+vit|i\s+miei\s+figli\s+vivono|meine\s+kinder\s+leben)\b/i
     ];
-    for (const pat of tmCyrillicPatterns) {
-      if (pat.test(rawLower)) {
+
+    for (const pat of familyAbroadPatterns) {
+      if (pat.test(normalized) || pat.test(rawLower)) {
+        const matchStr = normalized.match(pat)?.[0] || rawLower.match(pat)?.[0] || 'Familia en otro país';
         return {
-          type: 'TRAVEL_MISLEADING',
-          title: '✈️ Travel Misleading (Ubicación / Encuentro / Vuelos - RU)',
-          sample: rawLower.match(pat)?.[0] || 'Ubicación/Viaje'
+          type: 'FAMILY_ABROAD_PROHIBITED',
+          title: '👨‍👩‍👧 Prohibido Mencionar Familia/Hijos en Otros Países',
+          sample: matchStr,
+          reason: 'No se permite mencionar que tus hijos, hijas o familiares viven en otros países o ciudades. Talkytimes sanciona estos relatos como manipulación de contexto geográfico.',
+          solution: 'Comparte momentos agradables en casa (cocinar, escuchar música, pasear mascotas) sin nombrar países ni distancias geográficas.',
+          safeHooks: [
+            'Hoy estuve cocinando algo delicioso en casa. ¿A ti te gusta cocinar o prefieres salir?',
+            'Me encanta pasar tiempo relajándome con buena música. ¿Qué tipo de música te gusta escuchar?'
+          ]
         };
       }
     }
 
-    // 2. FUGA DE CONTACTO / DATOS PRIVADOS MULTILINGÜE
+    // 3. MENCIÓN DE PAÍSES O REVELAR ORIGEN ESPONTÁNEAMENTE (SÓLO SE PERMITE SI EL CLIENTE PREGUNTÓ)
+    const clientAskedOrigin = didClientExplicitlyAskOrigin();
+    if (!clientAskedOrigin) {
+      const countryListPatterns = [
+        /\b(colombia|venezuela|mexico|estados\s+unidos|ee\.?\s*uu|usa|spain|espana|argentina|chile|peru|ecuador|brasil|brazil|canada|alemania|germany|francia|france|italia|italy|reino\s+unido|uk|inglaterra|england|portugal|rusia|russia|ucrania|ukraine|cuba|republica\s+dominicana|panama|costa\s+rica|guatemala|honduras|bolivia|uruguay|paraguay)\b/i,
+        /\b(soy\s+de|vivo\s+en|radico\s+en|vengo\s+de|naci\s+en|mi\s+pais\s+es|mi\s+ciudad\s+es)\b/i,
+        /\b(i\s+am\s+from|i\s+live\s+in|i\s+come\s+from|born\s+in|my\s+country\s+is|my\s+city\s+is)\b/i,
+        /\b(sou\s+de|moro\s+em|vivo\s+em|nasci\s+em|meu\s+pais\s+e|minha\s+cidade\s+e)\b/i,
+        /\b(je\s+suis\s+de|je\s+vis\s+a|sono\s+di|ich\s+komme\s+aus|ich\s+lebe\s+in)\b/i
+      ];
+
+      for (const pat of countryListPatterns) {
+        if (pat.test(normalized) || pat.test(rawLower)) {
+          const matchStr = normalized.match(pat)?.[0] || rawLower.match(pat)?.[0] || 'Mención de país';
+          return {
+            type: 'UNSOLICITED_ORIGIN_MENTION',
+            title: '🗺️ Mención de País / Origen no Solicitada',
+            sample: matchStr,
+            reason: 'El cliente NO ha preguntado de dónde eres. Está terminantemente prohibido revelar país, ciudad o nombrar países si el cliente no lo solicitó explícitamente.',
+            solution: 'Espera a que el usuario te pregunte de dónde eres antes de revelar tu país. Mientras tanto, conversa sobre sus intereses, proyectos o pasatiempos.',
+            safeHooks: [
+              'Hoy tuve un día súper activo y me encanta desconectarme charlando contigo. ¿Cómo va tu día?',
+              'Me fascina conocer personas con buena energía como tú. ¿Qué te gusta hacer los fines de semana?'
+            ]
+          };
+        }
+      }
+    }
+
+    // 4. PROMESAS DE MATRIMONIO Y COMPROMISOS CONYUGALES (SIEMPRE BLOQUEADO)
+    const marriagePatterns = [
+      /\b(casar(se|nos|me|te)?|casemonos|matrimonio|boda|bodas|compromet(erse|ernos|idos?|erme)|prometid[oa]|espos[oa]s?|marido|marido\s+y\s+mujer|esposo\s+y\s+esposa|pedir\s+(tu|la)\s+mano|anillo\s+de\s+compromiso)\b/i,
+      /\b(marry|marry\s*me|getting\s*married|get\s*married|marriage|wedding|fiancee?|engagement|husband|wife|be\s*my\s*(husband|wife)|propose\s*to\s*me|marry\s*you)\b/i,
+      /\b(casar\s+comigo|quando\s+a\s+gente\s+casar|casamento|noivado|noiv[oa]|meu\s+marido|minha\s+esposa)\b/i,
+      /\b(se\s+marier|mariage|fiancailles|mon\s+mari|ma\s+femme)\b/i,
+      /\b(sposar(si|ci)?|matrimonio|fidanzamento|mio\s+marito|mia\s+moglie)\b/i,
+      /\b(heiraten|ehe|verlobung|mein\s+ehemann|meine\s+ehefrau)\b/i,
+      /\b(жениться|выйти\s+замуж|свадьба|помолвка|муж|жена)\b/i
+    ];
+
+    for (const pat of marriagePatterns) {
+      if (pat.test(normalized) || pat.test(rawLower)) {
+        const matchStr = normalized.match(pat)?.[0] || rawLower.match(pat)?.[0] || 'Matrimonio';
+        return {
+          type: 'MARRIAGE_PROMISE',
+          title: '💍 Promesa de Matrimonio / Compromiso Prohibida',
+          sample: matchStr,
+          reason: 'Está prohibido hablar de matrimonio, bodas, compromisos conyugales o referirse al usuario como esposo/marido. Genera expectativas sancionables por la plataforma.',
+          solution: 'Enfócate en construir química sincera y una amistad bonita sin promesas de compromiso conyugal ni bodas.',
+          safeHooks: [
+            'Me encanta lo bien que nos entendemos charlando. ¿Qué es lo que más valoras en una bonita amistad?',
+            'Cada charla contigo es muy especial. Cuéntame algo que te haya hecho sonreír hoy.'
+          ]
+        };
+      }
+    }
+
+    // 5. ENCUENTROS EN PERSONA, VUELOS, HOTELES, AEROPUERTOS Y VIAJES (TRAVEL MISLEADING - SIEMPRE BLOQUEADO)
+    const tmMeetingPatterns = [
+      /\b(vernos\s+en\s+persona|conocernos\s+en\s+persona|estar\s+en\s+persona|cuando\s+nos\s+vemos|cuando\s+vienes|ir\s+a\s+verte|venir\s+a\s+verme|visitarte|visitarme|puedes\s+venir)\b/i,
+      /\b(comprar\s+(el\s+)?vuelo|comprar\s+boletos?|comprar\s+pasajes?|boletos?\s+(de\s+)?avion|pasajes?\s+aereos?|mi\s+vuelo|tu\s+vuelo)\b/i,
+      /\b(aeropuerto|hotel|airbnb|motel|resort|viajar\s+juntos|hacer\s+un\s+viaje|nuestro\s+viaje|viajar\s+a\s+verte)\b/i,
+      /\b(meet\s*up|in\s*person|come\s*see\s*(me|you)|come\s*visit\s*(me|you)|when\s*(will|can)\s*you\s*visit|book\s*(a\s*)?flight|flight\s*ticket|airport|hotel|vacation\s*together|travel\s*together)\b/i,
+      /\b(conhecer\s+pessoalmente|se\s+ver\s+pessoalmente|quando\s+voce\s+vem|comprar\s+passagem|passagem\s+aerea|aeroporto|hotel|viajar\s+juntos)\b/i,
+      /\b(se\s+voir\s+en\s+vrai|rencontrer\s+en\s+personne|billet\s+d\s*avion|vol\s+pour|aeroport|hotel)\b/i,
+      /\b(incontrarci\s+di\s+persona|vederci\s+di\s+persona|biglietto\s+aereo|volo\s+per|aeroporto|hotel)\b/i,
+      /\b(personlich\s+treffen|in\s+person\s+treffen|flugticket|flug\s+nach|flughafen|hotel)\b/i,
+      /\b(когда\s+увидимся|когда\s+встретимся|приедешь\s+ко\s+мне|прилетишь\s+ко\s+мне|встретиться\s+вживую|увидеться\s+вживую|билет\s+на\s+самолет|самолет|аэропорт|отель)\b/i
+    ];
+
+    for (const pat of tmMeetingPatterns) {
+      if (pat.test(normalized) || pat.test(rawLower)) {
+        const matchStr = normalized.match(pat)?.[0] || rawLower.match(pat)?.[0] || 'Encuentro / Vuelo';
+        return {
+          type: 'TRAVEL_MISLEADING_MEETING',
+          title: '✈️ Encuentro / Vuelos / Citas en Persona (Travel Misleading)',
+          sample: matchStr,
+          reason: 'Prohibido proponer encuentros físicos, visitas, compra de vuelos o estadías en hoteles. Infracción grave de Travel Misleading ($10.000 COP de multa y riesgo de baneo).',
+          solution: 'Mantén el vínculo enfocado en el presente virtual. Comparte anécdotas, fotos y pregúntale por sus momentos favoritos del día.',
+          safeHooks: [
+            'Me fascina pasar este rato contigo compartiendo nuestras historias. ¿Qué planes tienes para esta noche?',
+            'Siempre me alegras el día con tus mensajes. ¿Qué tal estuvo tu jornada hoy?'
+          ]
+        };
+      }
+    }
+
+    // 6. FUGA DE CONTACTO / DATOS PRIVADOS MULTILINGÜE
     const contactPatterns = [
       /\bwhatsapp\b/i, /\btelegram\b/i, /\binstagram\b/i, /\bskype\b/i, /\bfacebook\b/i, /\btiktok\b/i,
       /\bemail\b/i, /\bcorreo\b/i, /\bgmail\b/i, /\bhotmail\b/i, /\byahoo\b/i, /\boutlook\b/i,
@@ -794,15 +887,21 @@
 
     for (const pat of contactPatterns) {
       if (pat.test(normalized) || pat.test(rawLower)) {
+        const matchStr = normalized.match(pat)?.[0] || rawLower.match(pat)?.[0] || 'Contacto externo';
         return {
           type: 'CONTACT_LEAK',
           title: '📱 Fuga de Contacto / Datos Externos',
-          sample: normalized.match(pat)?.[0] || 'Contacto externo'
+          sample: matchStr,
+          reason: 'Está prohibido compartir números telefónicos, redes sociales o correos electrónicos fuera de la plataforma.',
+          solution: 'Invítalo a seguir disfrutando y compartiendo anécdotas exclusivas de forma segura dentro de este chat.',
+          safeHooks: [
+            'Me encanta charlar contigo por aquí de forma segura. Cuéntame más sobre lo que hiciste hoy.'
+          ]
         };
       }
     }
 
-    // 3. MANIPULACIÓN DE REGALOS / TOKENS / DINERO MULTILINGÜE
+    // 7. MANIPULACIÓN DE REGALOS / TOKENS / DINERO MULTILINGÜE
     const giftPatterns = [
       /\b(send|buy)\s*me\s*(a\s*)?(gift|present|token|money|credit)\b/i,
       /\bgift\s*me\b/i,
@@ -813,38 +912,32 @@
 
     for (const pat of giftPatterns) {
       if (pat.test(normalized) || pat.test(rawLower)) {
+        const matchStr = normalized.match(pat)?.[0] || rawLower.match(pat)?.[0] || 'Solicitud de regalo';
         return {
           type: 'GIFT_MANIPULATION',
           title: '🎁 Manipulación de Regalos / Dinero Prohibida',
-          sample: normalized.match(pat)?.[0] || 'Solicitud de regalo'
+          sample: matchStr,
+          reason: 'Está prohibido pedir o manipular al usuario para que envíe regalos, tokens o dinero.',
+          solution: 'Construye valor con fotos y cartas emotivas para que el usuario gaste tokens de forma voluntaria.',
+          safeHooks: [
+            'Me encanta compartir momentos contigo. Cuéntame, ¿qué es lo que más te gusta de nuestras charlas?'
+          ]
         };
       }
     }
 
-    // 4. PROMESAS DE MATRIMONIO MULTILINGÜE
-    const marriagePatterns = [
-      /\bmarry\s*me\b/i, /\bwhen\s*we\s*marry\b/i, /\bget\s*married\b/i,
-      /\bcasarnos\b/i, /\bmatrimonio\b/i, /\bboda\b/i, /\bmi\s*espos[oa]\b/i, /\bmy\s*(husband|wife)\b/i,
-      /\bcasar\s+comigo\b/i, /\bquando\s+a\s+gente\s+casar\b/i, /\bmeu\s+marido\b/i, /\bmi\s+esposa\b/i, /\bminha\s+esposa\b/i
-    ];
-
-    for (const pat of marriagePatterns) {
-      if (pat.test(normalized) || pat.test(rawLower)) {
-        return {
-          type: 'MARRIAGE_PROMISE',
-          title: '💍 Promesa de Matrimonio / Compromiso',
-          sample: normalized.match(pat)?.[0] || 'Matrimonio'
-        };
-      }
-    }
-
-    // 5. Raíces dinámicas adicionales desde backend
+    // 8. Raíces dinámicas adicionales desde backend
     for (const root of bannedRoots) {
       if (root && root.length > 2 && (normalized.includes(root.toLowerCase()) || rawLower.includes(root.toLowerCase()))) {
         return {
           type: 'CUSTOM_BANNED_ROOT',
           title: `🛡️ Término Restringido ("${root}")`,
-          sample: root
+          sample: root,
+          reason: `El término "${root}" está restringido por la administración de la agencia.`,
+          solution: 'Reemplaza la frase por una pregunta sobre intereses generales o experiencias cotidianas.',
+          safeHooks: [
+            'Cuéntame algo curioso o divertido que te haya pasado esta semana.'
+          ]
         };
       }
     }
@@ -852,10 +945,119 @@
     return null;
   }
 
+  // RENDERIZADOR DEL BANNER DE SOLUCIÓN TÁCTICA PARA EL OPERADOR
+  function renderFirewallSolutionCard(violation, targetInput) {
+    let banner = document.getElementById('ryr-firewall-solution-banner');
+    if (!violation) {
+      if (banner) banner.remove();
+      return;
+    }
+
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'ryr-firewall-solution-banner';
+      banner.style.cssText = `
+        margin: 8px 0 10px 0;
+        padding: 12px 16px;
+        background: linear-gradient(135deg, rgba(30, 8, 16, 0.98), rgba(18, 6, 32, 0.98));
+        border: 2px solid #ef4444;
+        border-radius: 10px;
+        box-shadow: 0 0 30px rgba(239, 68, 68, 0.45);
+        color: #fff;
+        font-family: 'Space Grotesk', system-ui, sans-serif;
+        font-size: 12px;
+        z-index: 999999;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        animation: ryrBannerGlow 1.8s infinite alternate;
+      `;
+      
+      // Insertar inteligentemente encima o debajo del contenedor del chat
+      const chatToolsWrap = document.querySelector('.ryr-chat-tools-wrapper');
+      if (chatToolsWrap && chatToolsWrap.parentElement) {
+        chatToolsWrap.parentElement.insertBefore(banner, chatToolsWrap);
+      } else if (targetInput && targetInput.parentElement) {
+        targetInput.parentElement.insertAdjacentElement('afterend', banner);
+      } else {
+        document.body.appendChild(banner);
+      }
+    }
+
+    const safeHooks = Array.isArray(violation.safeHooks) ? violation.safeHooks : [];
+
+    banner.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-weight:900; color:#fca5a5; font-size:12.5px; display:flex; align-items:center; gap:6px;">
+          ${violation.title}
+        </span>
+        <span style="background:#ef4444; color:#fff; font-size:10px; font-weight:bold; padding:3px 9px; border-radius:4px; box-shadow:0 0 10px rgba(239,68,68,0.6);">
+          🚫 ENVÍO BLOQUEADO
+        </span>
+      </div>
+
+      <div style="background:rgba(0,0,0,0.5); border-left:3px solid #ef4444; padding:6px 10px; border-radius:4px; font-size:11.5px; color:#fecaca;">
+        <b>Texto detectado:</b> <code style="background:rgba(239,68,68,0.25); color:#fff; padding:2px 6px; border-radius:3px; font-weight:bold;">"${violation.sample}"</code>
+      </div>
+
+      <div style="font-size:11px; color:#cbd5e1; line-height:1.4;">
+        ⚠️ <b>¿Por qué no se puede enviar?:</b> ${violation.reason}
+      </div>
+
+      <div style="background:rgba(16,185,129,0.15); border:1px dashed #10b981; padding:8px 12px; border-radius:6px; font-size:11.5px; color:#6ee7b7; line-height:1.4;">
+        💡 <b>Cómo cambiar la conversación (Solución Táctica):</b> ${violation.solution}
+      </div>
+
+      <!-- BOTONES DE GANCHOS SEGUROS PARA INSERTAR EN 1 CLIC -->
+      <div style="display:flex; flex-direction:column; gap:6px; margin-top:2px;">
+        <span style="font-size:10.5px; color:#94a3b8; font-weight:bold;">⚡ Haz clic en una sugerencia segura para reemplazar el texto automáticamente:</span>
+        <div style="display:flex; flex-wrap:wrap; gap:6px;">
+          ${safeHooks.map(hook => `
+            <button type="button" class="ryr-firewall-safe-hook-btn" data-hook="${encodeURIComponent(hook)}" style="background:#090d1f; color:#38bdf8; border:1px solid #0284c7; padding:5px 12px; border-radius:6px; font-size:11px; cursor:pointer; font-weight:bold; transition:all 0.2s; text-align:left;">
+              💬 "${hook}"
+            </button>
+          `).join('')}
+          <button type="button" id="ryr-firewall-clear-btn" style="background:rgba(239,68,68,0.25); color:#fca5a5; border:1px solid #ef4444; padding:5px 12px; border-radius:6px; font-size:11px; cursor:pointer; font-weight:bold;">
+            🧹 Borrar texto y desbloquear
+          </button>
+        </div>
+      </div>
+    `;
+
+    // Vincular clics de ganchos seguros
+    banner.querySelectorAll('.ryr-firewall-safe-hook-btn').forEach(b => {
+      b.onclick = (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const hookText = decodeURIComponent(b.getAttribute('data-hook') || '');
+        if (targetInput && hookText) {
+          setInputValueSafely(targetInput, hookText);
+          showFirewallToast('✨ Sugerencia segura aplicada. ¡Botón de envío desbloqueado!', 'success');
+        }
+      };
+    });
+
+    const clearBtn = banner.getElementById ? banner.querySelector('#ryr-firewall-clear-btn') : null;
+    if (clearBtn) {
+      clearBtn.onclick = (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (targetInput) {
+          setInputValueSafely(targetInput, '');
+          showFirewallToast('🧹 Texto borrado. Bloqueo levantado.', 'success');
+        }
+      };
+    }
+  }
+
+  let lastReportedInfractionText = '';
+  let lastReportedInfractionTime = 0;
+
   function enforceFirewall(e) {
     const inputs = document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"]');
     let anyViolation = false;
     let currentViolationInfo = null;
+    let activeViolatingInput = null;
 
     inputs.forEach(input => {
       if (input.id?.includes('intel') || input.id?.includes('search') || input.id?.includes('reply') || input.id?.includes('sup')) return;
@@ -866,22 +1068,27 @@
       if (violation) {
         anyViolation = true;
         currentViolationInfo = violation;
+        activeViolatingInput = input;
         input.style.setProperty('border', '2px solid #ef4444', 'important');
-        input.style.setProperty('box-shadow', '0 0 10px rgba(239, 68, 68, 0.5)', 'important');
+        input.style.setProperty('box-shadow', '0 0 12px rgba(239, 68, 68, 0.6)', 'important');
 
-        if (e && e.type === 'keydown' && e.key === 'Enter' && e.target === input) {
-          e.preventDefault();
-          e.stopPropagation();
-          showFirewallToast(`🚨 Infracción Bloqueada: ${violation.title}.`);
+        // Registrar infracción en memoria y backend de inmediato (con debounce inteligente)
+        const now = Date.now();
+        if (text !== lastReportedInfractionText || (now - lastReportedInfractionTime > 4000)) {
+          lastReportedInfractionText = text;
+          lastReportedInfractionTime = now;
 
           const { clientName } = getExactClientProfileData();
           const infractionRecord = {
             id: `inf_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
             timestamp: Date.now(),
-            timeFormatted: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            timeFormatted: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
             rule: violation.type,
             ruleTitle: violation.title,
-            snippet: text.length > 140 ? text.substring(0, 140) + '...' : text,
+            snippet: text.length > 160 ? text.substring(0, 160) + '...' : text,
+            blockedPhrase: violation.sample,
+            reason: violation.reason,
+            solution: violation.solution,
             clientName: clientName || 'Chat en Vivo',
             operator: sessionData.operator || 'walther',
             profile: sessionData.profileName || 'HORACIO'
@@ -892,6 +1099,22 @@
           firewallInfractionsCount++;
           persistFirewallInfractions();
           sendTelemetry(true);
+
+          // Enviar inmediatamente a endpoint backend
+          try {
+            fetch(`${API_URL}/api/fines/report-infraction`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ infraction: infractionRecord, profile: sessionData.profileName, operator: sessionData.operator })
+            }).catch(() => {});
+          } catch (ePost) {}
+        }
+
+        if (e && e.type === 'keydown' && e.key === 'Enter' && e.target === input) {
+          e.preventDefault();
+          e.stopPropagation();
+          showFirewallToast(`🚨 Infracción Bloqueada: ${violation.title}.`);
+          playAlertChime();
         }
       } else {
         if (input.style.borderColor === 'rgb(239, 68, 68)' || input.style.border.includes('239, 68, 68')) {
@@ -900,6 +1123,9 @@
         }
       }
     });
+
+    // Renderizar o remover el banner de solución interactiva
+    renderFirewallSolutionCard(currentViolationInfo, activeViolatingInput);
 
     // Localizar y bloquear TODOS los botones de envío en el chat y cartas
     const sendButtons = document.querySelectorAll('button, [role="button"], div[class*="send" i], a[class*="send" i]');
@@ -912,6 +1138,7 @@
                         !btn.classList.contains('ryr-btn-handover') &&
                         !btn.classList.contains('ryr-chat-hooks-btn') &&
                         !btn.classList.contains('ryr-letter-drafter-btn') &&
+                        !btn.classList.contains('ryr-firewall-safe-hook-btn') &&
                         !btn.classList.contains('ryr-btn-sup-chat');
 
       if (isSendBtn) {
