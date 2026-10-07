@@ -686,22 +686,34 @@
 
   // 9. FIREWALL MULTILINGÜE DE 3 CAPAS & PREVENCIÓN DE TRAVEL MISLEADING (TM)
   
-  // Detección de si el cliente preguntó de dónde es la modelo
-  function didClientExplicitlyAskOrigin() {
+  // Detección inteligente de si el cliente preguntó explícitamente por países, origen, partidos, juegos o equipos
+  function didClientExplicitlyAskCountryOrContext() {
     const cleanClientId = getExactNumericClientId() || 'user';
     const history = persistentClientChatHistoryMap.get(cleanClientId);
     if (history && history.size > 0) {
-      const list = Array.from(history.values()).slice(-8);
+      const list = Array.from(history.values()).slice(-10);
       for (let i = list.length - 1; i >= 0; i--) {
         const msg = list[i];
         if (!msg.isOperator) {
           const txt = (msg.text || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+          
+          // 1. Pregunta explícita de origen o ubicación
           if (
-            /\b(where\s+(are|r)\s+(you|u)\s+from|where\s+do\s+(you|u)\s+live|where\s+are\s+you\s+located|what\s+country\s+are\s+you\s+from)\b/i.test(txt) ||
-            /\b(de\s+donde\s+eres|de\s+donde\s+vienes|donde\s+vives|de\s+que\s+pais\s+eres|de\s+que\s+ciudad\s+eres|en\s+que\s+pais\s+estas)\b/i.test(txt) ||
-            /\b(de\s+onde\s+(voce|vc)\s+(e|mora|vive)|qual\s+o\s+seu\s+pais|qual\s+a\s+sua\s+cidade|de\s+qual\s+cidade)\b/i.test(txt) ||
-            /\b(d\s*ou\s*tu\s*es|d\s*ou\s*viens\s*tu|ou\s+tu\s+habites|di\s+dove\s+sei|dove\s+vivi|woher\s+kommst\s+du|wo\s+wohnst\s+du)\b/i.test(txt) ||
-            /\b(откуда\s+ты|где\s+ты\s+живешь)\b/i.test(txt)
+            /\b(where\s+(are|r)\s+(you|u)\s+from|where\s+do\s+(you|u)\s+live|where\s+are\s+you\s+located|what\s+country\s+are\s+you\s+from|what\s+country|which\s+country)\b/i.test(txt) ||
+            /\b(de\s+donde\s+eres|de\s+donde\s+vienes|donde\s+vives|de\s+que\s+pais\s+eres|de\s+que\s+ciudad\s+eres|en\s+que\s+pais\s+estas|que\s+pais)\b/i.test(txt) ||
+            /\b(de\s+onde\s+(voce|vc)\s+(e|mora|vive)|qual\s+o\s+seu\s+pais|qual\s+a\s+sua\s+cidade|qual\s+pais)\b/i.test(txt) ||
+            /\b(d\s*ou\s*tu\s*es|d\s*ou\s*viens\s*tu|ou\s+tu\s+habites|quel\s+pays|di\s+dove\s+sei|dove\s+vivi|quale\s+paese|woher\s+kommst\s+du|wo\s+wohnst\s+du|welches\s+land)\b/i.test(txt) ||
+            /\b(откуда\s+ты|где\s+ты\s+живешь|какая\s+страна)\b/i.test(txt)
+          ) {
+            return true;
+          }
+
+          // 2. Pregunta sobre quién juega, partidos, equipos, copa o deportes
+          if (
+            /\b(quien\s+juega|quienes\s+juegan|que\s+paises\s+juegan|que\s+equipos|cuales\s+equipos|que\s+partido|quien\s+va\s+a\s+jugar|con\s+quien\s+juega|quien\s+juega\s+hoy)\b/i.test(txt) ||
+            /\b(who\s+is\s+playing|who\s+plays|which\s+teams|which\s+countries|what\s+match|who\s+is\s+in\s+the\s+game|who\s+vs\s+who|who\s+plays\s+today)\b/i.test(txt) ||
+            /\b(quem\s+joga|quais\s+paises\s+jogam|quais\s+times|qual\s+jogo|quem\s+joga\s+hoje)\b/i.test(txt) ||
+            /\b(qui\s+joue|quelles\s+equipes|chi\s+gioca|quali\s+squadre|wer\s+spielt|welche\s+mannschaften|кто\s+играет)\b/i.test(txt)
           ) {
             return true;
           }
@@ -709,12 +721,16 @@
       }
     }
 
-    // Búsqueda de respaldo en el DOM de la conversación
+    // Búsqueda de respaldo en las burbujas del DOM
     const bubbles = document.querySelectorAll('div[class*="dialog-content"] div, div[class*="chat-scroll"] div, div[class*="message"]');
     for (let el of bubbles) {
-      if (el.innerText && el.innerText.length < 120) {
+      if (el.innerText && el.innerText.length < 140) {
         const txt = el.innerText.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        if (/\b(where\s+(are|r)\s+(you|u)\s+from|where\s+do\s+(you|u)\s+live|de\s+donde\s+eres|de\s+que\s+pais|de\s+onde\s+voce\s+e)\b/i.test(txt)) {
+        if (
+          /\b(where\s+(are|r)\s+(you|u)\s+from|where\s+do\s+(you|u)\s+live|what\s+country|who\s+is\s+playing|who\s+plays|which\s+teams)\b/i.test(txt) ||
+          /\b(de\s+donde\s+eres|de\s+que\s+pais|quien\s+juega|quienes\s+juegan|que\s+partido|que\s+equipos)\b/i.test(txt) ||
+          /\b(de\s+onde\s+voce\s+e|qual\s+pais|quem\s+joga|quais\s+times)\b/i.test(txt)
+        ) {
           const isOp = el.querySelector('svg[class*="check"]') || el.innerText.includes('You:') || el.className.includes('right');
           if (!isOp) return true;
         }
@@ -751,10 +767,10 @@
         const matchStr = normalized.match(pat)?.[0] || rawLower.match(pat)?.[0] || 'Pregunta de País';
         return {
           type: 'COUNTRY_QUESTION_PROHIBITED',
-          title: '✈️ Pregunta de País / Ubicación Prohibida (Anti-TM)',
+          title: '✈️ Pregunta de País / Ubicación no Permitida',
           sample: matchStr,
           reason: 'Está prohibido preguntar al usuario de qué país o ciudad es. Las preguntas sobre ubicación son consideradas inducción a Travel Misleading por la plataforma.',
-          solution: 'Pregúntale sobre sus gustos, sus pasatiempos, su trabajo, su comida favorita o qué cosas interesantes hizo hoy, sin mencionar países ni ubicaciones geográficas.',
+          solution: 'Pregúntale sobre sus gustos, pasatiempos, trabajo o comida favorita sin mencionar países ni ubicaciones geográficas.',
           safeHooks: [
             'Cuéntame, ¿qué es lo que más te apasiona hacer en tus tiempos libres?',
             '¿Cómo ha estado tu día hoy? ¿Hiciste algo divertido o relajante?',
@@ -779,7 +795,7 @@
           type: 'FAMILY_ABROAD_PROHIBITED',
           title: '👨‍👩‍👧 Prohibido Mencionar Familia/Hijos en Otros Países',
           sample: matchStr,
-          reason: 'No se permite mencionar que tus hijos, hijas o familiares viven en otros países o ciudades. Talkytimes sanciona estos relatos como manipulación de contexto geográfico.',
+          reason: 'No se permite mencionar que tus hijos o familiares viven en otros países. Talkytimes sanciona estos relatos como manipulación de contexto geográfico.',
           solution: 'Comparte momentos agradables en casa (cocinar, escuchar música, pasear mascotas) sin nombrar países ni distancias geográficas.',
           safeHooks: [
             'Hoy estuve cocinando algo delicioso en casa. ¿A ti te gusta cocinar o prefieres salir?',
@@ -789,9 +805,9 @@
       }
     }
 
-    // 3. MENCIÓN DE PAÍSES O REVELAR ORIGEN ESPONTÁNEAMENTE (SÓLO SE PERMITE SI EL CLIENTE PREGUNTÓ)
-    const clientAskedOrigin = didClientExplicitlyAskOrigin();
-    if (!clientAskedOrigin) {
+    // 3. MENCIÓN DE PAÍSES O REVELAR ORIGEN ESPONTÁNEAMENTE (SÓLO SE PERMITE SI EL CLIENTE LO PREGUNTÓ)
+    const clientAskedCountryOrContext = didClientExplicitlyAskCountryOrContext();
+    if (!clientAskedCountryOrContext) {
       const countryListPatterns = [
         /\b(colombia|venezuela|mexico|estados\s+unidos|ee\.?\s*uu|usa|spain|espana|argentina|chile|peru|ecuador|brasil|brazil|canada|alemania|germany|francia|france|italia|italy|reino\s+unido|uk|inglaterra|england|portugal|rusia|russia|ucrania|ukraine|cuba|republica\s+dominicana|panama|costa\s+rica|guatemala|honduras|bolivia|uruguay|paraguay)\b/i,
         /\b(soy\s+de|vivo\s+en|radico\s+en|vengo\s+de|naci\s+en|mi\s+pais\s+es|mi\s+ciudad\s+es)\b/i,
@@ -805,13 +821,13 @@
           const matchStr = normalized.match(pat)?.[0] || rawLower.match(pat)?.[0] || 'Mención de país';
           return {
             type: 'UNSOLICITED_ORIGIN_MENTION',
-            title: '🗺️ Mención de País / Origen no Solicitada',
+            title: '🗺️ Mención de País no Solicitada',
             sample: matchStr,
-            reason: 'El cliente NO ha preguntado de dónde eres. Está terminantemente prohibido revelar país, ciudad o nombrar países si el cliente no lo solicitó explícitamente.',
-            solution: 'Espera a que el usuario te pregunte de dónde eres antes de revelar tu país. Mientras tanto, conversa sobre sus intereses, proyectos o pasatiempos.',
+            reason: 'El usuario NO ha preguntado por países, partidos ni origen. Solo se pueden nombrar países si el usuario lo pide expresamente (por ejemplo si pregunta "¿quién juega?" o "¿de dónde eres?").',
+            solution: 'Háblale del evento o partido en general sin nombrar países (ej: "Hoy hay un gran juego de la copa"). Si él pregunta "¿quién juega?", en ese momento sí podrás nombrarlos.',
             safeHooks: [
-              'Hoy tuve un día súper activo y me encanta desconectarme charlando contigo. ¿Cómo va tu día?',
-              'Me fascina conocer personas con buena energía como tú. ¿Qué te gusta hacer los fines de semana?'
+              'Hoy hay un partidazo increíble en la copa deportiva. ¿A ti te gusta el fútbol o prefieres otros deportes?',
+              'Hoy tuve un día súper activo y me encanta desconectarme charlando contigo. ¿Cómo va tu día?'
             ]
           };
         }
@@ -834,9 +850,9 @@
         const matchStr = normalized.match(pat)?.[0] || rawLower.match(pat)?.[0] || 'Matrimonio';
         return {
           type: 'MARRIAGE_PROMISE',
-          title: '💍 Promesa de Matrimonio / Compromiso Prohibida',
+          title: '💍 Promesa de Matrimonio Prohibida',
           sample: matchStr,
-          reason: 'Está prohibido hablar de matrimonio, bodas, compromisos conyugales o referirse al usuario como esposo/marido. Genera expectativas sancionables por la plataforma.',
+          reason: 'Está prohibido hablar de matrimonio, bodas o referirse al usuario como esposo/marido. Genera expectativas sancionables por la plataforma.',
           solution: 'Enfócate en construir química sincera y una amistad bonita sin promesas de compromiso conyugal ni bodas.',
           safeHooks: [
             'Me encanta lo bien que nos entendemos charlando. ¿Qué es lo que más valoras en una bonita amistad?',
@@ -864,7 +880,7 @@
         const matchStr = normalized.match(pat)?.[0] || rawLower.match(pat)?.[0] || 'Encuentro / Vuelo';
         return {
           type: 'TRAVEL_MISLEADING_MEETING',
-          title: '✈️ Encuentro / Vuelos / Citas en Persona (Travel Misleading)',
+          title: '✈️ Encuentro / Vuelos en Persona (Travel Misleading)',
           sample: matchStr,
           reason: 'Prohibido proponer encuentros físicos, visitas, compra de vuelos o estadías en hoteles. Infracción grave de Travel Misleading ($10.000 COP de multa y riesgo de baneo).',
           solution: 'Mantén el vínculo enfocado en el presente virtual. Comparte anécdotas, fotos y pregúntale por sus momentos favoritos del día.',
@@ -890,7 +906,7 @@
         const matchStr = normalized.match(pat)?.[0] || rawLower.match(pat)?.[0] || 'Contacto externo';
         return {
           type: 'CONTACT_LEAK',
-          title: '📱 Fuga de Contacto / Datos Externos',
+          title: '📱 Fuga de Contacto Externo',
           sample: matchStr,
           reason: 'Está prohibido compartir números telefónicos, redes sociales o correos electrónicos fuera de la plataforma.',
           solution: 'Invítalo a seguir disfrutando y compartiendo anécdotas exclusivas de forma segura dentro de este chat.',
@@ -915,7 +931,7 @@
         const matchStr = normalized.match(pat)?.[0] || rawLower.match(pat)?.[0] || 'Solicitud de regalo';
         return {
           type: 'GIFT_MANIPULATION',
-          title: '🎁 Manipulación de Regalos / Dinero Prohibida',
+          title: '🎁 Manipulación de Regalos / Tokens Prohibida',
           sample: matchStr,
           reason: 'Está prohibido pedir o manipular al usuario para que envíe regalos, tokens o dinero.',
           solution: 'Construye valor con fotos y cartas emotivas para que el usuario gaste tokens de forma voluntaria.',
@@ -945,58 +961,64 @@
     return null;
   }
 
-  // RENDERIZADOR DEL BANNER DE SOLUCIÓN TÁCTICA PARA EL OPERADOR
+  // RENDERIZADOR DE LA NUBE DE INFORMACIÓN FLOTANTE (NO INVASIVA / TIPO CLOUD POPOVER)
   function renderFirewallSolutionCard(violation, targetInput) {
-    let banner = document.getElementById('ryr-firewall-solution-banner');
+    let cloud = document.getElementById('ryr-firewall-cloud-popover');
+    
     if (!violation) {
-      if (banner) banner.remove();
+      if (cloud) cloud.remove();
       return;
     }
 
-    if (!banner) {
-      banner = document.createElement('div');
-      banner.id = 'ryr-firewall-solution-banner';
-      banner.style.cssText = `
-        margin: 8px 0 10px 0;
-        padding: 12px 16px;
-        background: linear-gradient(135deg, rgba(30, 8, 16, 0.98), rgba(18, 6, 32, 0.98));
+    if (!cloud) {
+      cloud = document.createElement('div');
+      cloud.id = 'ryr-firewall-cloud-popover';
+      cloud.style.cssText = `
+        position: fixed;
+        bottom: 85px;
+        right: 24px;
+        width: 390px;
+        max-width: 90vw;
+        background: linear-gradient(135deg, rgba(8, 12, 26, 0.98), rgba(24, 7, 24, 0.98));
         border: 2px solid #ef4444;
-        border-radius: 10px;
-        box-shadow: 0 0 30px rgba(239, 68, 68, 0.45);
+        border-radius: 14px;
+        box-shadow: 0 15px 50px rgba(0, 0, 0, 0.95), 0 0 30px rgba(239, 68, 68, 0.4);
+        backdrop-filter: blur(25px);
         color: #fff;
         font-family: 'Space Grotesk', system-ui, sans-serif;
         font-size: 12px;
-        z-index: 999999;
+        z-index: 2147483640;
         display: flex;
         flex-direction: column;
         gap: 8px;
-        animation: ryrBannerGlow 1.8s infinite alternate;
+        padding: 14px 16px;
+        animation: ryrCloudPop 0.25s cubic-bezier(0.16, 1, 0.3, 1);
       `;
-      
-      // Insertar inteligentemente encima o debajo del contenedor del chat
-      const chatToolsWrap = document.querySelector('.ryr-chat-tools-wrapper');
-      if (chatToolsWrap && chatToolsWrap.parentElement) {
-        chatToolsWrap.parentElement.insertBefore(banner, chatToolsWrap);
-      } else if (targetInput && targetInput.parentElement) {
-        targetInput.parentElement.insertAdjacentElement('afterend', banner);
-      } else {
-        document.body.appendChild(banner);
-      }
+      document.body.appendChild(cloud);
     }
 
     const safeHooks = Array.isArray(violation.safeHooks) ? violation.safeHooks : [];
 
-    banner.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <span style="font-weight:900; color:#fca5a5; font-size:12.5px; display:flex; align-items:center; gap:6px;">
-          ${violation.title}
-        </span>
-        <span style="background:#ef4444; color:#fff; font-size:10px; font-weight:bold; padding:3px 9px; border-radius:4px; box-shadow:0 0 10px rgba(239,68,68,0.6);">
-          🚫 ENVÍO BLOQUEADO
-        </span>
+    cloud.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(239,68,68,0.3); padding-bottom:8px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:1.3rem;">☁️</span>
+          <div>
+            <div style="font-weight:900; color:#fca5a5; font-size:12px; letter-spacing:0.5px;">
+              ${violation.title}
+            </div>
+            <div style="font-size:10px; color:#94a3b8;">Nube de Consejo Táctico Anti-TM</div>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <span style="background:#ef4444; color:#fff; font-size:9.5px; font-weight:bold; padding:2px 7px; border-radius:4px;">
+            🚫 ENVÍO BLOQUEADO
+          </span>
+          <button type="button" id="ryr-cloud-close-btn" style="background:transparent; border:none; color:#94a3b8; font-size:16px; cursor:pointer; font-weight:bold; padding:0 4px;" title="Cerrar nube">✕</button>
+        </div>
       </div>
 
-      <div style="background:rgba(0,0,0,0.5); border-left:3px solid #ef4444; padding:6px 10px; border-radius:4px; font-size:11.5px; color:#fecaca;">
+      <div style="background:rgba(0,0,0,0.55); border-left:3px solid #ef4444; padding:6px 10px; border-radius:4px; font-size:11.5px; color:#fecaca;">
         <b>Texto detectado:</b> <code style="background:rgba(239,68,68,0.25); color:#fff; padding:2px 6px; border-radius:3px; font-weight:bold;">"${violation.sample}"</code>
       </div>
 
@@ -1005,45 +1027,55 @@
       </div>
 
       <div style="background:rgba(16,185,129,0.15); border:1px dashed #10b981; padding:8px 12px; border-radius:6px; font-size:11.5px; color:#6ee7b7; line-height:1.4;">
-        💡 <b>Cómo cambiar la conversación (Solución Táctica):</b> ${violation.solution}
+        💡 <b>Cómo cambiar la conversación:</b> ${violation.solution}
       </div>
 
       <!-- BOTONES DE GANCHOS SEGUROS PARA INSERTAR EN 1 CLIC -->
-      <div style="display:flex; flex-direction:column; gap:6px; margin-top:2px;">
-        <span style="font-size:10.5px; color:#94a3b8; font-weight:bold;">⚡ Haz clic en una sugerencia segura para reemplazar el texto automáticamente:</span>
-        <div style="display:flex; flex-wrap:wrap; gap:6px;">
+      <div style="display:flex; flex-direction:column; gap:5px; margin-top:2px;">
+        <span style="font-size:10px; color:#94a3b8; font-weight:bold;">⚡ Sugerencias seguras (Clic para insertar y desbloquear):</span>
+        <div style="display:flex; flex-direction:column; gap:4px;">
           ${safeHooks.map(hook => `
-            <button type="button" class="ryr-firewall-safe-hook-btn" data-hook="${encodeURIComponent(hook)}" style="background:#090d1f; color:#38bdf8; border:1px solid #0284c7; padding:5px 12px; border-radius:6px; font-size:11px; cursor:pointer; font-weight:bold; transition:all 0.2s; text-align:left;">
+            <button type="button" class="ryr-firewall-safe-hook-btn" data-hook="${encodeURIComponent(hook)}" style="background:#090d1f; color:#38bdf8; border:1px solid #0284c7; padding:6px 10px; border-radius:6px; font-size:11px; cursor:pointer; font-weight:bold; transition:all 0.2s; text-align:left; line-height:1.3;">
               💬 "${hook}"
             </button>
           `).join('')}
-          <button type="button" id="ryr-firewall-clear-btn" style="background:rgba(239,68,68,0.25); color:#fca5a5; border:1px solid #ef4444; padding:5px 12px; border-radius:6px; font-size:11px; cursor:pointer; font-weight:bold;">
-            🧹 Borrar texto y desbloquear
-          </button>
         </div>
+        <button type="button" id="ryr-firewall-clear-btn" style="background:rgba(239,68,68,0.2); color:#fca5a5; border:1px solid #ef4444; padding:5px 10px; border-radius:6px; font-size:11px; cursor:pointer; font-weight:bold; margin-top:3px;">
+          🧹 Borrar texto y desbloquear
+        </button>
       </div>
     `;
 
+    // Botón cerrar nube
+    const closeBtn = cloud.querySelector('#ryr-cloud-close-btn');
+    if (closeBtn) {
+      closeBtn.onclick = () => {
+        cloud.remove();
+      };
+    }
+
     // Vincular clics de ganchos seguros
-    banner.querySelectorAll('.ryr-firewall-safe-hook-btn').forEach(b => {
+    cloud.querySelectorAll('.ryr-firewall-safe-hook-btn').forEach(b => {
       b.onclick = (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
         const hookText = decodeURIComponent(b.getAttribute('data-hook') || '');
         if (targetInput && hookText) {
           setInputValueSafely(targetInput, hookText);
+          cloud.remove();
           showFirewallToast('✨ Sugerencia segura aplicada. ¡Botón de envío desbloqueado!', 'success');
         }
       };
     });
 
-    const clearBtn = banner.getElementById ? banner.querySelector('#ryr-firewall-clear-btn') : null;
+    const clearBtn = cloud.querySelector('#ryr-firewall-clear-btn');
     if (clearBtn) {
       clearBtn.onclick = (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
         if (targetInput) {
           setInputValueSafely(targetInput, '');
+          cloud.remove();
           showFirewallToast('🧹 Texto borrado. Bloqueo levantado.', 'success');
         }
       };
