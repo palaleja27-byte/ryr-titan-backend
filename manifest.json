@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "RYR TITAN APEX",
+  "version": "2.3.1",
+  "description": "Supervisor y Monitor de Telemetría para Talkytimes",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://*.talkytimes.com/*",
+    "https://ryr-titan-backend.onrender.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.talkytimes.com/*"],
+      "js": ["content.js"],
+      "css": ["hud-estilos.css"],
+      "run_at": "document_end"
+    }
+  ]
+}
